@@ -1,242 +1,455 @@
 <template>
-  <AppLayout>
-    <div class="p-6 space-y-5">
-      <!-- Header -->
-      <div class="flex items-center justify-between">
-        <div>
-          <h1 class="text-xl font-semibold text-gray-900">Alertes</h1>
-          <p class="text-sm text-gray-500 mt-0.5">{{ alertes.length }} alerte(s)</p>
+  <div class="alerts-page">
+    <!-- Header -->
+    <div class="page-header">
+      <div>
+        <h1 class="page-title">Alertes & Supervision</h1>
+        <p class="page-subtitle">{{ stats.ouvertes }} alerte(s) ouverte(s) · mise à jour toutes les 10s</p>
+      </div>
+      <div class="header-actions">
+        <select v-model="filters.niveau" class="filter-select" @change="loadAlertes">
+          <option value="">Tous les niveaux</option>
+          <option value="CRITIQUE">Critique</option>
+          <option value="ELEVE">Élevé</option>
+          <option value="MOYEN">Moyen</option>
+          <option value="INFO">Info</option>
+        </select>
+        <select v-model="filters.statut" class="filter-select" @change="loadAlertes">
+          <option value="">Tous les statuts</option>
+          <option value="OUVERTE">Ouvertes</option>
+          <option value="TRAITEE">Traitées</option>
+        </select>
+        <select v-model="filters.type_alerte" class="filter-select" @change="loadAlertes">
+          <option value="">Tous les types</option>
+          <option v-for="t in ALERT_TYPES" :key="t.value" :value="t.value">{{ t.label }}</option>
+        </select>
+        <select v-model="filters.dossier_statut" class="filter-select" @change="loadAlertes">
+          <option value="">Tous les dossiers</option>
+          <option value="bloque">Dossiers bloqués</option>
+          <option value="en_analyse">Dossiers en analyse</option>
+        </select>
+      </div>
+    </div>
+
+    <!-- WRK-09 Pending section (Notaire Principal only) -->
+    <section v-if="isNotairePrincipal && pendingWrk09.length > 0" class="wrk09-section">
+      <div class="section-header">
+        <span class="section-badge critique">WRK-09</span>
+        <h2 class="section-title">Autorisations Notaire Principal PPE en attente ({{ pendingWrk09.length }})</h2>
+      </div>
+      <div class="wrk09-list">
+        <div v-for="item in pendingWrk09" :key="item.dossier_id" class="wrk09-card">
+          <div class="wrk09-info">
+            <span class="wrk09-ref">{{ item.dossier_reference }}</span>
+            <span class="risk-badge" :class="riskClass(item.niveau_risque)">{{ item.niveau_risque ?? 'N/A' }}</span>
+            <span class="wrk09-type">{{ item.type_dossier }}</span>
+            <span class="wrk09-date">{{ formatDate(item.created_at) }}</span>
+          </div>
+          <div class="wrk09-actions">
+            <button class="btn-autoriser" @click="openWrk09Dialog(item, 'AUTORISE')">✓ Autoriser</button>
+            <button class="btn-refuser" @click="openWrk09Dialog(item, 'REFUSE')">✗ Refuser</button>
+          </div>
         </div>
-        <div v-if="isSupervisor" class="flex gap-2">
-          <button @click="showCreate = true" class="flex items-center gap-2 bg-[#1a2e4a] text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-[#1a2e4a]/90 transition-colors">
-            + Nouvelle alerte
+      </div>
+    </section>
+
+    <!-- Alertes list -->
+    <section class="alertes-section">
+      <div v-if="loading" class="alertes-list">
+        <div class="skeleton" v-for="i in 5" :key="i"></div>
+      </div>
+
+      <div v-else-if="alertes.length === 0" class="empty-state">
+        <div class="empty-icon">✓</div>
+        <p>Aucune alerte correspondant aux filtres sélectionnés.</p>
+      </div>
+
+      <div v-else class="alertes-list">
+        <div
+          v-for="alerte in alertes"
+          :key="alerte.id"
+          class="alerte-card"
+          :class="{ 'is-traitee': alerte.statut === 'TRAITEE' }"
+        >
+          <div class="alerte-level" :class="levelClass(alerte.niveau)"></div>
+
+          <div class="alerte-body">
+            <div class="alerte-header">
+              <span class="alerte-type">{{ typeLabel(alerte.type_alerte) }}</span>
+              <span v-if="alerte.dossier_reference" class="alerte-dossier">
+                Dossier : <strong>{{ alerte.dossier_reference }}</strong>
+              </span>
+              <span class="alerte-date">{{ formatDate(alerte.created_at) }}</span>
+              <span class="alerte-statut" :class="alerte.statut === 'TRAITEE' ? 'statut-traitee' : 'statut-ouverte'">
+                {{ alerte.statut === 'TRAITEE' ? 'Traitée' : 'Ouverte' }}
+              </span>
+            </div>
+            <p class="alerte-description">{{ alerte.description }}</p>
+            <p v-if="alerte.statut === 'TRAITEE' && alerte.justification_traitement" class="alerte-justification">
+              <em>Justification :</em> {{ alerte.justification_traitement }}
+            </p>
+          </div>
+
+          <div v-if="alerte.statut === 'OUVERTE'" class="alerte-actions">
+            <button class="btn-traiter" @click="openTraiterDialog(alerte)">Traiter</button>
+            <button
+              v-if="alerte.dossier_id && alerte.dossier_statut !== 'bloque'"
+              class="btn-bloquer"
+              @click="confirmBloquer(alerte)"
+            >Bloquer dossier</button>
+            <button
+              v-if="alerte.dossier_id && alerte.dossier_statut === 'bloque'"
+              class="btn-debloquer"
+              @click="confirmDebloquer(alerte)"
+            >Débloquer dossier</button>
+          </div>
+        </div>
+      </div>
+
+      <div v-if="!loading" class="pagination">
+        <button :disabled="page === 1" class="btn-page" @click="changePage(page - 1)">←</button>
+        <span class="page-info">Page {{ page }} / {{ totalPages }} · {{ total }} alerte(s)</span>
+        <button :disabled="page >= totalPages" class="btn-page" @click="changePage(page + 1)">→</button>
+      </div>
+    </section>
+
+    <!-- Traiter Dialog -->
+    <div v-if="traiterDialog.open" class="dialog-overlay" @click.self="traiterDialog.open = false">
+      <div class="dialog">
+        <h3 class="dialog-title">Traiter l'alerte</h3>
+        <p class="dialog-subtitle">{{ typeLabel(traiterDialog.alerte?.type_alerte ?? '') }}</p>
+        <label class="dialog-label">Justification <span class="required">*</span></label>
+        <textarea
+          v-model="traiterDialog.justification"
+          class="dialog-textarea"
+          placeholder="Décrivez l'action menée et le résultat de votre analyse..."
+          rows="4"
+        ></textarea>
+        <p v-if="traiterDialog.error" class="dialog-error">{{ traiterDialog.error }}</p>
+        <div class="dialog-footer">
+          <button class="btn-cancel" @click="traiterDialog.open = false">Annuler</button>
+          <button class="btn-confirm" :disabled="traiterDialog.loading" @click="submitTraiter">
+            {{ traiterDialog.loading ? 'Enregistrement…' : 'Confirmer traitement' }}
           </button>
         </div>
       </div>
-
-      <!-- Filtres -->
-      <div class="flex gap-3 flex-wrap">
-        <select v-model="filterStatut" class="border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none">
-          <option value="">Tous les statuts</option>
-          <option value="ouverte">Ouvertes</option>
-          <option value="en_cours">En cours</option>
-          <option value="traitee">Traitées</option>
-          <option value="ignoree">Ignorées</option>
-        </select>
-        <select v-model="filterNiveau" class="border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none">
-          <option value="">Tous les niveaux</option>
-          <option value="ELEVE">Élevé</option>
-          <option value="MOYEN">Moyen</option>
-          <option value="FAIBLE">Faible</option>
-        </select>
-        <button @click="load" class="px-3 py-1.5 border border-gray-300 rounded-lg text-sm text-gray-600 hover:bg-gray-50">Actualiser</button>
-      </div>
-
-      <div v-if="error" class="bg-red-50 border border-red-200 text-red-700 text-sm px-4 py-3 rounded-lg">{{ error }}</div>
-
-      <!-- Table -->
-      <div class="bg-white rounded-xl border border-gray-200 overflow-hidden">
-        <div v-if="loading" class="flex items-center justify-center py-12 text-gray-400 text-sm">Chargement…</div>
-        <div v-else-if="alertes.length === 0" class="flex flex-col items-center justify-center py-12 text-gray-400">
-          <span class="text-4xl mb-3">🔔</span>
-          <p class="text-sm">Aucune alerte.</p>
-        </div>
-        <table v-else class="w-full text-sm">
-          <thead>
-            <tr class="border-b border-gray-100">
-              <th class="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide">Type</th>
-              <th class="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide">Niveau</th>
-              <th class="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide">Statut</th>
-              <th class="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide">Dossier</th>
-              <th class="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide">Description</th>
-              <th class="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide">Date</th>
-              <th class="text-right px-4 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide">Actions</th>
-            </tr>
-          </thead>
-          <tbody class="divide-y divide-gray-50">
-            <tr v-for="a in alertes" :key="a.id" class="hover:bg-gray-50 transition-colors">
-              <td class="px-4 py-3">
-                <span class="font-medium text-gray-900 text-xs">{{ typeLabel(a.type_alerte) }}</span>
-              </td>
-              <td class="px-4 py-3">
-                <span :class="niveauBadge(a.niveau)" class="px-2 py-0.5 rounded-full text-xs font-medium">{{ a.niveau }}</span>
-              </td>
-              <td class="px-4 py-3">
-                <span :class="statutBadge(a.statut)" class="px-2 py-0.5 rounded-full text-xs font-medium">{{ statutLabel(a.statut) }}</span>
-              </td>
-              <td class="px-4 py-3">
-                <RouterLink :to="`/dossiers/${a.dossier_id}`" class="text-xs font-mono text-[#1a2e4a] hover:underline">{{ a.dossier_id.substring(0, 8) }}…</RouterLink>
-              </td>
-              <td class="px-4 py-3 text-gray-500 text-xs max-w-xs truncate">{{ a.description ?? '—' }}</td>
-              <td class="px-4 py-3 text-gray-400 text-xs whitespace-nowrap">{{ formatDate(a.created_at) }}</td>
-              <td class="px-4 py-3">
-                <div v-if="isSupervisor && a.statut === 'ouverte'" class="flex items-center justify-end gap-1">
-                  <button @click="openTraiter(a, 'en_cours')" class="px-2 py-1 text-xs bg-blue-50 text-blue-700 rounded hover:bg-blue-100">En cours</button>
-                  <button @click="openTraiter(a, 'traitee')" class="px-2 py-1 text-xs bg-green-50 text-green-700 rounded hover:bg-green-100">Traiter</button>
-                  <button @click="openTraiter(a, 'ignoree')" class="px-2 py-1 text-xs bg-gray-100 text-gray-600 rounded hover:bg-gray-200">Ignorer</button>
-                </div>
-                <div v-else-if="a.resolution_note" class="text-xs text-gray-400 italic truncate max-w-xs">{{ a.resolution_note }}</div>
-              </td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
     </div>
 
-    <!-- Traiter modal -->
-    <div v-if="traitModal.show" class="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-      <div class="bg-white rounded-xl shadow-2xl w-full max-w-sm">
-        <div class="flex items-center justify-between p-5 border-b border-gray-200">
-          <h2 class="font-semibold text-gray-900">Traiter l'alerte</h2>
-          <button @click="traitModal.show = false" class="text-gray-400 hover:text-gray-600">✕</button>
+    <!-- WRK-09 Dialog -->
+    <div v-if="wrk09Dialog.open" class="dialog-overlay" @click.self="wrk09Dialog.open = false">
+      <div class="dialog dialog-wrk09">
+        <div class="wrk09-header">
+          <span class="wrk09-badge">WRK-09</span>
+          <h3 class="dialog-title">
+            {{ wrk09Dialog.decision === 'AUTORISE' ? 'Autoriser le dossier PPE' : 'Refuser le dossier PPE' }}
+          </h3>
         </div>
-        <form @submit.prevent="submitTraiter" class="p-5 space-y-4">
-          <p class="text-sm text-gray-600">
-            Statut : <span :class="statutBadge(traitModal.statut)" class="px-2 py-0.5 rounded-full text-xs font-medium ml-1">{{ statutLabel(traitModal.statut) }}</span>
-          </p>
-          <div>
-            <label class="block text-xs font-medium text-gray-700 mb-1">Note de résolution</label>
-            <textarea v-model="traitModal.note" rows="3" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1a2e4a]/30 resize-none" placeholder="Décrire les actions prises…" />
-          </div>
-          <div v-if="traitModal.error" class="bg-red-50 border border-red-200 text-red-700 text-sm px-3 py-2 rounded-lg">{{ traitModal.error }}</div>
-          <div class="flex justify-end gap-3">
-            <button type="button" @click="traitModal.show = false" class="px-4 py-2 text-sm text-gray-600">Annuler</button>
-            <button type="submit" :disabled="traitModal.loading" class="px-4 py-2 bg-[#1a2e4a] text-white text-sm rounded-lg hover:bg-[#1a2e4a]/90 disabled:opacity-50">
-              {{ traitModal.loading ? 'Enregistrement…' : 'Confirmer' }}
-            </button>
-          </div>
-        </form>
+        <p class="dialog-subtitle">Dossier : <strong>{{ wrk09Dialog.item?.dossier_reference }}</strong></p>
+        <p class="wrk09-warning">
+          Cette décision est <strong>non délégable et non modifiable</strong>. Elle sera enregistrée dans le Registre des autorisations Notaire Principal.
+        </p>
+        <label class="dialog-label">
+          Justification<span v-if="wrk09Dialog.decision === 'REFUSE'" class="required"> *</span>
+        </label>
+        <textarea
+          v-model="wrk09Dialog.justification"
+          class="dialog-textarea"
+          :placeholder="wrk09Dialog.decision === 'REFUSE' ? 'Motif du refus (obligatoire)…' : 'Observations (optionnel)…'"
+          rows="3"
+        ></textarea>
+        <p v-if="wrk09Dialog.error" class="dialog-error">{{ wrk09Dialog.error }}</p>
+        <div class="dialog-footer">
+          <button class="btn-cancel" @click="wrk09Dialog.open = false">Annuler</button>
+          <button
+            :class="wrk09Dialog.decision === 'AUTORISE' ? 'btn-autoriser' : 'btn-refuser'"
+            :disabled="wrk09Dialog.loading"
+            @click="submitWrk09"
+          >
+            {{ wrk09Dialog.loading ? 'Enregistrement…' : (wrk09Dialog.decision === 'AUTORISE' ? '✓ Confirmer autorisation' : '✗ Confirmer refus') }}
+          </button>
+        </div>
       </div>
     </div>
-
-    <!-- Create modal -->
-    <div v-if="showCreate" class="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-      <div class="bg-white rounded-xl shadow-2xl w-full max-w-sm">
-        <div class="flex items-center justify-between p-5 border-b border-gray-200">
-          <h2 class="font-semibold text-gray-900">Nouvelle alerte manuelle</h2>
-          <button @click="showCreate = false" class="text-gray-400 hover:text-gray-600">✕</button>
-        </div>
-        <form @submit.prevent="submitCreate" class="p-5 space-y-4">
-          <div>
-            <label class="block text-xs font-medium text-gray-700 mb-1">ID Dossier</label>
-            <input v-model="createForm.dossier_id" required class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1a2e4a]/30" />
-          </div>
-          <div>
-            <label class="block text-xs font-medium text-gray-700 mb-1">Type</label>
-            <select v-model="createForm.type_alerte" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none">
-              <option v-for="t in TYPE_OPTIONS" :key="t.value" :value="t.value">{{ t.label }}</option>
-            </select>
-          </div>
-          <div>
-            <label class="block text-xs font-medium text-gray-700 mb-1">Niveau</label>
-            <select v-model="createForm.niveau" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none">
-              <option value="FAIBLE">Faible</option>
-              <option value="MOYEN">Moyen</option>
-              <option value="ELEVE">Élevé</option>
-            </select>
-          </div>
-          <div>
-            <label class="block text-xs font-medium text-gray-700 mb-1">Description</label>
-            <textarea v-model="createForm.description" rows="2" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none resize-none" />
-          </div>
-          <div v-if="createError" class="bg-red-50 border border-red-200 text-red-700 text-sm px-3 py-2 rounded-lg">{{ createError }}</div>
-          <div class="flex justify-end gap-3">
-            <button type="button" @click="showCreate = false" class="px-4 py-2 text-sm text-gray-600">Annuler</button>
-            <button type="submit" :disabled="creating" class="px-4 py-2 bg-[#1a2e4a] text-white text-sm rounded-lg hover:bg-[#1a2e4a]/90 disabled:opacity-50">
-              {{ creating ? 'Création…' : 'Créer' }}
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
-  </AppLayout>
+  </div>
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted, watch } from 'vue'
-import { RouterLink } from 'vue-router'
-import axios from 'axios'
-import AppLayout from '@/layouts/AppLayout.vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useAuthStore } from '@/stores/auth'
-
-interface Alerte {
-  id: string; dossier_id: string; type_alerte: string; niveau: string; statut: string
-  description: string | null; traite_par: string | null; traite_at: string | null
-  resolution_note: string | null; created_at: string
-}
+import { alertesService, type AlerteOut, type PendingWrk09Item } from '@/services/alertes'
 
 const auth = useAuthStore()
-const alertes = ref<Alerte[]>([])
+const isNotairePrincipal = computed(() => auth.user?.role === 'notaire_principal')
+
+const alertes = ref<AlerteOut[]>([])
+const pendingWrk09 = ref<PendingWrk09Item[]>([])
 const loading = ref(true)
-const error = ref('')
-const filterStatut = ref('')
-const filterNiveau = ref('')
-const showCreate = ref(false)
-const creating = ref(false)
-const createError = ref('')
+const total = ref(0)
+const page = ref(1)
+const pageSize = 20
+const stats = ref({ ouvertes: 0 })
 
-const isSupervisor = computed(() => ['admin', 'notaire_principal', 'responsable_conformite'].includes(auth.role ?? ''))
+const filters = ref({ niveau: '', statut: 'OUVERTE', type_alerte: '', dossier_statut: '' })
+const totalPages = computed(() => Math.max(1, Math.ceil(total.value / pageSize)))
 
-const traitModal = reactive({ show: false, alerte: null as Alerte | null, statut: '', note: '', loading: false, error: '' })
-const createForm = reactive({ dossier_id: '', type_alerte: 'AUTRE', niveau: 'MOYEN', description: '' })
+const traiterDialog = ref({
+  open: false, alerte: null as AlerteOut | null,
+  justification: '', loading: false, error: '',
+})
+const wrk09Dialog = ref({
+  open: false, item: null as PendingWrk09Item | null,
+  decision: 'AUTORISE' as 'AUTORISE' | 'REFUSE',
+  justification: '', loading: false, error: '',
+})
 
-const TYPE_OPTIONS = [
-  { value: 'T1_PPE', label: 'T1 — PPE' },
-  { value: 'T2_ESPECES', label: 'T2 — Espèces > 15M' },
-  { value: 'T3_SANCTIONS', label: 'T3 — Sanctions' },
-  { value: 'T4_GAFI', label: 'T4 — Pays GAFI' },
-  { value: 'T5_REFUS_DOC', label: 'T5 — Refus documents' },
-  { value: 'T6_BE_NON_IDENTIFIABLE', label: 'T6 — BE non identifiable' },
-  { value: 'INCOHERENCE_DOC', label: 'Incohérence documentaire' },
-  { value: 'MONTAGE_COMPLEXE', label: 'Montage complexe' },
-  { value: 'AUTRE', label: 'Autre' },
-]
-
-function headers() { return auth.accessToken ? { Authorization: `Bearer ${auth.accessToken}` } : {} }
-function formatDate(s: string) { return new Date(s).toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric' }) }
-function typeLabel(t: string) { return TYPE_OPTIONS.find(o => o.value === t)?.label ?? t }
-function niveauBadge(n: string) { return n === 'ELEVE' ? 'bg-red-100 text-red-700' : n === 'MOYEN' ? 'bg-orange-100 text-orange-700' : 'bg-green-100 text-green-700' }
-function statutLabel(s: string) { const m: Record<string, string> = { ouverte: 'Ouverte', en_cours: 'En cours', traitee: 'Traitée', ignoree: 'Ignorée' }; return m[s] ?? s }
-function statutBadge(s: string) { const m: Record<string, string> = { ouverte: 'bg-red-100 text-red-700', en_cours: 'bg-blue-100 text-blue-700', traitee: 'bg-green-100 text-green-700', ignoree: 'bg-gray-100 text-gray-500' }; return m[s] ?? 'bg-gray-100 text-gray-600' }
-
-async function load() {
-  loading.value = true; error.value = ''
+async function loadAlertes(silent = false) {
+  if (!silent) loading.value = true
   try {
-    const params: Record<string, string> = {}
-    if (filterStatut.value) params.statut = filterStatut.value
-    if (filterNiveau.value) params.niveau = filterNiveau.value
-    const { data } = await axios.get('/api/alertes', { params, headers: headers() })
-    alertes.value = data
-  } catch (e: any) { error.value = e.response?.data?.detail ?? 'Erreur de chargement.' }
-  finally { loading.value = false }
+    const res = await alertesService.list({
+      page: page.value, page_size: pageSize,
+      ...(filters.value.niveau ? { niveau: filters.value.niveau } : {}),
+      ...(filters.value.statut ? { statut: filters.value.statut } : {}),
+      ...(filters.value.type_alerte ? { type_alerte: filters.value.type_alerte } : {}),
+      ...(filters.value.dossier_statut ? { dossier_statut: filters.value.dossier_statut } : {}),
+    })
+    alertes.value = res.items
+    total.value = res.total
+  } finally {
+    if (!silent) loading.value = false
+  }
 }
 
-watch([filterStatut, filterNiveau], load)
+async function loadStats() {
+  try {
+    const res = await alertesService.list({ statut: 'OUVERTE', page_size: 1 })
+    stats.value.ouvertes = res.total
+  } catch { /* ignore */ }
+}
 
-function openTraiter(a: Alerte, statut: string) {
-  Object.assign(traitModal, { show: true, alerte: a, statut, note: '', loading: false, error: '' })
+async function loadPendingWrk09() {
+  if (!isNotairePrincipal.value) return
+  try { pendingWrk09.value = await alertesService.pendingWrk09() } catch { /* ignore */ }
+}
+
+async function loadAll(silent = false) {
+  await Promise.all([loadAlertes(silent), loadStats(), loadPendingWrk09()])
+}
+
+let pollInterval: ReturnType<typeof setInterval>
+onMounted(() => { loadAll(); pollInterval = setInterval(() => loadAll(true), 10_000) })
+onUnmounted(() => clearInterval(pollInterval))
+
+function changePage(p: number) { page.value = p; loadAlertes() }
+
+function openTraiterDialog(alerte: AlerteOut) {
+  traiterDialog.value = { open: true, alerte, justification: '', loading: false, error: '' }
 }
 
 async function submitTraiter() {
-  if (!traitModal.alerte) return
-  traitModal.loading = true; traitModal.error = ''
+  const d = traiterDialog.value
+  if (!d.alerte) return
+  if (!d.justification.trim()) { d.error = 'La justification est obligatoire.'; return }
+  d.loading = true; d.error = ''
   try {
-    await axios.patch(`/api/alertes/${traitModal.alerte.id}/traiter`, { statut: traitModal.statut, resolution_note: traitModal.note || null }, { headers: headers() })
-    traitModal.show = false
-    await load()
-  } catch (e: any) { traitModal.error = e.response?.data?.detail ?? 'Erreur.' }
-  finally { traitModal.loading = false }
+    await alertesService.traiter(d.alerte.id, d.justification)
+    d.open = false
+    await Promise.all([loadAlertes(), loadStats()])
+  } catch (err: unknown) {
+    d.error = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ?? 'Erreur serveur.'
+  } finally { d.loading = false }
 }
 
-async function submitCreate() {
-  creating.value = true; createError.value = ''
+async function confirmBloquer(alerte: AlerteOut) {
+  if (!confirm(`Bloquer le dossier ${alerte.dossier_reference ?? alerte.dossier_id} ?`)) return
   try {
-    await axios.post('/api/alertes', createForm, { headers: headers() })
-    showCreate.value = false
-    await load()
-  } catch (e: any) { createError.value = e.response?.data?.detail ?? 'Erreur.' }
-  finally { creating.value = false }
+    await alertesService.bloquerDossier(alerte.id)
+    await loadAlertes()
+  } catch (err: unknown) {
+    alert((err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ?? 'Erreur serveur.')
+  }
 }
 
-onMounted(load)
+async function confirmDebloquer(alerte: AlerteOut) {
+  if (!confirm(`Débloquer le dossier ${alerte.dossier_reference ?? alerte.dossier_id} ?`)) return
+  try {
+    await alertesService.debloquerDossier(alerte.id)
+    await loadAlertes()
+  } catch (err: unknown) {
+    alert((err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ?? 'Erreur serveur.')
+  }
+}
+
+function openWrk09Dialog(item: PendingWrk09Item, decision: 'AUTORISE' | 'REFUSE') {
+  wrk09Dialog.value = { open: true, item, decision, justification: '', loading: false, error: '' }
+}
+
+async function submitWrk09() {
+  const d = wrk09Dialog.value
+  if (!d.item) return
+  if (d.decision === 'REFUSE' && !d.justification.trim()) {
+    d.error = 'La justification est obligatoire en cas de refus.'; return
+  }
+  d.loading = true; d.error = ''
+  try {
+    await alertesService.createAutorisation(d.item.dossier_id, d.decision, d.justification || undefined)
+    pendingWrk09.value = pendingWrk09.value.filter(i => i.dossier_id !== d.item!.dossier_id)
+    d.open = false
+    await loadAlertes()
+  } catch (err: unknown) {
+    d.error = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ?? 'Erreur serveur.'
+  } finally { d.loading = false }
+}
+
+const ALERT_TYPES = [
+  { value: 'TRIGGER_T1', label: 'T1 — PPE détecté' },
+  { value: 'TRIGGER_T2', label: 'T2 — Espèces > 15M FCFA' },
+  { value: 'TRIGGER_T3', label: 'T3 — Sanctions (Blocage Art. 89)' },
+  { value: 'TRIGGER_T4', label: 'T4 — Pays liste grise GAFI' },
+  { value: 'TRIGGER_T5', label: 'T5 — Refus documentaire' },
+  { value: 'TRIGGER_T6', label: 'T6 — BE non identifiable' },
+  { value: 'TRIGGER_T7', label: 'T7 — Espèces ≥ Art. 74 (immo)' },
+  { value: 'TRIGGER_T8', label: 'T8 — Pays liste noire GAFI' },
+  { value: 'PRESSE_NEGATIVE', label: 'Presse négative PPE' },
+  { value: 'BIEN_TRANSACTIONS', label: '>2 transactions / 24 mois (même bien)' },
+  { value: 'INCOHERENCE_DOC', label: 'Incohérence documentaire (Axe 8)' },
+  { value: 'MANDANT_NON_IDENTIFIE', label: 'Mandant non identifié (compte tiers)' },
+  { value: 'SANCTIONS_PERIMEES', label: 'Correspondance listes de sanctions' },
+  { value: 'SIGNALEMENT_INTERNE', label: 'Signalement interne (agent)' },
+]
+
+function typeLabel(type: string) {
+  return ALERT_TYPES.find(t => t.value === type)?.label ?? type
+}
+function levelClass(niveau: string) {
+  return ({ CRITIQUE: 'level-critique', ELEVE: 'level-eleve', MOYEN: 'level-moyen', INFO: 'level-info' } as Record<string, string>)[niveau] ?? ''
+}
+function riskClass(niveau: string | null) {
+  return ({ ELEVE: 'risk-high', MOYEN: 'risk-medium', FAIBLE: 'risk-low' } as Record<string, string>)[niveau ?? ''] ?? ''
+}
+function formatDate(iso: string) {
+  return new Date(iso).toLocaleString('fr-CI', { dateStyle: 'short', timeStyle: 'short' })
+}
 </script>
+
+<style scoped>
+.alerts-page { display: flex; flex-direction: column; gap: 1.5rem; }
+
+.page-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem; flex-wrap: wrap; }
+.page-title { font-size: 1.375rem; font-weight: 700; color: var(--color-text-primary); margin: 0 0 0.25rem; }
+.page-subtitle { font-size: 0.813rem; color: var(--color-text-secondary); margin: 0; }
+.header-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+.filter-select {
+  padding: 0.4rem 0.75rem; border: 1.5px solid var(--color-border);
+  border-radius: 6px; font-size: 0.813rem; background: var(--color-bg-card);
+  color: var(--color-text-primary); cursor: pointer;
+}
+
+.wrk09-section { background: #fff8f0; border: 2px solid #d97706; border-radius: 8px; padding: 1rem 1.25rem; }
+.section-header { display: flex; align-items: center; gap: 0.75rem; margin-bottom: 0.75rem; }
+.section-badge { font-size: 0.75rem; font-weight: 700; padding: 2px 8px; border-radius: 4px; }
+.section-badge.critique { background: #fee2e2; color: #dc2626; }
+.section-title { font-size: 1rem; font-weight: 600; color: var(--color-text-primary); margin: 0; }
+.wrk09-list { display: flex; flex-direction: column; gap: 0.5rem; }
+.wrk09-card {
+  display: flex; justify-content: space-between; align-items: center;
+  background: #fff; border: 1px solid #e5e7eb; border-radius: 6px; padding: 0.625rem 1rem; gap: 1rem;
+}
+.wrk09-info { display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; }
+.wrk09-ref { font-weight: 600; font-size: 0.875rem; color: var(--color-text-primary); }
+.wrk09-type, .wrk09-date { font-size: 0.75rem; color: var(--color-text-muted); }
+.wrk09-actions { display: flex; gap: 0.5rem; }
+
+.risk-badge { font-size: 0.688rem; font-weight: 700; padding: 2px 8px; border-radius: 12px; }
+.risk-high { background: #fee2e2; color: #dc2626; }
+.risk-medium { background: #fef3c7; color: #d97706; }
+.risk-low { background: #dcfce7; color: #16a34a; }
+
+.alertes-section { display: flex; flex-direction: column; gap: 0.75rem; }
+.alertes-list { display: flex; flex-direction: column; gap: 0.5rem; }
+.alerte-card {
+  display: flex; align-items: stretch; background: var(--color-bg-card);
+  border: 1px solid var(--color-border); border-radius: 8px; overflow: hidden; transition: box-shadow 0.15s;
+}
+.alerte-card:hover { box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
+.alerte-card.is-traitee { opacity: 0.65; }
+.alerte-level { width: 8px; flex-shrink: 0; }
+.level-critique { background: #dc2626; }
+.level-eleve { background: #d97706; }
+.level-moyen { background: #f59e0b; }
+.level-info { background: #2563eb; }
+.alerte-body { flex: 1; padding: 0.75rem 1rem; }
+.alerte-header { display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; margin-bottom: 0.25rem; }
+.alerte-type { font-size: 0.813rem; font-weight: 600; color: var(--color-text-primary); }
+.alerte-dossier { font-size: 0.75rem; color: var(--color-text-secondary); }
+.alerte-date { font-size: 0.75rem; color: var(--color-text-muted); margin-left: auto; }
+.alerte-statut { font-size: 0.688rem; font-weight: 600; padding: 2px 8px; border-radius: 12px; }
+.statut-ouverte { background: #fee2e2; color: #dc2626; }
+.statut-traitee { background: #dcfce7; color: #16a34a; }
+.alerte-description { font-size: 0.813rem; color: var(--color-text-secondary); margin: 0; }
+.alerte-justification { font-size: 0.75rem; color: var(--color-text-muted); margin: 0.25rem 0 0; }
+.alerte-actions {
+  display: flex; flex-direction: column; justify-content: center; gap: 0.375rem;
+  padding: 0.75rem; border-left: 1px solid var(--color-border);
+}
+
+.skeleton {
+  height: 64px; border-radius: 8px;
+  background: linear-gradient(90deg, #f1f5f9 25%, #e2e8f0 50%, #f1f5f9 75%);
+  background-size: 200% 100%; animation: shimmer 1.5s infinite;
+}
+@keyframes shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+
+.empty-state { display: flex; flex-direction: column; align-items: center; padding: 3rem; color: var(--color-text-muted); gap: 0.5rem; }
+.empty-icon { font-size: 2.5rem; color: #16a34a; }
+.pagination { display: flex; align-items: center; justify-content: center; gap: 1rem; padding: 0.5rem 0; }
+.page-info { font-size: 0.813rem; color: var(--color-text-secondary); }
+
+.btn-traiter, .btn-bloquer, .btn-debloquer, .btn-autoriser, .btn-refuser, .btn-cancel, .btn-confirm, .btn-page {
+  padding: 0.375rem 0.75rem; border-radius: 6px; font-size: 0.75rem;
+  font-weight: 600; cursor: pointer; border: none; white-space: nowrap;
+}
+.btn-traiter { background: #1b2b4b; color: #fff; }
+.btn-traiter:hover { background: #243750; }
+.btn-bloquer { background: #fee2e2; color: #dc2626; }
+.btn-bloquer:hover { background: #fecaca; }
+.btn-debloquer { background: #dcfce7; color: #16a34a; }
+.btn-debloquer:hover { background: #bbf7d0; }
+.btn-autoriser { background: #16a34a; color: #fff; }
+.btn-autoriser:hover:not(:disabled) { background: #15803d; }
+.btn-refuser { background: #dc2626; color: #fff; }
+.btn-refuser:hover:not(:disabled) { background: #b91c1c; }
+.btn-cancel { background: #f1f5f9; color: var(--color-text-secondary); }
+.btn-confirm { background: var(--color-accent-gold, #c9a227); color: #fff; }
+.btn-confirm:disabled, .btn-autoriser:disabled, .btn-refuser:disabled { opacity: 0.5; cursor: not-allowed; }
+.btn-page { background: var(--color-bg-card); border: 1px solid var(--color-border); }
+.btn-page:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.dialog-overlay {
+  position: fixed; inset: 0; background: rgba(0,0,0,0.4);
+  display: flex; align-items: center; justify-content: center; z-index: 100;
+}
+.dialog {
+  background: var(--color-bg-card); border-radius: 12px; padding: 1.5rem;
+  width: 100%; max-width: 480px; display: flex; flex-direction: column; gap: 0.75rem;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.15);
+}
+.dialog-wrk09 { max-width: 520px; }
+.wrk09-header { display: flex; align-items: center; gap: 0.75rem; }
+.wrk09-badge { font-size: 0.75rem; font-weight: 700; padding: 3px 10px; border-radius: 4px; background: #fef3c7; color: #d97706; }
+.dialog-title { font-size: 1.1rem; font-weight: 700; color: var(--color-text-primary); margin: 0; }
+.dialog-subtitle { font-size: 0.875rem; color: var(--color-text-secondary); margin: 0; }
+.wrk09-warning {
+  font-size: 0.813rem; background: #fff8f0; border: 1px solid #f59e0b;
+  border-radius: 6px; padding: 0.625rem; color: #92400e; margin: 0;
+}
+.dialog-label { font-size: 0.813rem; font-weight: 600; color: var(--color-text-primary); }
+.required { color: #dc2626; }
+.dialog-textarea {
+  width: 100%; border: 1.5px solid var(--color-border); border-radius: 8px;
+  padding: 0.625rem; font-size: 0.875rem; resize: vertical; font-family: inherit;
+  background: #f8fafc; box-sizing: border-box;
+}
+.dialog-textarea:focus { outline: none; border-color: var(--color-accent-gold, #c9a227); }
+.dialog-error { font-size: 0.813rem; color: #dc2626; margin: 0; }
+.dialog-footer { display: flex; justify-content: flex-end; gap: 0.5rem; margin-top: 0.25rem; }
+</style>
