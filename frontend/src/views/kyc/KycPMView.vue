@@ -471,6 +471,7 @@ onMounted(loadExisting)
 </script>
 
 <style scoped>
+@reference "tailwindcss";
 .section-title { @apply text-sm font-semibold text-gray-700 uppercase tracking-wide border-b border-gray-100 pb-2; }
 .label { @apply block text-xs font-medium text-gray-700 mb-1; }
 .req { @apply text-red-500; }
