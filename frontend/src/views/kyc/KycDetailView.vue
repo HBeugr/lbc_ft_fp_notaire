@@ -20,8 +20,8 @@
         <span class="statut-badge" :class="`statut--${dossier.statut}`">
           {{ STATUT_LABELS[dossier.statut] ?? dossier.statut }}
         </span>
-        <span v-if="dossier.niveau_risque" class="risk-badge" :class="`risk--${dossier.niveau_risque}`">
-          {{ dossier.niveau_risque }}
+        <span v-if="dossier.classification" class="risk-badge" :class="`risk--${dossier.classification}`">
+          {{ dossier.classification }}
         </span>
         <button
           v-if="dossier.statut === 'brouillon'"
@@ -205,10 +205,10 @@
         </div>
         <div class="meta-item">
           <span class="meta-label">Score risque</span>
-          <template v-if="dossier.score_risque !== null && dossier.score_risque !== undefined">
+          <template v-if="dossier.score_base !== null && dossier.score_base !== undefined">
             <span class="meta-value">
-              <span class="score-pill" :class="`score-pill--${(dossier.niveau_risque ?? 'FAIBLE').toLowerCase()}`">
-                <template v-if="!isAgent">{{ dossier.score_risque }}/20 — </template>{{ dossier.niveau_risque }}
+              <span class="score-pill" :class="`score-pill--${(dossier.classification ?? 'FAIBLE').toLowerCase()}`">
+                <template v-if="!isAgent">{{ dossier.score_base }}/20 — </template>{{ dossier.classification }}
               </span>
             </span>
           </template>

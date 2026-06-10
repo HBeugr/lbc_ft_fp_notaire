@@ -54,8 +54,8 @@
               </span>
             </td>
             <td>
-              <span v-if="d.niveau_risque" class="risk-badge" :class="`risk--${d.niveau_risque}`">
-                {{ d.niveau_risque }}
+              <span v-if="d.classification" class="risk-badge" :class="`risk--${d.classification}`">
+                {{ d.classification }}
               </span>
               <span v-else class="td-muted">—</span>
             </td>

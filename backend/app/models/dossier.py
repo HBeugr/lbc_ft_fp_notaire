@@ -1,6 +1,6 @@
 import uuid
 from datetime import date
-from sqlalchemy import String, Boolean, Enum as SAEnum, ForeignKey, DateTime, Date, Text, Numeric, func
+from sqlalchemy import String, Boolean, Enum as SAEnum, ForeignKey, DateTime, Date, Text, Numeric, SmallInteger, Integer, func
 from sqlalchemy.dialects.mysql import JSON
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -30,6 +30,13 @@ class Dossier(Base):
         nullable=False,
     )
     type_operation_detail: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # Données opération alimentant la matrice (axes 4 & 5, trigger T2) — CDC Module 2
+    montant_transaction: Mapped[float | None] = mapped_column(Numeric(18, 2), nullable=True)
+    mode_paiement: Mapped[str | None] = mapped_column(
+        SAEnum("virement", "cheque", "especes", "mix", "paiement_tiers", name="mode_paiement_enum"),
+        nullable=True,
+    )
+    nb_parties: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     statut: Mapped[str] = mapped_column(
         SAEnum(
             "brouillon", "en_analyse", "vigilance_renforcee",
@@ -59,6 +66,7 @@ class Dossier(Base):
     kyc_pm: Mapped["KycPM | None"] = relationship("KycPM", back_populates="dossier", uselist=False)
     historique: Mapped[list["DossierHistorique"]] = relationship("DossierHistorique", back_populates="dossier")
     commentaires: Mapped[list["CommentaireInterne"]] = relationship("CommentaireInterne", back_populates="dossier")
+    evaluation: Mapped["EvaluationRisque | None"] = relationship("EvaluationRisque", back_populates="dossier", uselist=False)
 
 
 class KycPP(Base):
@@ -242,6 +250,57 @@ class KycPPE(Base):
 
     kyc_pp: Mapped["KycPP | None"] = relationship("KycPP", back_populates="ppe_declarations")
     kyc_pm: Mapped["KycPM | None"] = relationship("KycPM", back_populates="ppe_declarations")
+
+
+class EvaluationRisque(Base):
+    """Résultat horodaté de la matrice de risque (CDC Module 2).
+
+    10 axes × {0,1,2} → score /20 ; 6 triggers absolutoires forcent ELEVE.
+    `dossier.score_base`/`classification` sont un cache dénormalisé de cette table.
+    """
+    __tablename__ = "evaluations_risque"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    dossier_id: Mapped[str] = mapped_column(String(36), ForeignKey("dossiers.id"), nullable=False, unique=True)
+
+    # 10 axes canoniques (ordre CDC v4)
+    axe_type_client: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=0)
+    axe_pays_geographie: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=0)
+    axe_type_operation: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=0)
+    axe_montant: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=0)
+    axe_mode_paiement: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=0)
+    axe_complexite: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=0)
+    axe_ppe: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=0)
+    axe_coherence_doc: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=0)
+    axe_secteur: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=0)
+    axe_intermediaires: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=0)
+
+    # Résultat
+    score_total: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    classification: Mapped[str] = mapped_column(
+        SAEnum("FAIBLE", "MOYEN", "ELEVE", name="classification_enum"), nullable=False, default="FAIBLE"
+    )
+    trigger_principal: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    triggers_actifs: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    force_par_trigger: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+
+    # Flags triggers explicites (saisis par l'agent)
+    sur_liste_sanctions: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    pays_liste_noire_gafi: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    pays_liste_grise_gafi: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    refus_documents: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    be_non_identifiable: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+
+    # Audit overrides : [{axe, valeur_auto, valeur_override, justification, user_id, ts}]
+    overrides: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    evaluated_by: Mapped[str | None] = mapped_column(String(36), ForeignKey("users.id"), nullable=True)
+    evaluated_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    created_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[DateTime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    dossier: Mapped["Dossier"] = relationship("Dossier", back_populates="evaluation")
 
 
 class DossierHistorique(Base):

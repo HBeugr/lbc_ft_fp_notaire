@@ -150,12 +150,17 @@ export interface KycPMData {
   actionnaires?: KycActData[]
 }
 
+export type ModePaiement = 'virement' | 'cheque' | 'especes' | 'mix' | 'paiement_tiers'
+
 export interface DossierOut {
   id: string
   reference: string
   type_client: string
   type_operation: string
   type_operation_detail: string | null
+  montant_transaction: number | null
+  mode_paiement: string | null
+  nb_parties: number
   statut: string
   assigned_to: string | null
   created_by: string
@@ -167,6 +172,52 @@ export interface DossierOut {
   kyc_pm?: KycPMData | null
   kyc_be_list?: KycBEData[]
   kyc_ppe_list?: unknown[]
+}
+
+// ── Scoring / Matrice de risque (CDC Module 2) ────────────────────────────────
+
+export interface ScoringAxisPrefill {
+  valeur: number
+  auto: boolean
+  source: string
+}
+
+export interface ScoringPrefill {
+  axes: Record<string, ScoringAxisPrefill>
+}
+
+export interface ScoreOverride {
+  axe: string
+  valeur_override: number
+  justification: string
+}
+
+export interface ScoreCalcPayload {
+  axes: Record<string, number>
+  montant_transaction?: number | null
+  mode_paiement?: ModePaiement | null
+  nb_parties?: number | null
+  sur_liste_sanctions: boolean
+  pays_liste_noire_gafi: boolean
+  pays_liste_grise_gafi: boolean
+  refus_documents: boolean
+  be_non_identifiable: boolean
+  overrides: ScoreOverride[]
+}
+
+export interface ScoreAxisResult {
+  code: string
+  label: string
+  score: number
+}
+
+export interface ScoreResult {
+  total: number
+  niveau: string
+  axes: ScoreAxisResult[]
+  triggers_actifs: string[]
+  force_par_trigger: boolean
+  trigger_principal: string | null
 }
 
 export interface DossierListResponse {
@@ -247,6 +298,13 @@ export const dossiersService = {
     api.post<KycActData>(`/dossiers/${dossierId}/kyc/pm/actionnaires`, payload).then(r => r.data),
   deleteActionnaire: (dossierId: string, actId: string) =>
     api.delete(`/dossiers/${dossierId}/kyc/pm/actionnaires/${actId}`),
+
+  // Scoring / Matrice de risque
+  getScoringPrefill: (dossierId: string) =>
+    api.get<ScoringPrefill>(`/dossiers/${dossierId}/scoring/prefill`).then(r => r.data),
+
+  calculateScore: (dossierId: string, payload: ScoreCalcPayload) =>
+    api.post<ScoreResult>(`/dossiers/${dossierId}/scoring/calculate`, payload).then(r => r.data),
 
   // Commentaires
   async listCommentaires(dossierId: string): Promise<CommentaireOut[]> {

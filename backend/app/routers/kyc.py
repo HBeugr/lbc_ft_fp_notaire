@@ -13,9 +13,8 @@ from app.schemas.kyc import (
     KycBECreate, KycBEOut,
     KycActCreate, KycActOut,
     KycPPECreate, KycPPEOut,
-    ScoreOut,
 )
-from app.services import scoring_service
+from app.routers.scoring import recompute_cache
 
 router = APIRouter(prefix="/dossiers", tags=["kyc"])
 
@@ -70,19 +69,8 @@ async def upsert_kyc_pp(
         if data.get(field) is not None and not isinstance(data[field], dict):
             data[field] = data[field].model_dump() if hasattr(data[field], "model_dump") else dict(data[field])
     kyc = await dossier_repo.upsert_kyc_pp(db, dossier_id, **data)
-    # Trigger scoring
-    score_data = _build_score_data(dossier, data)
-    result = scoring_service.calculate(score_data)
-    from sqlalchemy import update as sa_update
-    await db.execute(
-        sa_update(Dossier).where(Dossier.id == dossier_id).values(
-            score_base=result.score,
-            classification=result.classification,
-            trigger_actif=result.trigger_principal,
-            force_par_trigger=result.force_par_trigger,
-        )
-    )
-    await db.commit()
+    # Recalcule le score provisoire (axes auto dérivés du KYC) — CDC Module 2
+    result = await recompute_cache(db, dossier, current_user.id)
     ip = request.client.host if request.client else "unknown"
     await audit_repo.log(
         db,
@@ -100,28 +88,6 @@ async def upsert_kyc_pp(
     out.beneficiaires_effectifs = [KycBEOut.model_validate(b) for b in be_result.scalars().all()]
     out.ppe_declarations = [KycPPEOut.model_validate(p) for p in ppe_result.scalars().all()]
     return out
-
-
-@router.get("/{dossier_id}/kyc/pp/score", response_model=ScoreOut)
-async def recalculate_score_pp(
-    dossier_id: str,
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-) -> ScoreOut:
-    dossier = await _get_dossier_or_404(db, dossier_id, current_user)
-    kyc = await dossier_repo.get_kyc_pp(db, dossier_id)
-    if not kyc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="KYC PP non trouvé.")
-    score_data = _build_score_data(dossier, kyc.__dict__)
-    result = scoring_service.calculate(score_data)
-    return ScoreOut(
-        score=result.score,
-        classification=result.classification,
-        triggers_actifs=result.triggers_actifs,
-        force_par_trigger=result.force_par_trigger,
-        trigger_principal=result.trigger_principal,
-        axes=result.axes,
-    )
 
 
 # ── Bénéficiaires effectifs PP ─────────────────────────────────────────────────
@@ -212,18 +178,8 @@ async def upsert_kyc_pm(
         if data.get(field) is not None and not isinstance(data[field], dict):
             data[field] = data[field].model_dump() if hasattr(data[field], "model_dump") else dict(data[field])
     kyc = await dossier_repo.upsert_kyc_pm(db, dossier_id, **data)
-    score_data = _build_score_data(dossier, data)
-    result = scoring_service.calculate(score_data)
-    from sqlalchemy import update as sa_update
-    await db.execute(
-        sa_update(Dossier).where(Dossier.id == dossier_id).values(
-            score_base=result.score,
-            classification=result.classification,
-            trigger_actif=result.trigger_principal,
-            force_par_trigger=result.force_par_trigger,
-        )
-    )
-    await db.commit()
+    # Recalcule le score provisoire (axes auto dérivés du KYC) — CDC Module 2
+    result = await recompute_cache(db, dossier, current_user.id)
     ip = request.client.host if request.client else "unknown"
     await audit_repo.log(
         db,
@@ -321,13 +277,3 @@ async def add_ppe_pm(
     await db.commit()
     await db.refresh(ppe)
     return KycPPEOut.model_validate(ppe)
-
-
-# ── Helper scoring ─────────────────────────────────────────────────────────────
-
-def _build_score_data(dossier: Dossier, kyc_data: dict) -> dict:
-    return {
-        **kyc_data,
-        "type_operation": dossier.type_operation,
-        "type_client": dossier.type_client,
-    }
