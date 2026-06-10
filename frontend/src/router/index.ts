@@ -88,7 +88,7 @@ const router = createRouter({
         {
           path: 'dos',
           name: 'dos',
-          component: () => import('@/views/dos/DosView.vue'),
+          component: () => import('@/views/dos/DosListView.vue'),
           meta: { roles: ['admin', 'notaire_principal', 'responsable_conformite'] },
         },
         // Notaire-specific: DOS detail form

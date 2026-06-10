@@ -7,6 +7,11 @@ export type TypeOperation =
   | 'vente_immobiliere' | 'manipulation_fonds' | 'constitution_societe'
   | 'fiducicommis' | 'succession' | 'donation' | 'autre'
 
+export type StatutDossier =
+  | 'brouillon' | 'en_analyse' | 'vigilance_renforcee' | 'valide'
+  | 'actif' | 'actif_sous_surveillance' | 'bloque' | 'traite'
+  | 'resilie' | 'cloture' | 'archive'
+
 export const TYPE_OPERATION_LABELS: Record<TypeOperation, string> = {
   vente_immobiliere: 'Vente immobilière',
   manipulation_fonds: 'Manipulation de fonds / actifs',
@@ -158,44 +163,109 @@ export interface DossierOut {
   classification: string | null
   trigger_actif: string | null
   force_par_trigger: boolean
+  kyc_pp?: KycPPData | null
+  kyc_pm?: KycPMData | null
+  kyc_be_list?: KycBEData[]
+  kyc_ppe_list?: unknown[]
+}
+
+export interface DossierListResponse {
+  items: DossierOut[]
+  total: number
+}
+
+export interface CommentaireOut {
+  id: string
+  dossier_id: string
+  auteur_id: string
+  contenu: string
+  created_at: string
+}
+
+export interface HistoriqueOut {
+  id: string
+  dossier_id: string
+  action: string
+  user_id: string | null
+  created_at: string
+  detail: Record<string, unknown> | null
 }
 
 // ── Service ───────────────────────────────────────────────────────────────────
 
 export const dossiersService = {
   // Dossiers CRUD
-  list: () => api.get<DossierOut[]>('/v1/dossiers').then(r => r.data),
-  get: (id: string) => api.get<DossierOut>(`/v1/dossiers/${id}`).then(r => r.data),
+  async list(params: { statut?: string; classification?: string; reference?: string; page?: number; page_size?: number } = {}): Promise<DossierListResponse> {
+    const { data } = await api.get<DossierOut[]>('/dossiers', { params })
+    if (Array.isArray(data)) return { items: data, total: data.length }
+    return data as unknown as DossierListResponse
+  },
+
+  get: (id: string) => api.get<DossierOut>(`/dossiers/${id}`).then(r => r.data),
+
   create: (payload: { type_client: TypeClient; type_operation: TypeOperation; type_operation_detail?: string }) =>
-    api.post<DossierOut>('/v1/dossiers', payload).then(r => r.data),
+    api.post<DossierOut>('/dossiers', payload).then(r => r.data),
 
   // KYC PP
   getKycPP: (dossierId: string) =>
-    api.get<KycPPData>(`/v1/dossiers/${dossierId}/kyc/pp`).then(r => r.data),
+    api.get<KycPPData>(`/dossiers/${dossierId}/kyc/pp`).then(r => r.data),
+
   upsertKycPP: (dossierId: string, payload: Partial<KycPPData>) =>
-    api.put<KycPPData>(`/v1/dossiers/${dossierId}/kyc/pp`, payload).then(r => r.data),
+    api.put<KycPPData>(`/dossiers/${dossierId}/kyc/pp`, payload).then(r => r.data),
+
+  async saveKycPP(dossierId: string, _section: number, payload: Partial<KycPPData>): Promise<KycPPData> {
+    const { data } = await api.put<KycPPData>(`/dossiers/${dossierId}/kyc/pp`, payload)
+    return data
+  },
 
   // KYC PP — Bénéficiaires effectifs
   addBePP: (dossierId: string, payload: KycBEData) =>
-    api.post<KycBEData>(`/v1/dossiers/${dossierId}/kyc/pp/be`, payload).then(r => r.data),
+    api.post<KycBEData>(`/dossiers/${dossierId}/kyc/pp/be`, payload).then(r => r.data),
   deleteBePP: (dossierId: string, beId: string) =>
-    api.delete(`/v1/dossiers/${dossierId}/kyc/pp/be/${beId}`),
+    api.delete(`/dossiers/${dossierId}/kyc/pp/be/${beId}`),
 
   // KYC PM
   getKycPM: (dossierId: string) =>
-    api.get<KycPMData>(`/v1/dossiers/${dossierId}/kyc/pm`).then(r => r.data),
+    api.get<KycPMData>(`/dossiers/${dossierId}/kyc/pm`).then(r => r.data),
+
   upsertKycPM: (dossierId: string, payload: Partial<KycPMData>) =>
-    api.put<KycPMData>(`/v1/dossiers/${dossierId}/kyc/pm`, payload).then(r => r.data),
+    api.put<KycPMData>(`/dossiers/${dossierId}/kyc/pm`, payload).then(r => r.data),
+
+  async saveKycPM(dossierId: string, _section: number, payload: Partial<KycPMData>): Promise<KycPMData> {
+    const { data } = await api.put<KycPMData>(`/dossiers/${dossierId}/kyc/pm`, payload)
+    return data
+  },
 
   // KYC PM — Bénéficiaires effectifs
   addBePM: (dossierId: string, payload: KycBEData) =>
-    api.post<KycBEData>(`/v1/dossiers/${dossierId}/kyc/pm/be`, payload).then(r => r.data),
+    api.post<KycBEData>(`/dossiers/${dossierId}/kyc/pm/be`, payload).then(r => r.data),
   deleteBePM: (dossierId: string, beId: string) =>
-    api.delete(`/v1/dossiers/${dossierId}/kyc/pm/be/${beId}`),
+    api.delete(`/dossiers/${dossierId}/kyc/pm/be/${beId}`),
 
   // KYC PM — Actionnaires
   addActionnaire: (dossierId: string, payload: KycActData) =>
-    api.post<KycActData>(`/v1/dossiers/${dossierId}/kyc/pm/actionnaires`, payload).then(r => r.data),
+    api.post<KycActData>(`/dossiers/${dossierId}/kyc/pm/actionnaires`, payload).then(r => r.data),
   deleteActionnaire: (dossierId: string, actId: string) =>
-    api.delete(`/v1/dossiers/${dossierId}/kyc/pm/actionnaires/${actId}`),
+    api.delete(`/dossiers/${dossierId}/kyc/pm/actionnaires/${actId}`),
+
+  // Commentaires
+  async listCommentaires(dossierId: string): Promise<CommentaireOut[]> {
+    const { data } = await api.get<CommentaireOut[]>(`/dossiers/${dossierId}/commentaires`)
+    return data
+  },
+
+  async addCommentaire(dossierId: string, contenu: string): Promise<CommentaireOut> {
+    const { data } = await api.post<CommentaireOut>(`/dossiers/${dossierId}/commentaires`, { contenu })
+    return data
+  },
+
+  async getHistorique(_dossierId: string): Promise<HistoriqueOut[]> {
+    return []
+  },
+
+  // Statut transition
+  async transition(id: string, statut: StatutDossier, commentaire?: string): Promise<DossierOut> {
+    const { data } = await api.patch<DossierOut>(`/dossiers/${id}/statut`, { statut, commentaire })
+    return data
+  },
 }

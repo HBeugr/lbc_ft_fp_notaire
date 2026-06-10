@@ -72,7 +72,7 @@
 import { computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
-import { authService } from '@/services/auth'
+import { authService } from '@/services/api'
 import { useNav } from '@/composables/useNav'
 import { ROLE_LABELS } from '@/utils/roles'
 
@@ -83,12 +83,12 @@ const auth = useAuthStore()
 const { navItems } = useNav()
 
 const fullName = computed(() =>
-  auth.user ? `${auth.user.firstName} ${auth.user.lastName}` : ''
+  auth.user ? `${auth.user.first_name} ${auth.user.last_name}` : ''
 )
 
 const initials = computed(() => {
   if (!auth.user) return '?'
-  return `${auth.user.firstName[0] ?? ''}${auth.user.lastName[0] ?? ''}`.toUpperCase()
+  return `${auth.user.first_name[0] ?? ''}${auth.user.last_name[0] ?? ''}`.toUpperCase()
 })
 
 const roleLabel = computed(() =>

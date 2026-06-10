@@ -14,10 +14,6 @@
 
     <!-- Filter bar -->
     <div class="filter-bar">
-      <select v-model="filterDept" class="filter-select" @change="loadUsers">
-        <option value="">Tous les départements</option>
-        <option v-for="d in departments" :key="d.id" :value="d.id">{{ d.name }}</option>
-      </select>
       <input v-model="search" type="search" class="filter-search" placeholder="Rechercher…" />
     </div>
 
@@ -29,7 +25,6 @@
           <tr>
             <th>Utilisateur</th>
             <th>Rôle</th>
-            <th>Département</th>
             <th>2FA</th>
             <th>Statut</th>
             <th class="th-actions">Actions</th>
@@ -45,7 +40,6 @@
               </div>
             </td>
             <td><span class="role-tag">{{ ROLE_LABELS[u.role] ?? u.role }}</span></td>
-            <td>{{ deptName(u.department_id) }}</td>
             <td>
               <span v-if="u.totp_enabled" class="badge-ok">Activé</span>
               <span v-else class="badge-off">Non activé</span>
@@ -95,7 +89,7 @@
             </td>
           </tr>
           <tr v-if="filteredUsers.length === 0">
-            <td colspan="6" class="empty-row">Aucun utilisateur trouvé</td>
+            <td colspan="5" class="empty-row">Aucun utilisateur trouvé</td>
           </tr>
         </tbody>
       </table>
@@ -131,23 +125,13 @@
               <p v-if="fe.email" class="field-error">{{ fe.email }}</p>
             </div>
 
-            <div class="form-row">
-              <div class="field-group">
-                <label class="field-label">Rôle</label>
-                <select v-model="form.role" class="field-input" :class="{ 'field-input--error': fe.role }">
-                  <option value="">— Choisir —</option>
-                  <option v-for="(label, key) in availableRoles" :key="key" :value="key">{{ label }}</option>
-                </select>
-                <p v-if="fe.role" class="field-error">{{ fe.role }}</p>
-              </div>
-              <div class="field-group">
-                <label class="field-label">Département</label>
-                <select v-model="form.department_id" class="field-input" :class="{ 'field-input--error': fe.department_id }">
-                  <option value="">— Choisir —</option>
-                  <option v-for="d in departments" :key="d.id" :value="d.id">{{ d.name }}</option>
-                </select>
-                <p v-if="fe.department_id" class="field-error">{{ fe.department_id }}</p>
-              </div>
+            <div class="field-group">
+              <label class="field-label">Rôle</label>
+              <select v-model="form.role" class="field-input" :class="{ 'field-input--error': fe.role }">
+                <option value="">— Choisir —</option>
+                <option v-for="(label, key) in availableRoles" :key="key" :value="key">{{ label }}</option>
+              </select>
+              <p v-if="fe.role" class="field-error">{{ fe.role }}</p>
             </div>
 
             <div class="field-group">
@@ -279,7 +263,7 @@
 <script setup lang="ts">
 import { ref, computed, reactive, onMounted } from 'vue'
 import { useAuthStore } from '@/stores/auth'
-import { usersService, type UserOut, type Department } from '@/services/users'
+import { usersService, type UserOut } from '@/services/users'
 import { ROLE_LABELS } from '@/utils/roles'
 
 const auth = useAuthStore()
@@ -321,15 +305,13 @@ const permsTarget = ref<UserOut | null>(null)
 function openPerms(u: UserOut) { permsTarget.value = u }
 
 const users = ref<UserOut[]>([])
-const departments = ref<Department[]>([])
 const loading = ref(true)
 const total = ref(0)
-const filterDept = ref('')
 const search = ref('')
 
 const modal = reactive({ open: false, mode: 'create' as 'create' | 'edit', userId: '' })
-const form = reactive({ first_name: '', last_name: '', email: '', role: '', department_id: '', password: '' })
-const fe = reactive({ first_name: '', last_name: '', email: '', role: '', department_id: '', password: '' })
+const form = reactive({ first_name: '', last_name: '', email: '', role: '', password: '' })
+const fe = reactive({ first_name: '', last_name: '', email: '', role: '', password: '' })
 const formError = ref('')
 const submitting = ref(false)
 const confirmTarget = ref<UserOut | null>(null)
@@ -349,14 +331,10 @@ function initials(u: UserOut) {
   return `${u.first_name[0] ?? ''}${u.last_name[0] ?? ''}`.toUpperCase()
 }
 
-function deptName(id: string) {
-  return departments.value.find(d => d.id === id)?.name ?? '—'
-}
-
 async function loadUsers() {
   loading.value = true
   try {
-    const res = await usersService.list(filterDept.value || undefined)
+    const res = await usersService.list()
     users.value = res.items
     total.value = res.total
   } finally {
@@ -364,14 +342,11 @@ async function loadUsers() {
   }
 }
 
-onMounted(async () => {
-  const [, deps] = await Promise.all([loadUsers(), usersService.listDepartments()])
-  departments.value = deps
-})
+onMounted(() => loadUsers())
 
 function resetForm() {
-  Object.assign(form, { first_name: '', last_name: '', email: '', role: '', department_id: '', password: '' })
-  Object.assign(fe,   { first_name: '', last_name: '', email: '', role: '', department_id: '', password: '' })
+  Object.assign(form, { first_name: '', last_name: '', email: '', role: '', password: '' })
+  Object.assign(fe,   { first_name: '', last_name: '', email: '', role: '', password: '' })
   formError.value = ''
 }
 
@@ -379,7 +354,7 @@ function openCreate() { resetForm(); modal.mode = 'create'; modal.open = true }
 
 function openEdit(u: UserOut) {
   resetForm()
-  Object.assign(form, { first_name: u.first_name, last_name: u.last_name, email: u.email, role: u.role, department_id: u.department_id, password: '' })
+  Object.assign(form, { first_name: u.first_name, last_name: u.last_name, email: u.email, role: u.role, password: '' })
   modal.mode = 'edit'; modal.userId = u.id; modal.open = true
 }
 
@@ -393,7 +368,6 @@ function validate(): boolean {
   if (modal.mode === 'create' && !form.email) { fe.email = 'Requis.'; ok = false }
   if (modal.mode === 'create' && form.password.length < 8) { fe.password = 'Minimum 8 caractères.'; ok = false }
   if (!form.role)          { fe.role          = 'Requis.'; ok = false }
-  if (!form.department_id) { fe.department_id = 'Requis.'; ok = false }
   return ok
 }
 
@@ -402,11 +376,10 @@ async function handleSubmit() {
   formError.value = ''; submitting.value = true
   try {
     if (modal.mode === 'create') {
-      const created = await usersService.create({ email: form.email, password: form.password, first_name: form.first_name, last_name: form.last_name, role: form.role, department_id: form.department_id })
+      const created = await usersService.create({ email: form.email, password: form.password, first_name: form.first_name, last_name: form.last_name, role: form.role })
       users.value.unshift(created); total.value++
     } else {
-      const payload: Record<string, string> = { first_name: form.first_name, last_name: form.last_name, role: form.role, department_id: form.department_id }
-      if (form.password) payload.password = form.password
+      const payload: Record<string, string> = { first_name: form.first_name, last_name: form.last_name, role: form.role }
       const updated = await usersService.update(modal.userId, payload)
       const idx = users.value.findIndex(u => u.id === modal.userId)
       if (idx !== -1) users.value[idx] = updated
