@@ -1,6 +1,5 @@
 <template>
-  <AppLayout>
-    <div class="p-6 space-y-5">
+  <div class="p-6 space-y-5">
       <!-- Header -->
       <div class="flex items-center gap-3">
         <RouterLink to="/dossiers" class="text-gray-400 hover:text-gray-600">
@@ -147,14 +146,12 @@
         </div>
       </div>
     </div>
-  </AppLayout>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { RouterLink, useRoute } from 'vue-router'
 import axios from 'axios'
-import AppLayout from '@/layouts/AppLayout.vue'
 import { useAuthStore } from '@/stores/auth'
 
 const route = useRoute()

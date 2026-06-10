@@ -371,7 +371,7 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { dossiersService } from '@/services/dossiers'
-import api from '@/services/auth'
+import api from '@/services/api'
 
 const activeTab = ref('overview')
 const TABS = [

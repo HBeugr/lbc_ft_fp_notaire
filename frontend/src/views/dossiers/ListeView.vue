@@ -1,6 +1,5 @@
 <template>
-  <AppLayout>
-    <div class="p-6 space-y-5">
+  <div class="p-6 space-y-5">
       <!-- Header -->
       <div class="flex items-center justify-between">
         <div>
@@ -135,14 +134,12 @@
         </form>
       </div>
     </div>
-  </AppLayout>
 </template>
 
 <script setup lang="ts">
 import { ref, reactive, onMounted, watch } from 'vue'
 import { RouterLink, useRouter } from 'vue-router'
 import axios from 'axios'
-import AppLayout from '@/layouts/AppLayout.vue'
 import { useAuthStore } from '@/stores/auth'
 
 interface Dossier {

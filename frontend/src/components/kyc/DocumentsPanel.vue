@@ -259,7 +259,7 @@ async function upload(file: File, key: string) {
     form.append('file', file)
     form.append('type_document', key)
 
-    const { default: api } = await import('@/services/auth')
+    const { default: api } = await import('@/services/api')
     const { data } = await api.post<DocumentOut>(
       `/dossiers/${props.dossier.id}/documents`,
       form,

@@ -1,166 +1,512 @@
 <template>
-  <AppLayout>
-    <div class="p-6 space-y-5">
+  <div class="registres-view">
+    <!-- Header -->
+    <div class="rv-header">
       <div>
-        <h1 class="text-xl font-semibold text-gray-900">Registres Légaux</h1>
-        <p class="text-sm text-gray-500 mt-0.5">Art. 23, Ordonnance n° 2023-875 — conservation 10 ans</p>
+        <h1 class="rv-title">Registres Légaux</h1>
+        <p class="rv-subtitle">8 registres LBC/FT — Ordonnance N°2023-875</p>
       </div>
-
-      <div v-if="error" class="bg-red-50 border border-red-200 text-red-700 text-sm px-4 py-3 rounded-lg">{{ error }}</div>
-
-      <!-- Liste des registres -->
-      <div v-if="!activeRegistre" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-        <div v-if="loading" v-for="i in 4" :key="i" class="bg-white rounded-xl border border-gray-200 p-5 animate-pulse">
-          <div class="h-4 bg-gray-200 rounded w-2/3 mb-2"></div>
-          <div class="h-3 bg-gray-200 rounded w-1/2"></div>
-        </div>
-        <button
-          v-for="r in registres"
-          :key="r.id"
-          @click="openRegistre(r)"
-          class="bg-white rounded-xl border border-gray-200 p-5 text-left hover:border-[#1a2e4a] hover:shadow-sm transition-all"
-        >
-          <div class="flex items-start justify-between mb-3">
-            <div class="w-10 h-10 bg-[#1a2e4a]/10 rounded-lg flex items-center justify-center text-xl">
-              {{ registreIcon(r.id) }}
-            </div>
-            <span v-if="r.confidential" class="text-xs bg-red-100 text-red-600 px-2 py-0.5 rounded-full font-medium">Confidentiel</span>
-          </div>
-          <h3 class="text-sm font-semibold text-gray-900">{{ r.label }}</h3>
-          <p class="text-xs text-gray-400 mt-1">Cliquer pour consulter →</p>
+      <div v-if="activeRegistre" class="rv-export-bar">
+        <button class="btn-export" :disabled="loading" @click="exportRegistre('excel')">
+          <span>⬇</span> Excel
+        </button>
+        <button class="btn-export" :disabled="loading" @click="exportRegistre('pdf')">
+          <span>⬇</span> PDF
         </button>
       </div>
+    </div>
 
-      <!-- Détail registre -->
-      <div v-else class="space-y-4">
-        <div class="flex items-center justify-between">
-          <div class="flex items-center gap-3">
-            <button @click="activeRegistre = null" class="text-sm text-gray-400 hover:text-[#1a2e4a]">← Registres</button>
-            <h2 class="text-base font-semibold text-gray-900">{{ activeRegistre.label }}</h2>
-            <span v-if="activeRegistre.confidential" class="text-xs bg-red-100 text-red-600 px-2 py-0.5 rounded-full">Confidentiel</span>
+    <div class="rv-body">
+      <!-- Left: list of registres -->
+      <aside class="rv-sidebar">
+        <p v-if="loadingList" class="rv-loading">Chargement…</p>
+        <div
+          v-for="reg in registres"
+          :key="reg.id"
+          class="rv-reg-item"
+          :class="{ active: activeRegistre?.id === reg.id }"
+          @click="selectRegistre(reg)"
+        >
+          <div class="rv-reg-info">
+            <span class="rv-reg-label">{{ reg.label }}</span>
+            <span v-if="REGISTRE_DESCRIPTIONS[reg.id]" class="rv-reg-desc">{{ REGISTRE_DESCRIPTIONS[reg.id] }}</span>
           </div>
-          <div class="flex gap-2">
-            <button @click="loadEntries" class="px-3 py-1.5 border border-gray-300 rounded-lg text-sm text-gray-600 hover:bg-gray-50">Actualiser</button>
-            <button @click="exportPdf" :disabled="exporting" class="px-3 py-1.5 bg-[#1a2e4a] text-white text-sm rounded-lg hover:bg-[#1a2e4a]/90 disabled:opacity-50">
-              {{ exporting ? 'Export…' : '⬇ Export PDF' }}
-            </button>
-          </div>
+          <span v-if="reg.confidential" class="rv-badge-conf">Conf.</span>
         </div>
 
-        <div class="bg-white rounded-xl border border-gray-200 overflow-hidden">
-          <div v-if="entriesLoading" class="flex items-center justify-center py-12 text-gray-400 text-sm">Chargement…</div>
-          <div v-else-if="entries.length === 0" class="flex items-center justify-center py-12 text-gray-400 text-sm">Aucune entrée dans ce registre.</div>
-          <div v-else>
-            <div class="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
-              <span class="text-xs text-gray-500">{{ total }} entrée(s) au total</span>
-              <div class="flex gap-2">
-                <button :disabled="offset === 0" @click="prevPage" class="px-2 py-1 text-xs border border-gray-200 rounded disabled:opacity-40 hover:bg-gray-50">← Préc.</button>
-                <span class="px-2 py-1 text-xs text-gray-500">{{ Math.floor(offset / LIMIT) + 1 }}</span>
-                <button :disabled="offset + LIMIT >= total" @click="nextPage" class="px-2 py-1 text-xs border border-gray-200 rounded disabled:opacity-40 hover:bg-gray-50">Suiv. →</button>
-              </div>
-            </div>
-            <table class="w-full text-sm">
+        <div class="rv-separator" />
+
+        <!-- Reports section -->
+        <p class="rv-section-title">Rapports PDF</p>
+        <div
+          v-for="rep in REPORT_TYPES"
+          :key="rep.id"
+          class="rv-reg-item rv-report-item"
+          @click="downloadReport(rep.id)"
+        >
+          <span class="rv-reg-label">{{ rep.label }}</span>
+          <span v-if="generatingReport === rep.id" class="rv-spinner-sm" />
+        </div>
+      </aside>
+
+      <!-- Right: entries table -->
+      <section class="rv-main">
+        <template v-if="!activeRegistre">
+          <div class="rv-empty">
+            <span class="rv-empty-icon">📋</span>
+            <p>Sélectionnez un registre pour consulter ses entrées.</p>
+          </div>
+        </template>
+
+        <template v-else>
+          <div class="rv-table-header">
+            <h2 class="rv-reg-title">{{ activeRegistre.label }}</h2>
+            <span class="rv-total">{{ total }} entrée{{ total !== 1 ? 's' : '' }}</span>
+          </div>
+
+          <p v-if="loading" class="rv-loading">Chargement…</p>
+          <p v-else-if="error" class="rv-error">{{ error }}</p>
+
+          <div v-else class="rv-table-wrap">
+            <table class="rv-table">
               <thead>
-                <tr class="border-b border-gray-100">
-                  <th class="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase">Date/Heure</th>
-                  <th class="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase">Action</th>
-                  <th class="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase">Entité</th>
-                  <th class="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase">ID Entité</th>
-                  <th class="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase">Utilisateur</th>
+                <tr>
+                  <th>Horodatage</th>
+                  <th>Action</th>
+                  <th>Type entité</th>
+                  <th>Entité ID</th>
+                  <th>Utilisateur</th>
+                  <th>IP</th>
                 </tr>
               </thead>
-              <tbody class="divide-y divide-gray-50">
-                <tr v-for="e in entries" :key="e.id" class="hover:bg-gray-50">
-                  <td class="px-4 py-2.5 text-xs text-gray-500 font-mono">{{ formatTs(e.timestamp) }}</td>
-                  <td class="px-4 py-2.5"><span class="text-xs bg-[#1a2e4a]/10 text-[#1a2e4a] px-2 py-0.5 rounded font-mono">{{ e.action }}</span></td>
-                  <td class="px-4 py-2.5 text-xs text-gray-600">{{ e.entity_type }}</td>
-                  <td class="px-4 py-2.5 text-xs font-mono text-gray-500">{{ e.entity_id ? e.entity_id.substring(0, 12) + '…' : '—' }}</td>
-                  <td class="px-4 py-2.5 text-xs font-mono text-gray-500">{{ e.user_id ? e.user_id.substring(0, 10) + '…' : '—' }}</td>
+              <tbody>
+                <tr v-if="entries.length === 0">
+                  <td colspan="6" class="rv-no-data">
+                    Aucune entrée pour l'instant — ce registre se remplira automatiquement
+                    au fur et à mesure des opérations effectuées dans la plateforme.
+                  </td>
+                </tr>
+                <tr v-for="e in entries" :key="e.id">
+                  <td class="rv-mono">{{ formatDate(e.timestamp_utc) }}</td>
+                  <td><span class="rv-action-badge">{{ e.action }}</span></td>
+                  <td>{{ e.entity_type }}</td>
+                  <td class="rv-mono rv-id">{{ e.entity_id }}</td>
+                  <td class="rv-mono rv-id">{{ e.user_id }}</td>
+                  <td class="rv-mono">{{ e.ip }}</td>
                 </tr>
               </tbody>
             </table>
           </div>
-        </div>
-      </div>
+
+          <!-- Pagination -->
+          <div v-if="totalPages > 1" class="rv-pagination">
+            <button class="rv-page-btn" :disabled="page === 1" @click="changePage(page - 1)">‹</button>
+            <span class="rv-page-info">Page {{ page }} / {{ totalPages }}</span>
+            <button class="rv-page-btn" :disabled="page >= totalPages" @click="changePage(page + 1)">›</button>
+          </div>
+        </template>
+      </section>
     </div>
-  </AppLayout>
+  </div>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
-import axios from 'axios'
-import AppLayout from '@/layouts/AppLayout.vue'
-import { useAuthStore } from '@/stores/auth'
+import { ref, computed, onMounted } from 'vue'
+import { registresService, type RegistreInfo, type RegistreEntry } from '@/services/registres'
 
-interface RegistreMeta { id: string; label: string; confidential: boolean }
-interface Entry { id: string; timestamp: string; action: string; entity_type: string; entity_id: string; user_id: string }
+const PAGE_SIZE = 50
 
-const LIMIT = 50
-const auth = useAuthStore()
-const registres = ref<RegistreMeta[]>([])
-const loading = ref(true)
-const error = ref('')
-const activeRegistre = ref<RegistreMeta | null>(null)
-const entries = ref<Entry[]>([])
-const entriesLoading = ref(false)
-const total = ref(0)
-const offset = ref(0)
-const exporting = ref(false)
-
-function headers() { return auth.accessToken ? { Authorization: `Bearer ${auth.accessToken}` } : {} }
-function formatTs(s: string) { return new Date(s).toLocaleString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) }
-function registreIcon(id: string) { const m: Record<string, string> = { kyc: '👤', alertes: '⚠️', dos: '🚨', statuts: '🔄', revisions: '📅', journal: '📋' }; return m[id] ?? '📁' }
-
-async function loadRegistres() {
-  loading.value = true
-  try {
-    const { data } = await axios.get('/api/registres', { headers: headers() })
-    registres.value = data.registres
-  } catch (e: any) { error.value = e.response?.data?.detail ?? 'Erreur de chargement.' }
-  finally { loading.value = false }
+const REGISTRE_DESCRIPTIONS: Record<string, string> = {
+  kyc:                    'Dossiers KYC ouverts dans la plateforme',
+  alertes:                'Alertes LBC/FT générées (auto ou manuelles)',
+  dossiers_risque:        'Dossiers bloqués ou à risque élevé',
+  dos:                    'Déclarations d\'Opérations Suspectes — Art. 63',
+  journal_actions:        'Toutes les actions système (piste d\'audit)',
+  transactions_surveillees: 'Dossiers ayant déclenché un trigger T1–T5',
+  mandats:                'Création et suivi des mandats',
+  autorisations_dirigeant: 'Décisions WRK-09 Dirigeant sur dossiers PPE',
 }
 
-async function openRegistre(r: RegistreMeta) {
-  activeRegistre.value = r
-  offset.value = 0
+const REPORT_TYPES = [
+  { id: 'conformite', label: 'Rapport de Conformité Périodique' },
+  { id: 'audit',      label: 'Piste d\'Audit Complète' },
+  { id: 'mandats',    label: 'Registre des Mandats Actifs' },
+  { id: 'client',     label: 'Rapport Client (dossier complet)' },
+] as const
+
+const registres = ref<RegistreInfo[]>([])
+const activeRegistre = ref<RegistreInfo | null>(null)
+const entries = ref<RegistreEntry[]>([])
+const total = ref(0)
+const page = ref(1)
+const loading = ref(false)
+const loadingList = ref(false)
+const error = ref('')
+const generatingReport = ref<string | null>(null)
+
+const totalPages = computed(() => Math.ceil(total.value / PAGE_SIZE))
+
+onMounted(async () => {
+  loadingList.value = true
+  try {
+    const res = await registresService.list()
+    registres.value = res.registres
+  } catch {
+    error.value = 'Impossible de charger la liste des registres.'
+  } finally {
+    loadingList.value = false
+  }
+})
+
+async function selectRegistre(reg: RegistreInfo) {
+  activeRegistre.value = reg
+  page.value = 1
   await loadEntries()
 }
 
 async function loadEntries() {
   if (!activeRegistre.value) return
-  entriesLoading.value = true
+  loading.value = true
+  error.value = ''
   try {
-    const { data } = await axios.get(`/api/registres/${activeRegistre.value.id}`, {
-      params: { limit: LIMIT, offset: offset.value },
-      headers: headers(),
-    })
-    entries.value = data.items
-    total.value = data.total
-  } catch (e: any) { error.value = e.response?.data?.detail ?? 'Erreur.' }
-  finally { entriesLoading.value = false }
+    const res = await registresService.getPage(activeRegistre.value.id, page.value, PAGE_SIZE)
+    entries.value = res.items
+    total.value = res.total
+  } catch (e: any) {
+    error.value = e?.response?.data?.detail ?? 'Erreur lors du chargement.'
+  } finally {
+    loading.value = false
+  }
 }
 
-async function exportPdf() {
+async function changePage(p: number) {
+  page.value = p
+  await loadEntries()
+}
+
+async function exportRegistre(format: 'pdf' | 'excel') {
   if (!activeRegistre.value) return
-  exporting.value = true
+  loading.value = true
   try {
-    const response = await axios.get(`/api/registres/${activeRegistre.value.id}/export`, {
-      params: { format: 'pdf' },
-      headers: headers(),
-      responseType: 'blob',
-    })
-    const url = URL.createObjectURL(new Blob([response.data], { type: 'application/pdf' }))
+    const blob = await registresService.exportBlob(activeRegistre.value.id, format)
+    const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
-    a.download = `registre-${activeRegistre.value.id}.pdf`
+    a.download = `${activeRegistre.value.id}.${format === 'excel' ? 'xlsx' : 'pdf'}`
+    document.body.appendChild(a)
     a.click()
+    document.body.removeChild(a)
     URL.revokeObjectURL(url)
-  } catch (e: any) { error.value = 'Erreur lors de l\'export.' }
-  finally { exporting.value = false }
+  } catch {
+    error.value = 'Erreur lors de l\'export.'
+  } finally {
+    loading.value = false
+  }
 }
 
-function prevPage() { offset.value = Math.max(0, offset.value - LIMIT); loadEntries() }
-function nextPage() { offset.value += LIMIT; loadEntries() }
+async function downloadReport(reportType: string) {
+  generatingReport.value = reportType
+  try {
+    const blob = await registresService.generateReport(reportType as any)
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `rapport_${reportType}_${new Date().toISOString().slice(0, 10)}.pdf`
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+  } catch {
+    error.value = 'Erreur lors de la génération du rapport.'
+  } finally {
+    generatingReport.value = null
+  }
+}
 
-onMounted(loadRegistres)
+function formatDate(iso: string): string {
+  if (!iso) return '—'
+  return new Date(iso).toLocaleString('fr-CI', {
+    day: '2-digit', month: '2-digit', year: 'numeric',
+    hour: '2-digit', minute: '2-digit',
+  })
+}
 </script>
+
+<style scoped>
+.registres-view {
+  padding: 0;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.rv-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.rv-title {
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: #1b2b4b;
+  margin: 0 0 0.2rem;
+}
+
+.rv-subtitle {
+  font-size: 0.8rem;
+  color: #64748b;
+  margin: 0;
+}
+
+.rv-export-bar {
+  display: flex;
+  gap: 0.5rem;
+  flex-shrink: 0;
+}
+
+.btn-export {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  background: #1b2b4b;
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  padding: 0.4rem 0.875rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.btn-export:hover { background: #c9a227; }
+.btn-export:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.rv-body {
+  display: flex;
+  gap: 1.25rem;
+  flex: 1;
+  min-height: 0;
+}
+
+/* ── Sidebar ── */
+.rv-sidebar {
+  width: 220px;
+  flex-shrink: 0;
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  padding: 0.75rem 0.5rem;
+  overflow-y: auto;
+}
+
+.rv-reg-item {
+  padding: 0.5rem 0.75rem;
+  border-radius: 7px;
+  cursor: pointer;
+  transition: background 0.12s;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.rv-reg-item:hover { background: #f1f5f9; }
+.rv-reg-item.active { background: rgba(27, 43, 75, 0.08); }
+
+.rv-reg-info {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  flex: 1;
+  min-width: 0;
+}
+
+.rv-reg-label {
+  font-size: 0.78rem;
+  font-weight: 500;
+  color: #1b2b4b;
+  line-height: 1.3;
+}
+
+.rv-reg-desc {
+  font-size: 0.68rem;
+  color: #94a3b8;
+  line-height: 1.2;
+  white-space: normal;
+}
+
+.rv-badge-conf {
+  font-size: 0.62rem;
+  font-weight: 700;
+  background: #fee2e2;
+  color: #dc2626;
+  padding: 1px 5px;
+  border-radius: 99px;
+  flex-shrink: 0;
+}
+
+.rv-separator {
+  border-top: 1px solid #e2e8f0;
+  margin: 0.75rem 0.5rem;
+}
+
+.rv-section-title {
+  font-size: 0.68rem;
+  font-weight: 700;
+  color: #94a3b8;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 0 0.75rem;
+  margin: 0 0 0.25rem;
+}
+
+.rv-report-item { color: #475569; }
+.rv-report-item .rv-reg-label { color: #475569; }
+
+.rv-spinner-sm {
+  width: 10px;
+  height: 10px;
+  border: 2px solid #c9a227;
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+  flex-shrink: 0;
+}
+
+/* ── Main content ── */
+.rv-main {
+  flex: 1;
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.rv-empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  color: #94a3b8;
+  gap: 0.75rem;
+}
+
+.rv-empty-icon { font-size: 2.5rem; }
+.rv-empty p { font-size: 0.875rem; margin: 0; }
+
+.rv-table-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1rem 1.25rem 0.75rem;
+  border-bottom: 1px solid #f1f5f9;
+}
+
+.rv-reg-title {
+  font-size: 0.9375rem;
+  font-weight: 700;
+  color: #1b2b4b;
+  margin: 0;
+}
+
+.rv-total {
+  font-size: 0.78rem;
+  color: #64748b;
+  background: #f1f5f9;
+  padding: 0.2rem 0.6rem;
+  border-radius: 99px;
+}
+
+.rv-table-wrap {
+  flex: 1;
+  overflow: auto;
+}
+
+.rv-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.8rem;
+}
+
+.rv-table th {
+  background: #f8fafc;
+  color: #64748b;
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 0.5rem 0.75rem;
+  text-align: left;
+  border-bottom: 1px solid #e2e8f0;
+  position: sticky;
+  top: 0;
+}
+
+.rv-table td {
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid #f1f5f9;
+  color: #334155;
+  vertical-align: middle;
+}
+
+.rv-table tr:last-child td { border-bottom: none; }
+
+.rv-mono { font-family: 'SF Mono', 'Fira Code', monospace; font-size: 0.72rem; }
+.rv-id { color: #94a3b8; max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.rv-action-badge {
+  background: #f1f5f9;
+  color: #475569;
+  font-size: 0.7rem;
+  font-weight: 600;
+  padding: 0.15rem 0.45rem;
+  border-radius: 4px;
+  font-family: 'SF Mono', 'Fira Code', monospace;
+}
+
+.rv-no-data {
+  text-align: center;
+  color: #94a3b8;
+  padding: 2rem;
+}
+
+/* ── Pagination ── */
+.rv-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 1rem;
+  padding: 0.75rem;
+  border-top: 1px solid #f1f5f9;
+}
+
+.rv-page-btn {
+  background: none;
+  border: 1px solid #e2e8f0;
+  border-radius: 5px;
+  width: 28px;
+  height: 28px;
+  cursor: pointer;
+  font-size: 1rem;
+  color: #475569;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.rv-page-btn:hover:not(:disabled) { border-color: #1b2b4b; color: #1b2b4b; }
+.rv-page-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.rv-page-info { font-size: 0.8rem; color: #64748b; }
+
+/* ── States ── */
+.rv-loading { padding: 1rem 1.25rem; color: #94a3b8; font-size: 0.85rem; }
+.rv-error { padding: 1rem 1.25rem; color: #dc2626; font-size: 0.85rem; }
+
+@keyframes spin { to { transform: rotate(360deg); } }
+</style>

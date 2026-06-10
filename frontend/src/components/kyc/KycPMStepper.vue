@@ -283,7 +283,7 @@
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { dossiersService, type KycPMData } from '@/services/dossiers'
 import CountrySelect from '@/components/common/CountrySelect.vue'
-import api from '@/services/auth'
+import api from '@/services/api'
 
 const props = defineProps<{
   dossierId: string

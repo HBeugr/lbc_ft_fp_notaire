@@ -131,8 +131,7 @@
 import { reactive, ref, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
-import { authService } from '@/services/auth'
-import type { UserRole } from '@/stores/auth'
+import { authService } from '@/services/api'
 
 const router = useRouter()
 const authStore = useAuthStore()
@@ -195,15 +194,8 @@ async function handleSubmit() {
   try {
     const res = await authService.changePassword(form.currentPassword, form.newPassword)
 
-    authStore.setAuth(res.access_token, {
-      id: res.user.id,
-      email: res.user.email,
-      firstName: res.user.first_name,
-      lastName: res.user.last_name,
-      role: res.user.role as UserRole,
-      departmentId: res.user.department_id,
-      departmentCode: '',
-    }, false)
+    authStore.setToken(res.access_token)
+    if (res.user) authStore.setUser(res.user)
 
     router.push({ name: 'dashboard' })
   } catch (err: any) {

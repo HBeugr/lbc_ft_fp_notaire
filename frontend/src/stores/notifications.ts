@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import api from '@/services/auth'
+import api from '@/services/api'
 
 const LS_KEY = 'lbc_seen_weights_version'
 

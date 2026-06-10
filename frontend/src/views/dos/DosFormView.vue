@@ -1,6 +1,5 @@
 <template>
-  <AppLayout>
-    <div class="p-6 space-y-5 max-w-4xl mx-auto">
+  <div class="p-6 space-y-5 max-w-4xl mx-auto">
       <!-- Bannière Art. 63 -->
       <div class="bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 flex items-start gap-3">
         <span class="text-amber-500 mt-0.5">⚠️</span>
@@ -334,14 +333,12 @@
         </div>
       </div>
     </div>
-  </AppLayout>
 </template>
 
 <script setup lang="ts">
 import { ref, reactive, onMounted } from 'vue'
 import { RouterLink, useRoute } from 'vue-router'
 import axios from 'axios'
-import AppLayout from '@/layouts/AppLayout.vue'
 import { useAuthStore } from '@/stores/auth'
 
 const auth = useAuthStore()

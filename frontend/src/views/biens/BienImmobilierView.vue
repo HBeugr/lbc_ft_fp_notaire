@@ -199,7 +199,7 @@
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import api from '@/services/auth'
+import api from '@/services/api'
 
 const router = useRouter()
 

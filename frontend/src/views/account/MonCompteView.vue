@@ -125,7 +125,7 @@
 
 <script setup lang="ts">
 import { reactive, ref, computed } from 'vue'
-import { authService } from '@/services/auth'
+import { authService } from '@/services/api'
 
 const form = reactive({ currentPassword: '', newPassword: '', confirmPassword: '' })
 const show = reactive({ current: false, new: false, confirm: false })

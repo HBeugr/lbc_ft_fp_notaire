@@ -57,7 +57,7 @@
 
 <script setup lang="ts">
 import { ref } from 'vue'
-import api from '@/services/auth'
+import api from '@/services/api'
 
 const props = withDefaults(defineProps<{
   dossierId: string
