@@ -122,27 +122,32 @@
         </div>
       </Teleport>
 
-      <!-- Trigger banners -->
+      <!-- Trigger banners — alignés sur les 6 triggers absolutoires backend (T1-T6) -->
       <TriggerBanner v-if="dossier.trigger_actif === 'T1'" />
       <TriggerBanner
-        v-else-if="dossier.trigger_actif === 'T8'"
-        trigger="T8"
-        description="Pays sous contre-mesures GAFI (liste noire) détecté dans les données KYC — vigilance renforcée obligatoire (FATF Rec. 19). Ce dossier ne peut pas être validé sans autorisation du Notaire Principal."
+        v-else-if="dossier.trigger_actif === 'T2'"
+        trigger="T2"
+        description="Paiement en espèces supérieur au seuil réglementaire (> 15M FCFA) détecté — opération à risque élevé de blanchiment."
+      />
+      <TriggerBanner
+        v-else-if="dossier.trigger_actif === 'T3'"
+        trigger="T3"
+        description="Client figurant sur une liste de sanctions (OFAC / UE-CSNU / GIABA-BCEAO) — blocage et gel des avoirs, DOS obligatoire."
       />
       <TriggerBanner
         v-else-if="dossier.trigger_actif === 'T4'"
         trigger="T4"
-        description="Pays sous surveillance GAFI (liste grise) détecté dans les données KYC — vigilance renforcée recommandée (FATF Rec. 21)."
+        description="Pays sur liste grise/noire GAFI détecté dans les données KYC — vigilance renforcée obligatoire (FATF Rec. 19/21)."
       />
       <TriggerBanner
-        v-else-if="dossier.trigger_actif === 'T2'"
-        trigger="T2"
-        description="Paiement en espèces supérieur au seuil réglementaire détecté — opération à risque élevé de blanchiment."
+        v-else-if="dossier.trigger_actif === 'T5'"
+        trigger="T5"
+        description="Refus documentaire ou documents incohérents — dossier mis en attente, signalement interne au Responsable Conformité."
       />
       <TriggerBanner
-        v-else-if="dossier.trigger_actif === 'T7'"
-        trigger="T7"
-        description="Opération en espèces de très haute valeur (>3× seuil Art. 74) — vigilance renforcée et Déclaration d'Opération Suspecte (DOS) à envisager."
+        v-else-if="dossier.trigger_actif === 'T6'"
+        trigger="T6"
+        description="Bénéficiaire effectif (≥ 25%) non identifiable — vigilance renforcée, poursuite conditionnée à son identification."
       />
 
       <!-- Panneau de transitions -->
@@ -1503,7 +1508,8 @@ const availableTransitions = computed((): TransitionDef[] => {
   const trigger = dossier.value.trigger_actif
   return (TRANSITIONS_CONFIG[statut] ?? []).filter(t => {
     if (!t.roles.includes(role)) return false
-    if (t.wrk09 && trigger && ['T1', 'T8'].includes(trigger) && role !== 'notaire_principal') return false
+    // Tout trigger absolutoire (T1-T6) force ÉLEVÉ → autorisation Notaire Principal requise (WRK-09)
+    if (t.wrk09 && trigger && role !== 'notaire_principal') return false
     return true
   })
 })
@@ -1517,7 +1523,7 @@ function openTransitionModal(t: TransitionDef) {
   const trigger = dossier.value?.trigger_actif
   transitionModal.value = {
     open: true, to: t.to, label: t.label, color: t.color,
-    wrk09Warning: !!t.wrk09 && !!trigger && ['T1', 'T8'].includes(trigger),
+    wrk09Warning: !!t.wrk09 && !!trigger,
     commentaire: '', loading: false, error: '',
   }
 }

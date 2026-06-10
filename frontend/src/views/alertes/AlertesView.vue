@@ -300,21 +300,17 @@ async function submitWrk09() {
   } finally { d.loading = false }
 }
 
+// Aligné sur l'enum backend type_alerte_enum (models/alerte.py · schemas/alertes.py)
 const ALERT_TYPES = [
-  { value: 'TRIGGER_T1', label: 'T1 — PPE détecté' },
-  { value: 'TRIGGER_T2', label: 'T2 — Espèces > 15M FCFA' },
-  { value: 'TRIGGER_T3', label: 'T3 — Sanctions (Blocage Art. 89)' },
-  { value: 'TRIGGER_T4', label: 'T4 — Pays liste grise GAFI' },
-  { value: 'TRIGGER_T5', label: 'T5 — Refus documentaire' },
-  { value: 'TRIGGER_T6', label: 'T6 — BE non identifiable' },
-  { value: 'TRIGGER_T7', label: 'T7 — Espèces ≥ Art. 74 (immo)' },
-  { value: 'TRIGGER_T8', label: 'T8 — Pays liste noire GAFI' },
-  { value: 'PRESSE_NEGATIVE', label: 'Presse négative PPE' },
-  { value: 'BIEN_TRANSACTIONS', label: '>2 transactions / 24 mois (même bien)' },
+  { value: 'T1_PPE', label: 'T1 — PPE détectée' },
+  { value: 'T2_ESPECES', label: 'T2 — Espèces > 15M FCFA' },
+  { value: 'T3_SANCTIONS', label: 'T3 — Client sur liste de sanctions' },
+  { value: 'T4_GAFI', label: 'T4 — Pays liste noire/grise GAFI' },
+  { value: 'T5_REFUS_DOC', label: 'T5 — Refus documentaire' },
+  { value: 'T6_BE_NON_IDENTIFIABLE', label: 'T6 — Bénéficiaire effectif non identifiable' },
   { value: 'INCOHERENCE_DOC', label: 'Incohérence documentaire (Axe 8)' },
-  { value: 'MANDANT_NON_IDENTIFIE', label: 'Mandant non identifié (compte tiers)' },
-  { value: 'SANCTIONS_PERIMEES', label: 'Correspondance listes de sanctions' },
-  { value: 'SIGNALEMENT_INTERNE', label: 'Signalement interne (agent)' },
+  { value: 'MONTAGE_COMPLEXE', label: 'Montage juridique complexe' },
+  { value: 'AUTRE', label: 'Autre' },
 ]
 
 function typeLabel(type: string) {

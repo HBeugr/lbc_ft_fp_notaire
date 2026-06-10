@@ -193,7 +193,7 @@
               <option value="cheque_simple">Chèque simple / mix — Score 1 (Moyen)</option>
               <option value="especes_hors">Espèces hors seuils — Score 1 (Moyen)</option>
               <option value="especes_15m">Espèces &gt; 15M FCFA — Score 2 (Élevé · T2)</option>
-              <option value="especes_art74">Espèces ≥ seuil Art. 74 (immo) — Score 2 (Élevé · T7)</option>
+              <option value="especes_art74">Espèces ≥ seuil Art. 74 (immo) — Score 2 (Élevé · T2)</option>
               <option value="tiers_non_identifie">Paiement via tiers non identifié — Score 2 (Élevé · Suspicion)</option>
             </select>
           </div>
@@ -298,12 +298,12 @@
       </div>
     </div>
 
-    <!-- ── Onglet 4 : Triggers T1-T7 ── -->
+    <!-- ── Onglet 4 : Triggers T1-T6 ── -->
     <div v-else-if="activeTab === 'triggers'" class="card triggers-panel">
-      <h3 class="section-title">Triggers d'Alerte T1-T7</h3>
+      <h3 class="section-title">Triggers Absolutoires T1-T6</h3>
       <p class="section-sub">
-        Les 7 déclencheurs réglementaires de vigilance renforcée et/ou de déclaration. Chaque trigger
-        active une procédure spécifique définie par l'Ordonnance N°2023-875.
+        Les 6 déclencheurs absolutoires qui forcent automatiquement le niveau ÉLEVÉ, indépendamment
+        du score calculé. Non désactivables — verrouillés par l'Ordonnance N°2023-875.
       </p>
 
       <div class="trigger-list">
@@ -378,73 +378,66 @@ const TABS = [
   { id: 'overview',    label: "Vue d'ensemble" },
   { id: 'criteres',   label: "Critères d'évaluation" },
   { id: 'simulateur', label: 'Simulateur de Risque' },
-  { id: 'triggers',   label: 'Triggers T1-T7' },
+  { id: 'triggers',   label: 'Triggers T1-T6' },
   { id: 'seuils',     label: '⚙️ Seuils' },
 ]
 
+// Les 6 triggers absolutoires forcent le niveau ÉLEVÉ indépendamment du score
+// calculé (source : scoring_service.calculate — T1..T6, CLAUDE.md verrouillé).
 const TRIGGERS = [
   {
     code: 'T1',
     label: 'PPE — Personne Politiquement Exposée',
     niveau: 'ÉLEVÉ',
     color: 'eleve',
-    description: 'Dossier impliquant une PPE nationale ou étrangère, ou un membre de son entourage direct.',
-    consequence: 'Vigilance renforcée obligatoire. Autorisation du Dirigeant requise (WRK-09) avant toute poursuite de la relation.',
+    description: 'Client PPE nationale, étrangère, ou membre de son entourage direct.',
+    consequence: 'Force automatiquement le niveau ÉLEVÉ. Vigilance renforcée obligatoire et autorisation du Notaire avant poursuite de la relation.',
     ref: 'Art. 47-50 Ordonnance 2023-875',
   },
   {
     code: 'T2',
-    label: 'Transaction espèces ≥ seuil LBC/FT',
+    label: 'Transaction espèces > 15M FCFA',
     niveau: 'ÉLEVÉ',
     color: 'eleve',
-    description: 'Paiement partiel ou total en espèces dépassant le seuil réglementaire (> 15M FCFA pour l\'immobilier).',
-    consequence: 'DOS (Déclaration d\'Opération Suspecte) à envisager. Justification de l\'origine des fonds obligatoire. Blocage du bien immobilier (§80a CENTIF-CI).',
-    ref: 'Lignes Directrices Immo CENTIF-CI §80a ; Art. 74 Ordonnance 2023-875',
+    description: 'Paiement partiel ou total en espèces dépassant 15 000 000 FCFA.',
+    consequence: 'Force ÉLEVÉ. Justification de l\'origine des fonds obligatoire. DOS (Déclaration d\'Opération Suspecte) à envisager.',
+    ref: 'Art. 72 Ordonnance 2023-875',
   },
   {
     code: 'T3',
-    label: 'Criblage sanctions — Match positif',
+    label: 'Client sur liste de sanctions',
     niveau: 'CRITIQUE',
     color: 'critique',
-    description: 'Le client figure sur une liste de sanctions internationales (ONU, UE, OFAC) ou nationales (liste AGERC).',
-    consequence: 'Blocage immédiat et gel des avoirs. Workflow Gel des Avoirs 6 phases obligatoire. DOS obligatoire (Art. 74 Ordonnance 2023-875).',
+    description: 'Le client figure sur une liste de sanctions (OFAC, UE-CSNU, GIABA-BCEAO).',
+    consequence: 'Force ÉLEVÉ. Blocage immédiat et gel des avoirs. DOS obligatoire.',
     ref: 'Art. 89 Ordonnance 2023-875 ; Résolutions ONU 1267/1373',
   },
   {
     code: 'T4',
-    label: 'Origine géographique à risque',
+    label: 'Pays liste noire / grise GAFI',
     niveau: 'ÉLEVÉ',
     color: 'eleve',
-    description: 'Client ou fonds provenant d\'un pays figurant sur la liste grise ou noire du GAFI, ou pays sous embargo.',
-    consequence: 'Vigilance renforcée. Due diligence approfondie sur l\'origine des fonds. Approbation RC requise.',
+    description: 'Client ou fonds liés à un pays figurant sur la liste grise ou noire du GAFI.',
+    consequence: 'Force ÉLEVÉ. Due diligence approfondie sur l\'origine des fonds. Approbation du Responsable Conformité requise.',
     ref: 'Recommandation GAFI 19 ; Art. 51 Ordonnance 2023-875',
   },
   {
     code: 'T5',
-    label: 'Secteur d\'activité à risque élevé',
-    niveau: 'MOYEN / ÉLEVÉ',
-    color: 'moyen',
-    description: 'Dossier impliquant des secteurs sensibles : crypto-actifs, jeux d\'argent, import-export opaque, OEPC.',
-    consequence: 'Contrôle renforcé de la source des fonds. Mise à jour documentaire plus fréquente (trimestrielle).',
-    ref: 'Recommandations GAFI 22-23 ; Art. 52 Ordonnance 2023-875',
+    label: 'Refus documentaire',
+    niveau: 'ÉLEVÉ',
+    color: 'eleve',
+    description: 'Refus du client de fournir les documents KYC, ou documents incohérents / falsifiés.',
+    consequence: 'Force ÉLEVÉ. Mise en attente du dossier. Signalement interne immédiat au RC. DOS possible si soupçon fondé.',
+    ref: 'Art. 45 Ordonnance 2023-875',
   },
   {
     code: 'T6',
-    label: 'Documentation suspecte / refus de coopérer',
+    label: 'Bénéficiaire effectif non identifiable',
     niveau: 'ÉLEVÉ',
     color: 'eleve',
-    description: 'Documents fournis incohérents, falsifiés, ou refus du client de compléter le KYC malgré relance.',
-    consequence: 'Mise en attente du dossier. Signalement interne immédiat au RC. Peut déclencher une DOS si soupçon fondé.',
-    ref: 'Art. 45 Ordonnance 2023-875 ; Procédure interne KYC §4.3',
-  },
-  {
-    code: 'T7',
-    label: 'Alerte J-180 — Conservation légale',
-    niveau: 'CRITIQUE',
-    color: 'critique',
-    description: 'Dossier archivé approchant la limite de conservation légale de 10 ans (alertes à J-180, J-90 et J-30).',
-    consequence: 'Confirmation double Dirigeant + RC requise avant toute suppression. Archivage définitif ou destruction certifiée.',
-    ref: 'Art. 67 Ordonnance 2023-875 ; Art. 3 Loi sur les archives',
+    description: 'Impossibilité d\'identifier le(s) bénéficiaire(s) effectif(s) réel(s) (≥ 25%) de l\'opération.',
+    consequence: 'Force ÉLEVÉ. Vigilance renforcée. Poursuite conditionnée à l\'identification effective du bénéficiaire.',
+    ref: 'Ordonnance 2023-875 — identification du bénéficiaire effectif',
   },
 ]
 
@@ -739,7 +732,7 @@ onMounted(() => { loadStats() })
 .seuils-link { color: var(--color-sidebar-bg); font-weight: 600; }
 .seuils-link:hover { text-decoration: underline; }
 
-/* ── Triggers T1-T7 ── */
+/* ── Triggers T1-T6 ── */
 .triggers-panel { }
 .trigger-list { display: flex; flex-direction: column; gap: 0.875rem; margin-top: 1rem; }
 .trigger-card {

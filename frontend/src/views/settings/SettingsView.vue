@@ -52,7 +52,7 @@
         <div class="threshold-row">
           <label class="field-label">
             Seuil espèces Art. 74 (FCFA)
-            <span class="field-hint">Trigger T7 automatique au-dessus de ce montant</span>
+            <span class="field-hint">Trigger T2 automatique (espèces) au-dessus de ce montant</span>
           </label>
           <input
             v-model.number="seuilArt74"
