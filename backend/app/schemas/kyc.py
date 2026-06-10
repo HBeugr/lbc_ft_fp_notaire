@@ -255,10 +255,16 @@ TypeOperation = Literal[
     "fiducicommis", "succession", "donation", "autre"
 ]
 
+ModePaiement = Literal["virement", "cheque", "especes", "mix", "paiement_tiers"]
+
+
 class DossierCreate(BaseModel):
     type_client: TypeClient
     type_operation: TypeOperation
     type_operation_detail: str | None = None
+    montant_transaction: float | None = None
+    mode_paiement: ModePaiement | None = None
+    nb_parties: int = 1
 
 
 class DossierOut(BaseModel):
@@ -267,6 +273,9 @@ class DossierOut(BaseModel):
     type_client: str
     type_operation: str
     type_operation_detail: str | None
+    montant_transaction: float | None
+    mode_paiement: str | None
+    nb_parties: int
     statut: str
     assigned_to: str | None
     created_by: str
@@ -277,10 +286,83 @@ class DossierOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
-class ScoreOut(BaseModel):
+# ── Scoring / Matrice de risque (CDC Module 2) ─────────────────────────────────
+
+AxisCode = Literal[
+    "type_client", "pays_geographie", "type_operation", "montant", "mode_paiement",
+    "complexite", "ppe", "coherence_doc", "secteur", "intermediaires",
+]
+
+
+class ScoringAxisPrefill(BaseModel):
+    valeur: int
+    auto: bool
+    source: str = ""
+
+
+class ScoringPrefillOut(BaseModel):
+    axes: dict[str, ScoringAxisPrefill]
+
+
+class OverrideIn(BaseModel):
+    axe: str
+    valeur_override: int = Field(..., ge=0, le=2)
+    justification: str = Field(..., min_length=50)
+
+
+class ScoreCalcIn(BaseModel):
+    axes: dict[str, int] = Field(default_factory=dict)
+    # Données opération (persistées sur le dossier)
+    montant_transaction: float | None = None
+    mode_paiement: ModePaiement | None = None
+    nb_parties: int | None = None
+    # Triggers explicites saisis par l'agent (T3–T6 ; T1/T2 dérivés)
+    sur_liste_sanctions: bool = False
+    pays_liste_noire_gafi: bool = False
+    pays_liste_grise_gafi: bool = False
+    refus_documents: bool = False
+    be_non_identifiable: bool = False
+    overrides: list[OverrideIn] = Field(default_factory=list)
+
+
+class ScoreAxisOut(BaseModel):
+    code: str
+    label: str
     score: int
-    classification: str
-    triggers_actifs: dict[str, bool]
+
+
+class ScoreResultOut(BaseModel):
+    total: int
+    niveau: str
+    axes: list[ScoreAxisOut]
+    triggers_actifs: list[str]
     force_par_trigger: bool
     trigger_principal: str | None
-    axes: dict[str, int]
+
+
+# ── Simulateur stateless (onglet « Simulateur de Risque ») ─────────────────────
+
+class SimulateurIn(BaseModel):
+    profil_code: str = ""
+    zone_geo: str = ""
+    type_operation: str = ""
+    montant: int = Field(0, ge=0, le=2)
+    mode_paiement_code: str = ""
+    montage_juridique: int = Field(0, ge=0, le=2)
+    is_ppe: bool = False
+    qualite_code: str = ""
+    secteur_activite: int = Field(0, ge=0, le=2)
+    reseau_code: str = ""
+
+
+class SimAxeOut(BaseModel):
+    code: str
+    label: str
+    score: int
+    justification: str = ""
+
+
+class SimResultOut(BaseModel):
+    score_total: int
+    niveau: str
+    axes: list[SimAxeOut]
