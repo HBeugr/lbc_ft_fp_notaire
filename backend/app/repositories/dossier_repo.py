@@ -1,5 +1,6 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
+from sqlalchemy.orm import selectinload
 from app.models.dossier import Dossier, KycPP, KycPM, DossierHistorique, CommentaireInterne
 
 
@@ -89,12 +90,26 @@ async def add_commentaire(
 
 
 async def get_kyc_pp(db: AsyncSession, dossier_id: str) -> KycPP | None:
-    result = await db.execute(select(KycPP).where(KycPP.dossier_id == dossier_id))
+    # eager-load des relations : évite un lazy-load async (MissingGreenlet) lors de
+    # la sérialisation KycPPOut.model_validate(kyc).
+    result = await db.execute(
+        select(KycPP)
+        .options(selectinload(KycPP.beneficiaires_effectifs), selectinload(KycPP.ppe_declarations))
+        .where(KycPP.dossier_id == dossier_id)
+    )
     return result.scalar_one_or_none()
 
 
 async def get_kyc_pm(db: AsyncSession, dossier_id: str) -> KycPM | None:
-    result = await db.execute(select(KycPM).where(KycPM.dossier_id == dossier_id))
+    result = await db.execute(
+        select(KycPM)
+        .options(
+            selectinload(KycPM.beneficiaires_effectifs),
+            selectinload(KycPM.ppe_declarations),
+            selectinload(KycPM.actionnaires),
+        )
+        .where(KycPM.dossier_id == dossier_id)
+    )
     return result.scalar_one_or_none()
 
 
@@ -104,13 +119,11 @@ async def upsert_kyc_pp(db: AsyncSession, dossier_id: str, **kwargs) -> KycPP:
         for k, v in kwargs.items():
             setattr(existing, k, v)
         await db.commit()
-        await db.refresh(existing)
-        return existing
-    kyc = KycPP(dossier_id=dossier_id, **kwargs)
-    db.add(kyc)
-    await db.commit()
-    await db.refresh(kyc)
-    return kyc
+    else:
+        db.add(KycPP(dossier_id=dossier_id, **kwargs))
+        await db.commit()
+    # Re-fetch avec relations eager-loadées (sérialisation sûre en async)
+    return await get_kyc_pp(db, dossier_id)
 
 
 async def upsert_kyc_pm(db: AsyncSession, dossier_id: str, **kwargs) -> KycPM:
@@ -119,10 +132,7 @@ async def upsert_kyc_pm(db: AsyncSession, dossier_id: str, **kwargs) -> KycPM:
         for k, v in kwargs.items():
             setattr(existing, k, v)
         await db.commit()
-        await db.refresh(existing)
-        return existing
-    kyc = KycPM(dossier_id=dossier_id, **kwargs)
-    db.add(kyc)
-    await db.commit()
-    await db.refresh(kyc)
-    return kyc
+    else:
+        db.add(KycPM(dossier_id=dossier_id, **kwargs))
+        await db.commit()
+    return await get_kyc_pm(db, dossier_id)
