@@ -50,6 +50,12 @@
         </template>
       </div>
 
+      <!-- Blocage / alerte sanctions (T3) renvoyé par le save -->
+      <div v-if="saveErrorMsg" role="alert"
+        style="background:#fee2e2;color:#b91c1c;border:1px solid #fca5a5;border-radius:8px;padding:0.75rem 1rem;font-size:0.875rem;font-weight:600;margin-bottom:1rem">
+        ⛔ {{ saveErrorMsg }}
+      </div>
+
       <!-- ── Section 1 — Identité ── -->
       <div v-if="currentStep === 0" class="card section-card">
         <h3 class="section-title">S1 — Identité</h3>
@@ -425,7 +431,17 @@ const dossierId = route.params.id as string
 const loading     = ref(true)
 const saving      = ref(false)
 const saveStatus  = ref<'idle' | 'saving' | 'saved' | 'error'>('idle')
+const saveErrorMsg = ref('')
 const errors      = ref<Record<string, string>>({})
+
+// Un blocage T3 sanctions renvoie un detail STRING (HTTPException) ; une erreur
+// de validation Pydantic renvoie un detail ARRAY. On affiche le message explicite
+// dans le 1er cas (ex. « Client sur liste de sanctions — dossier bloqué »).
+function setSaveError(e: any): void {
+  const detail = e?.response?.data?.detail
+  saveErrorMsg.value = (e?.response?.status === 422 && typeof detail === 'string') ? detail : ''
+  saveStatus.value = 'error'
+}
 const currentStep = ref(0)
 const kycId       = ref<string | undefined>(undefined)
 
@@ -514,8 +530,8 @@ async function autoSave() {
     await saveSection()
     saveStatus.value = 'saved'
     setTimeout(() => { if (saveStatus.value === 'saved') saveStatus.value = 'idle' }, 3000)
-  } catch {
-    saveStatus.value = 'error'
+  } catch (e) {
+    setSaveError(e)
   }
 }
 
@@ -563,8 +579,8 @@ async function next() {
     saveStatus.value = 'saved'
     setTimeout(() => { if (saveStatus.value === 'saved') saveStatus.value = 'idle' }, 2000)
     currentStep.value++
-  } catch {
-    saveStatus.value = 'error'
+  } catch (e) {
+    setSaveError(e)
   } finally {
     saving.value = false
   }
@@ -578,8 +594,8 @@ async function finish() {
   try {
     await saveSection()
     router.push({ name: 'kyc-detail', params: { id: dossierId } })
-  } catch {
-    saveStatus.value = 'error'
+  } catch (e) {
+    setSaveError(e)
   } finally {
     saving.value = false
   }
