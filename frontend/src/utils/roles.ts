@@ -2,7 +2,7 @@ export const ROLE_LABELS: Record<string, string> = {
   admin:                  'Administrateur',
   notaire_principal:      'Notaire Principal',
   responsable_conformite: 'Responsable Conformité',
-  clercs:                 'Clercs',
+  clercs:                 'Clerc Principal',
 }
 
 export function formatRole(role: string): string {

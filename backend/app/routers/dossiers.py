@@ -35,12 +35,21 @@ class CommentaireOut(BaseModel):
             created_at=obj.created_at.isoformat() if obj.created_at else "",
         )
 
+class AssignableUserOut(BaseModel):
+    id: str
+    full_name: str
+    role: str
+
+
 router = APIRouter(prefix="/dossiers", tags=["dossiers"])
 
 _STATUTS_VALIDES = [
     "brouillon", "en_analyse", "vigilance_renforcee",
     "valide", "bloque", "traite", "cloture", "archive",
 ]
+
+# Rôles pouvant se voir assigner un KYC / dossier : Notaire Principal et Clerc.
+_ASSIGNABLE_ROLES = ("notaire_principal", "clercs")
 
 
 def _ref() -> str:
@@ -99,6 +108,24 @@ async def create_dossier(
     return DossierOut.model_validate(dossier)
 
 
+@router.get("/assignables", response_model=list[AssignableUserOut])
+async def list_assignables(
+    current_user: User = Depends(require_supervisor),
+    db: AsyncSession = Depends(get_db),
+) -> list[AssignableUserOut]:
+    """Utilisateurs assignables à un KYC / dossier : Notaire Principal + Clerc.
+
+    Accessible aux superviseurs (admin, notaire_principal) — contrairement à
+    GET /users réservé à l'admin.
+    """
+    users = await user_repo.get_all(db)
+    return [
+        AssignableUserOut(id=u.id, full_name=u.full_name, role=u.role)
+        for u in users
+        if u.is_active and u.role in _ASSIGNABLE_ROLES
+    ]
+
+
 @router.get("/{dossier_id}", response_model=DossierOut)
 async def get_dossier(
     dossier_id: str,
@@ -127,6 +154,11 @@ async def assign_dossier(
     target_user = await user_repo.get_by_id(db, user_id)
     if not target_user or not target_user.is_active:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Utilisateur invalide.")
+    if target_user.role not in _ASSIGNABLE_ROLES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Seul un Notaire Principal ou un Clerc peut se voir assigner un dossier.",
+        )
     from sqlalchemy import update as sa_update
     from app.models.dossier import Dossier
     await db.execute(sa_update(Dossier).where(Dossier.id == dossier_id).values(assigned_to=user_id))

@@ -326,4 +326,18 @@ export const dossiersService = {
     const { data } = await api.patch<DossierOut>(`/dossiers/${id}/statut`, { statut, commentaire })
     return data
   },
+
+  // Assignation — utilisateurs assignables (Notaire Principal + Clerc)
+  async getAssignables(_dossierId: string): Promise<{ id: string; full_name: string; role: string }[]> {
+    const { data } = await api.get<{ id: string; full_name: string; role: string }[]>('/dossiers/assignables')
+    return data
+  },
+
+  // Assigner le dossier à un utilisateur
+  async assign(dossierId: string, userId: string): Promise<DossierOut> {
+    const { data } = await api.patch<DossierOut>(`/dossiers/${dossierId}/assign`, null, {
+      params: { user_id: userId },
+    })
+    return data
+  },
 }
