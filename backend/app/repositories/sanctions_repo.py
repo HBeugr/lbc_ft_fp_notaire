@@ -4,6 +4,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.sanction import ListeSanctions, EntreeSanction
 
 
+def _cap(value, limit: int) -> str | None:
+    """Tronque une valeur à la longueur max de la colonne (évite 'Data too long').
+
+    Le parser peut sur-capturer certains champs (ex. nationalité ONU mêlée à du
+    texte arabe / des dates) ; on borne défensivement avant insertion.
+    """
+    if not value:
+        return None
+    return str(value)[:limit]
+
+
 async def create_liste(
     db: AsyncSession,
     *,
@@ -25,10 +36,10 @@ async def create_liste(
     for e in entries:
         db.add(EntreeSanction(
             liste_id=liste.id,
-            nom=e["nom"],
-            date_naissance=(e.get("date_naissance") or None),
-            nationalite=(e.get("nationalite") or None),
-            lieu_naissance=(e.get("lieu_naissance") or None),
+            nom=_cap(e.get("nom"), 500) or "",
+            date_naissance=_cap(e.get("date_naissance"), 40),
+            nationalite=_cap(e.get("nationalite"), 120),
+            lieu_naissance=_cap(e.get("lieu_naissance"), 255),
         ))
     await db.commit()
     await db.refresh(liste)
