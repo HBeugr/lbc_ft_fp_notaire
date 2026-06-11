@@ -16,6 +16,7 @@ from app.routers import revisions as revisions_router
 from app.routers import registres as registres_router
 from app.routers import scoring as scoring_router
 from app.routers import sanctions as sanctions_router
+from app.routers import kyc_screening as kyc_screening_router
 from app.routers import documents as documents_router
 from app.routers import rapports as rapports_router
 from app.routers import admin as admin_router
@@ -113,6 +114,7 @@ app.include_router(registres_router.router, prefix="/api")
 app.include_router(scoring_router.router, prefix="/api")
 app.include_router(scoring_router.sim_router, prefix="/api")
 app.include_router(sanctions_router.router, prefix="/api")
+app.include_router(kyc_screening_router.router, prefix="/api")
 app.include_router(documents_router.router, prefix="/api")
 app.include_router(rapports_router.router, prefix="/api")
 app.include_router(admin_router.router, prefix="/api")

@@ -340,4 +340,20 @@ export const dossiersService = {
     })
     return data
   },
+
+  // Pré-vérification sanctions temps réel pendant la saisie KYC (sans audit ni T3)
+  async checkSanctionsPreScreen(
+    nom: string,
+    prenoms: string,
+    dateNaissance?: string,
+    nationalite?: string,
+  ): Promise<{ level: string; score: number; liste: string | null; reason: string | null }> {
+    const { data } = await api.post('/kyc/screening/pre-check', {
+      nom,
+      prenoms,
+      date_naissance: dateNaissance || null,
+      nationalite: nationalite || null,
+    })
+    return data
+  },
 }

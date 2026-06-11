@@ -1,12 +1,12 @@
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, delete as sa_delete
+from sqlalchemy import select, delete as sa_delete, update as sa_update
 
 from app.core.database import get_db
 from app.core.deps import get_current_user
 from app.models.user import User
 from app.models.dossier import Dossier, KycBE, KycPPE, KycActionnaire
-from app.repositories import dossier_repo, audit_repo
+from app.repositories import dossier_repo, audit_repo, alertes_repo, sanctions_repo
 from app.schemas.kyc import (
     KycPPUpsert, KycPPOut,
     KycPMUpsert, KycPMOut,
@@ -15,8 +15,86 @@ from app.schemas.kyc import (
     KycPPECreate, KycPPEOut,
 )
 from app.routers.scoring import recompute_cache
+from app.services import sanctions_service
 
 router = APIRouter(prefix="/dossiers", tags=["kyc"])
+
+_SANCTIONS_BLOCKED_DETAIL = (
+    "Correspondance liste de sanctions confirmée (nom + date de naissance). "
+    "Dossier bloqué — Trigger T3 absolutoire (Art. 89). Saisie d'une DOS requise."
+)
+
+
+async def _check_sanctions_on_save(
+    db: AsyncSession,
+    *,
+    current_user: User,
+    ip: str,
+    dossier: Dossier,
+    nom: str,
+    date_naissance=None,
+    lieu_naissance: str | None = None,
+    nationalite: str | None = None,
+) -> None:
+    """Criblage formel au save du KYC — logique assujetti.
+
+    blocked → T3 absolutoire (ÉLEVÉ + bloqué) + alerte + HTTP 422.
+    warning → save autorisé, alerte RC + passage en_analyse.
+    clear / no_lists → rien. Best-effort : une erreur de criblage ne bloque jamais
+    la sauvegarde (sauf le blocage T3 intentionnel).
+    """
+    if not nom or len(nom.strip()) < 3:
+        return
+    try:
+        listes = await sanctions_repo.get_active_with_entries(db)
+        result = sanctions_service.pre_check(
+            nom=nom, date_naissance=date_naissance,
+            lieu_naissance=lieu_naissance, nationalite=nationalite, listes=listes,
+        )
+    except Exception:
+        return  # criblage best-effort
+
+    level = result["level"]
+    if level == "blocked":
+        await db.execute(
+            sa_update(Dossier).where(Dossier.id == dossier.id).values(
+                trigger_actif="T3", classification="ELEVE",
+                force_par_trigger=True, statut="bloque",
+            )
+        )
+        await alertes_repo.create(
+            db, dossier_id=dossier.id, type_alerte="T3_SANCTIONS",
+            niveau="ELEVE", statut="ouverte",
+            description=(
+                f"Correspondance sanctions confirmée (score {result['score']}%) — "
+                f"liste {result['liste']}. Trigger T3, blocage Art. 89."
+            ),
+        )
+        await audit_repo.log(
+            db, action="sanctions.t3_active", user_id=current_user.id,
+            user_role=current_user.role, entity_type="dossier", entity_id=dossier.id,
+            ip=ip, detail={"liste": result["liste"], "score": result["score"]},
+        )
+        await db.commit()
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=_SANCTIONS_BLOCKED_DETAIL)
+
+    if level == "warning":
+        try:
+            await alertes_repo.create(
+                db, dossier_id=dossier.id, type_alerte="T3_SANCTIONS",
+                niveau="MOYEN", statut="ouverte",
+                description=(
+                    f"Correspondance partielle sanctions (score {result['score']}%) — "
+                    f"liste {result['liste']}. Date de naissance non confirmée — vérification RC requise."
+                ),
+            )
+            if dossier.statut == "brouillon":
+                await db.execute(
+                    sa_update(Dossier).where(Dossier.id == dossier.id).values(statut="en_analyse")
+                )
+            await db.commit()
+        except Exception:
+            pass
 
 
 def _can_access(user: User, dossier: Dossier) -> bool:
@@ -81,6 +159,14 @@ async def upsert_kyc_pp(
         entity_id=dossier_id,
         ip=ip,
         detail={"classification": result.classification, "score": result.score},
+    )
+    # Criblage formel sanctions (T3 absolutoire si correspondance confirmée) — CDC §2.2
+    await _check_sanctions_on_save(
+        db, current_user=current_user, ip=ip, dossier=dossier,
+        nom=f"{data.get('nom', '')} {data.get('prenoms', '')}".strip(),
+        date_naissance=data.get("date_naissance"),
+        lieu_naissance=data.get("lieu_naissance"),
+        nationalite=data.get("nationalite"),
     )
     be_result = await db.execute(select(KycBE).where(KycBE.kyc_pp_id == kyc.id))
     ppe_result = await db.execute(select(KycPPE).where(KycPPE.kyc_pp_id == kyc.id))
@@ -190,6 +276,11 @@ async def upsert_kyc_pm(
         entity_id=dossier_id,
         ip=ip,
         detail={"classification": result.classification, "score": result.score},
+    )
+    # Criblage formel sanctions sur la dénomination sociale + représentant légal — CDC §2.2
+    nom_pm = " ".join(filter(None, [data.get("denomination_sociale"), data.get("nom_representant_legal")])).strip()
+    await _check_sanctions_on_save(
+        db, current_user=current_user, ip=ip, dossier=dossier, nom=nom_pm,
     )
     be_result = await db.execute(select(KycBE).where(KycBE.kyc_pm_id == kyc.id))
     act_result = await db.execute(select(KycActionnaire).where(KycActionnaire.kyc_pm_id == kyc.id).order_by(KycActionnaire.ordre))

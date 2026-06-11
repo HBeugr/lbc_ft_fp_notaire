@@ -126,3 +126,78 @@ def screen(
         })
 
     return results
+
+
+def pre_check(
+    *,
+    nom: str,
+    date_naissance: str | None = None,
+    lieu_naissance: str | None = None,
+    nationalite: str | None = None,
+    seuil: float = CRIBLAGE_SEUIL_DEFAULT,
+    listes: list,
+) -> dict:
+    """Pré-vérification d'un nom (feedback UI, sans audit ni T3) — logique assujetti.
+
+    Niveaux (du plus certain au moins certain) :
+      blocked  : nom ≥ seuil + DDN complète identique
+      clear    : nom ≥ seuil + nationalité différente | DDN complète différente
+                 | lieu différent (DDN absente)
+      warning  : nom ≥ seuil + année seule | lieu identique (DDN absente)
+                 | aucun facteur de désambiguïsation
+      no_lists : aucune liste active chargée
+      clear    : aucun match
+    """
+    from rapidfuzz import process, fuzz
+
+    norm_nom = normalize_name(nom)
+    norm_dob = normalize_dob(date_naissance)
+    norm_nat = normalize_name(nationalite) if nationalite else None
+    norm_lieu = normalize_name(lieu_naissance) if lieu_naissance else None
+
+    listes_avec_entrees = False
+    for liste in listes:
+        entrees = liste.entrees
+        noms_seuls = [e.nom for e in entrees]
+        if not noms_seuls:
+            continue
+        listes_avec_entrees = True
+        match = process.extractOne(norm_nom, noms_seuls, scorer=fuzz.token_sort_ratio)
+        if not match or match[1] < seuil:
+            continue
+
+        matched_name, score, idx = match
+        score = int(round(score))
+        entry = entrees[idx]
+        entry_dob = entry.date_naissance or ""
+        entry_nat = normalize_name(entry.nationalite) if entry.nationalite else None
+        entry_lieu = entry.lieu_naissance or ""
+
+        # 1. Nationalité différente → homonyme confirmé
+        if norm_nat and entry_nat and norm_nat != entry_nat:
+            return {"level": "clear", "score": score, "liste": liste.nom,
+                    "nom_correspondant": matched_name, "reason": "nationality_mismatch"}
+        # 2. DDN (prioritaire)
+        if norm_dob and entry_dob:
+            if _dob_exact_match(norm_dob, entry_dob):
+                return {"level": "blocked", "score": score, "liste": liste.nom,
+                        "nom_correspondant": matched_name, "reason": "name_and_dob_match"}
+            if _dob_year_only_match(norm_dob, entry_dob):
+                return {"level": "warning", "score": score, "liste": liste.nom,
+                        "nom_correspondant": matched_name, "reason": "year_only_match"}
+            return {"level": "clear", "score": score, "liste": liste.nom,
+                    "nom_correspondant": matched_name, "reason": "dob_mismatch"}
+        # 3. Lieu (secondaire si DDN absente)
+        if norm_lieu and entry_lieu:
+            if _lieu_match(norm_lieu, entry_lieu):
+                return {"level": "warning", "score": score, "liste": liste.nom,
+                        "nom_correspondant": matched_name, "reason": "lieu_match"}
+            return {"level": "clear", "score": score, "liste": liste.nom,
+                    "nom_correspondant": matched_name, "reason": "lieu_mismatch"}
+        # 4. Aucun facteur → alerte, RC décide
+        return {"level": "warning", "score": score, "liste": liste.nom,
+                "nom_correspondant": matched_name, "reason": "name_only"}
+
+    if not listes_avec_entrees:
+        return {"level": "no_lists", "score": 0, "liste": None, "nom_correspondant": None, "reason": None}
+    return {"level": "clear", "score": 0, "liste": None, "nom_correspondant": None, "reason": None}
