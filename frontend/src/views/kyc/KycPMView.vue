@@ -50,8 +50,12 @@
         </template>
       </div>
 
-      <!-- Blocage / alerte sanctions (T3) renvoyé par le save -->
-      <div v-if="saveErrorMsg" role="alert"
+      <!-- Pré-check sanctions live (pendant la saisie) + blocage T3 au save -->
+      <div v-if="sanctionsBanner" role="alert"
+        :style="sanctionsBanner.style + ';border-radius:8px;padding:0.75rem 1rem;font-size:0.875rem;font-weight:600;margin-bottom:1rem'">
+        {{ sanctionsBanner.icon }} {{ sanctionsBanner.text }}
+      </div>
+      <div v-else-if="saveErrorMsg" role="alert"
         style="background:#fee2e2;color:#b91c1c;border:1px solid #fca5a5;border-radius:8px;padding:0.75rem 1rem;font-size:0.875rem;font-weight:600;margin-bottom:1rem">
         ⛔ {{ saveErrorMsg }}
       </div>
@@ -485,7 +489,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, reactive, onMounted, onUnmounted } from 'vue'
+import { ref, computed, reactive, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { dossiersService, type KycPMData, type KycBEData, type KycActData } from '@/services/dossiers'
 import CountrySelect from '@/components/common/CountrySelect.vue'
@@ -508,6 +512,42 @@ function setSaveError(e: any): void {
   saveErrorMsg.value = (e?.response?.status === 422 && typeof detail === 'string') ? detail : ''
   saveStatus.value = 'error'
 }
+
+// ── Pré-check sanctions temps réel (dénomination + représentant) ──────────────
+const sanctionsState = ref<{ status: string; liste: string | null; reason: string | null }>(
+  { status: 'idle', liste: null, reason: null },
+)
+let _sancTimer: ReturnType<typeof setTimeout> | null = null
+
+function triggerSanctionsCheck(): void {
+  if (!form.denomination_sociale?.trim()) {
+    sanctionsState.value = { status: 'idle', liste: null, reason: null }
+    return
+  }
+  if (_sancTimer) clearTimeout(_sancTimer)
+  _sancTimer = setTimeout(async () => {
+    sanctionsState.value = { status: 'checking', liste: null, reason: null }
+    try {
+      const r = await dossiersService.checkSanctionsPreScreen(
+        form.denomination_sociale, form.nom_representant_legal || '',
+      )
+      sanctionsState.value = { status: r.level, liste: r.liste, reason: r.reason }
+    } catch {
+      sanctionsState.value = { status: 'idle', liste: null, reason: null }
+    }
+  }, 500)
+}
+
+watch(() => [form.denomination_sociale, form.nom_representant_legal], triggerSanctionsCheck)
+
+const sanctionsBanner = computed(() => {
+  const s = sanctionsState.value
+  if (s.status === 'checking') return { icon: '⏳', text: 'Vérification sanctions en cours…', style: 'background:#f1f5f9;color:#475569;border:1px solid #cbd5e1' }
+  if (s.status === 'blocked')  return { icon: '⛔', text: `Personne morale / représentant présent sur la liste de sanctions${s.liste ? ' (' + s.liste + ')' : ''} — création bloquée (Trigger T3, Art. 89).`, style: 'background:#fee2e2;color:#b91c1c;border:1px solid #fca5a5' }
+  if (s.status === 'warning')  return { icon: '⚠️', text: `Correspondance possible sur liste ${s.liste ?? ''} — vérification RC requise.`, style: 'background:#fef3c7;color:#92400e;border:1px solid #fcd34d' }
+  if (s.status === 'no_lists') return { icon: 'ℹ️', text: 'Aucune liste de sanctions active — criblage inopérant.', style: 'background:#f1f5f9;color:#475569;border:1px solid #cbd5e1' }
+  return null
+})
 const currentStep = ref(0)
 const kycId       = ref<string | undefined>(undefined)
 
@@ -690,7 +730,10 @@ async function deleteActionnaire(id: string, i: number) {
 // ── Validation ────────────────────────────────────────────────────────────────
 
 const canNext = computed(() => {
-  if (currentStep.value === 0) return !!form.denomination_sociale?.trim()
+  if (currentStep.value === 0) {
+    if (sanctionsState.value.status === 'blocked' || sanctionsState.value.status === 'checking') return false
+    return !!form.denomination_sociale?.trim()
+  }
   return true
 })
 
