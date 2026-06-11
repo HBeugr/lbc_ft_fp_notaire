@@ -1,7 +1,20 @@
 from __future__ import annotations
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from typing import Literal
 from datetime import date
+
+
+class _BlankToNone(BaseModel):
+    """Retire les chaînes vides des selects non renseignés côté UI, pour que les
+    valeurs par défaut / None s'appliquent — évite les 422 sur les champs
+    Literal/enum laissés vides (ex. type_piece, anciennete_pro, relation_type)."""
+
+    @model_validator(mode="before")
+    @classmethod
+    def _drop_blanks(cls, data):
+        if isinstance(data, dict):
+            return {k: v for k, v in data.items() if not (isinstance(v, str) and v.strip() == "")}
+        return data
 
 
 # ── JSON sub-schemas ──────────────────────────────────────────────────────────
@@ -41,7 +54,7 @@ class OrigineFondsSchema(BaseModel):
 
 # ── KYC PP ───────────────────────────────────────────────────────────────────
 
-class KycPPUpsert(BaseModel):
+class KycPPUpsert(_BlankToNone):
     relation_type: Literal["initiale", "actualisation"] = "initiale"
     # Identité
     nom: str = Field(..., min_length=1)
@@ -195,7 +208,7 @@ class KycActOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
-class KycPMUpsert(BaseModel):
+class KycPMUpsert(_BlankToNone):
     relation_type: Literal["initiale", "actualisation"] = "initiale"
     denomination_sociale: str = Field(..., min_length=1)
     forme_juridique: str | None = None
