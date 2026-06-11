@@ -182,10 +182,11 @@ async def upsert_kyc_pp(
 async def add_be_pp(
     dossier_id: str,
     body: KycBECreate,
+    request: Request,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> KycBEOut:
-    await _get_dossier_or_404(db, dossier_id, current_user)
+    dossier = await _get_dossier_or_404(db, dossier_id, current_user)
     kyc = await dossier_repo.get_kyc_pp(db, dossier_id)
     if not kyc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Créer le KYC PP d'abord.")
@@ -193,6 +194,12 @@ async def add_be_pp(
     db.add(be)
     await db.commit()
     await db.refresh(be)
+    # Criblage formel du bénéficiaire effectif — CDC §2.2 (T3 si correspondance)
+    ip = request.client.host if request.client else "unknown"
+    await _check_sanctions_on_save(
+        db, current_user=current_user, ip=ip, dossier=dossier,
+        nom=body.raison_sociale_nom, date_naissance=body.date_naissance, nationalite=body.nationalite,
+    )
     return KycBEOut.model_validate(be)
 
 
@@ -296,10 +303,11 @@ async def upsert_kyc_pm(
 async def add_be_pm(
     dossier_id: str,
     body: KycBECreate,
+    request: Request,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> KycBEOut:
-    await _get_dossier_or_404(db, dossier_id, current_user)
+    dossier = await _get_dossier_or_404(db, dossier_id, current_user)
     kyc = await dossier_repo.get_kyc_pm(db, dossier_id)
     if not kyc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Créer le KYC PM d'abord.")
@@ -307,6 +315,12 @@ async def add_be_pm(
     db.add(be)
     await db.commit()
     await db.refresh(be)
+    # Criblage formel du bénéficiaire effectif — CDC §2.2 (T3 si correspondance)
+    ip = request.client.host if request.client else "unknown"
+    await _check_sanctions_on_save(
+        db, current_user=current_user, ip=ip, dossier=dossier,
+        nom=body.raison_sociale_nom, date_naissance=body.date_naissance, nationalite=body.nationalite,
+    )
     return KycBEOut.model_validate(be)
 
 
