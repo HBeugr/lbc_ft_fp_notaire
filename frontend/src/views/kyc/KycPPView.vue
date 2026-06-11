@@ -66,12 +66,12 @@
         <div class="form-grid">
           <div class="form-group">
             <label class="form-label">Nom <span class="req">*</span></label>
-            <input v-model="form.nom" type="text" class="form-input" placeholder="Nom de famille" />
+            <input v-model="form.nom" type="text" class="form-input" placeholder="Nom de famille" @blur="triggerSanctionsCheck" />
             <p v-if="errors.nom" class="form-error">{{ errors.nom }}</p>
           </div>
           <div class="form-group">
             <label class="form-label">Prénoms <span class="req">*</span></label>
-            <input v-model="form.prenoms" type="text" class="form-input" placeholder="Tous les prénoms" />
+            <input v-model="form.prenoms" type="text" class="form-input" placeholder="Tous les prénoms" @blur="triggerSanctionsCheck" />
             <p v-if="errors.prenoms" class="form-error">{{ errors.prenoms }}</p>
           </div>
           <div class="form-group">
@@ -88,7 +88,7 @@
           </div>
           <div class="form-group">
             <label class="form-label">Date de naissance</label>
-            <input v-model="form.date_naissance" type="date" class="form-input" />
+            <input v-model="form.date_naissance" type="date" class="form-input" @blur="triggerSanctionsCheck" @change="triggerSanctionsCheck" />
           </div>
           <div class="form-group">
             <label class="form-label">Lieu de naissance</label>
@@ -558,6 +558,8 @@ onMounted(async () => {
     // 404 → form vierge
   }
   loading.value = false
+  // Criblage immédiat si le dossier chargé a déjà nom + prénoms (vérif avant Suivant)
+  triggerSanctionsCheck()
 })
 
 // ── Auto-save ─────────────────────────────────────────────────────────────────

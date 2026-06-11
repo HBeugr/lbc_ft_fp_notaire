@@ -66,7 +66,7 @@
         <div class="form-grid">
           <div class="form-group form-group--full">
             <label class="form-label">Dénomination sociale <span class="req">*</span></label>
-            <input v-model="form.denomination_sociale" type="text" class="form-input" placeholder="Raison sociale de la société" />
+            <input v-model="form.denomination_sociale" type="text" class="form-input" placeholder="Raison sociale de la société" @blur="triggerSanctionsCheck" />
             <p v-if="errors.denomination_sociale" class="form-error">{{ errors.denomination_sociale }}</p>
           </div>
           <div class="form-group">
@@ -86,7 +86,7 @@
           </div>
           <div class="form-group">
             <label class="form-label">Nom du représentant légal</label>
-            <input v-model="form.nom_representant_legal" type="text" class="form-input" />
+            <input v-model="form.nom_representant_legal" type="text" class="form-input" @blur="triggerSanctionsCheck" />
           </div>
           <div class="form-group">
             <label class="form-label">N° RCCM</label>
@@ -641,6 +641,7 @@ onMounted(async () => {
     // 404 → form vierge
   }
   loading.value = false
+  triggerSanctionsCheck()
 })
 
 // ── Auto-save ─────────────────────────────────────────────────────────────────
