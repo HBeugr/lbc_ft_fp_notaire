@@ -285,23 +285,20 @@ _SIM_ZONE = {
     "europe_regule": (1, "Europe / pays régulé"),
     "gafi":          (2, "Pays liste grise/noire GAFI (T4)"),
 }
+# Catégories à plat du CDC v4 (Module 2, Règles métiers)
 _SIM_TYPE_OP = {
-    "location_simple":      (0, "Location résidentielle simple"),
-    "vente_simple":         (0, "Vente résidentielle simple"),
-    "location_commerciale": (1, "Location / vente commerciale"),
-    "gestion_locative":     (1, "Gestion locative (mandat)"),
-    "vefa":                 (1, "VEFA / programme neuf"),
-    "achat_tiers":          (2, "Achat pour compte de tiers"),
-    "partenariat":          (2, "Partenariat investisseur / lotissement"),
+    "vente_immobiliere_simple": (0, "Vente immobilière simple"),
+    "donation_succession":      (1, "Donation / succession"),
+    "creation_societe":         (1, "Création société"),
+    "montage_complexe":         (2, "Montage complexe (SCI, multi-actes)"),
+    "transaction_atypique":     (2, "Transaction atypique"),
 }
 _SIM_MODE_PAIEMENT = {
-    "virement":            (0, "Virement bancaire"),
-    "cheque_certifie":     (0, "Chèque certifié"),
-    "cheque_simple":       (1, "Chèque simple / mix"),
-    "especes_hors":        (1, "Espèces hors seuils"),
-    "especes_15m":         (2, "Espèces > 15M FCFA (T2)"),
-    "especes_art74":       (2, "Espèces ≥ seuil Art. 74 (T2)"),
-    "tiers_non_identifie": (2, "Paiement via tiers non identifié"),
+    "virement": (0, "Virement bancaire"),
+    "cheque":   (1, "Chèque"),
+    "mix":      (1, "Mix paiements"),
+    "especes":  (2, "Espèces"),
+    "tiers":    (2, "Paiement via tiers"),
 }
 _SIM_QUALITE = {
     "complet":         (0, "Dossier complet et cohérent"),
@@ -310,17 +307,14 @@ _SIM_QUALITE = {
     "presse_negative": (2, "Presse négative avérée"),
 }
 _SIM_RESEAU = {
-    "aucun":                     (0, "Aucun intermédiaire"),
-    "agent_reglemente":          (0, "Agent immobilier réglementé"),
-    "apporteur":                 (1, "Apporteur d'affaires identifié"),
-    "intermediaire_non_clair":   (2, "Intermédiaire non clair / multiples"),
-    "intermediaire_pays_risque": (2, "Intermédiaire basé pays à risque (T4)"),
+    "aucun":     (0, "Aucun intermédiaire"),
+    "identifie": (1, "Intermédiaire identifié"),
+    "non_clair": (2, "Intermédiaire non clair"),
+    "multiples": (2, "Montage avec plusieurs intermédiaires"),
 }
 _SIM_MONTANT = {0: "< 5M FCFA", 1: "5 – 15M FCFA", 2: "> 15M FCFA"}
 _SIM_MONTAGE = {0: "Acte simple", 1: "Montage standard (2–3 parties)", 2: "Montage complexe / offshore"}
 _SIM_SECTEUR = {0: "Secteur classique", 1: "Commerce / cash / import-export", 2: "Secteur sensible (crypto, jeux)"}
-
-_ESPECES_T2_CODES = {"especes_15m", "especes_art74"}
 
 
 def _clamp02(v) -> int:
@@ -381,8 +375,9 @@ def simulate(
         "intermediaires":  j_reseau,
     }
 
-    # Triggers absolutoires dérivés des codes UI
-    especes_t2 = mode_paiement_code in _ESPECES_T2_CODES
+    # Triggers absolutoires dérivés des codes UI.
+    # T2 = espèces ET montant > 15M (Axe 4 = 2) — règle critique CDC v4.
+    especes_t2 = (mode_paiement_code == "especes" and s_mont >= 2)
     result = calculate(
         axes,
         montant_transaction=(settings.ESPECES_THRESHOLD_FCFA + 1) if especes_t2 else 0,

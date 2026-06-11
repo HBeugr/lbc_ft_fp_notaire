@@ -164,13 +164,11 @@
             <label class="field-label">Axe 3 — Type d'opération</label>
             <select v-model="sim.type_operation" class="field-input">
               <option value="">Sélectionnez le type d'opération</option>
-              <option value="location_simple">Location résidentielle simple — Score 0 (Faible)</option>
-              <option value="vente_simple">Vente résidentielle simple — Score 0 (Faible)</option>
-              <option value="location_commerciale">Location / vente commerciale — Score 1 (Moyen)</option>
-              <option value="gestion_locative">Gestion locative (mandat) — Score 1 (Moyen)</option>
-              <option value="vefa">VEFA / programme neuf — Score 1 (Moyen)</option>
-              <option value="achat_tiers">Achat pour compte de tiers — Score 2 (Élevé · KYC mandant)</option>
-              <option value="partenariat">Partenariat investisseur / lotissement — Score 2 (Élevé)</option>
+              <option value="vente_immobiliere_simple">Vente immobilière simple — Score 0 (Faible)</option>
+              <option value="donation_succession">Donation / succession — Score 1 (Moyen)</option>
+              <option value="creation_societe">Création société — Score 1 (Moyen)</option>
+              <option value="montage_complexe">Montage complexe (SCI, multi-actes) — Score 2 (Élevé)</option>
+              <option value="transaction_atypique">Transaction atypique — Score 2 (Élevé)</option>
             </select>
           </div>
 
@@ -189,12 +187,10 @@
             <select v-model="sim.mode_paiement_code" class="field-input">
               <option value="">Sélectionnez le mode de paiement</option>
               <option value="virement">Virement bancaire — Score 0 (Faible)</option>
-              <option value="cheque_certifie">Chèque certifié — Score 0 (Faible)</option>
-              <option value="cheque_simple">Chèque simple / mix — Score 1 (Moyen)</option>
-              <option value="especes_hors">Espèces hors seuils — Score 1 (Moyen)</option>
-              <option value="especes_15m">Espèces &gt; 15M FCFA — Score 2 (Élevé · T2)</option>
-              <option value="especes_art74">Espèces ≥ seuil Art. 74 (immo) — Score 2 (Élevé · T2)</option>
-              <option value="tiers_non_identifie">Paiement via tiers non identifié — Score 2 (Élevé · Suspicion)</option>
+              <option value="cheque">Chèque — Score 1 (Moyen)</option>
+              <option value="mix">Mix paiements — Score 1 (Moyen)</option>
+              <option value="especes">Espèces — Score 2 (Élevé · T2 si &gt; 15M)</option>
+              <option value="tiers">Paiement via tiers — Score 2 (Élevé)</option>
             </select>
           </div>
 
@@ -248,10 +244,9 @@
             <select v-model="sim.reseau_code" class="field-input">
               <option value="">Sélectionnez le réseau de distribution</option>
               <option value="aucun">Aucun intermédiaire — Score 0 (Faible)</option>
-              <option value="agent_reglemente">Agent immobilier réglementé — Score 0 (Faible)</option>
-              <option value="apporteur">Apporteur d'affaires identifié — Score 1 (Moyen)</option>
-              <option value="intermediaire_non_clair">Intermédiaire non clair / multiples — Score 2 (Élevé)</option>
-              <option value="intermediaire_pays_risque">Intermédiaire basé pays à risque — Score 2 (Élevé · T4)</option>
+              <option value="identifie">Intermédiaire identifié — Score 1 (Moyen)</option>
+              <option value="non_clair">Intermédiaire non clair — Score 2 (Élevé)</option>
+              <option value="multiples">Montage avec plusieurs intermédiaires — Score 2 (Élevé)</option>
             </select>
           </div>
         </div>
@@ -462,14 +457,14 @@ const CATALOGUE_FACTEURS = [
 const AXES_LABELS = [
   { code: 'Axe 1',  label: 'Profil client',           description: 'PP salarié = 0 | Entrepreneur/PM = 1 | PPE = 2' },
   { code: 'Axe 2',  label: 'Origine géographique',    description: 'UEMOA/CI = 0 | Liste grise GAFI = 1 | Liste noire GAFI = 2' },
-  { code: 'Axe 3',  label: "Type d'opération",        description: 'Location/Vente simple = 0 | Commercial/VEFA/Gestion = 1 | Achat tiers/Lotissement = 2' },
+  { code: 'Axe 3',  label: "Type d'opération",        description: 'Vente immobilière simple = 0 | Donation/Succession/Création société = 1 | Montage complexe/Transaction atypique = 2' },
   { code: 'Axe 4',  label: 'Montant',                 description: '< 5M FCFA = 0 | 5–15M FCFA = 1 | > 15M FCFA = 2' },
   { code: 'Axe 5',  label: 'Mode de paiement',        description: 'Virement = 0 | Chèque/Mix = 1 | Espèces/Tiers = 2' },
   { code: 'Axe 6',  label: 'Montage juridique',       description: 'Acte simple = 0 | 2–3 parties = 1 | Schéma complexe = 2' },
   { code: 'Axe 7',  label: 'Statut PPE',              description: 'Non-PPE = 0 | PPE national/étranger = 2' },
   { code: 'Axe 8',  label: 'Qualité documentaire',    description: 'Dossier complet = 0 | Partiel = 1 | Aucun document = 2' },
   { code: 'Axe 9',  label: "Secteur d'activité",      description: "Sectoriel classique/PME = 0 | Commerce/cash/import = 1 | Crypto/Jeux sensibles = 2" },
-  { code: 'Axe 10', label: 'Réseau de distribution',  description: "Aucun intermédiaire/Agent réglementé = 0 | Apporteur identifié = 1 | Intermédiaire non clair = 2" },
+  { code: 'Axe 10', label: 'Réseau de distribution',  description: "Aucun intermédiaire = 0 | Intermédiaire identifié = 1 | Intermédiaire non clair/Multiples = 2" },
 ]
 
 interface SimAxe { code: string; label: string; score: number; justification: string }
@@ -511,7 +506,7 @@ async function runSim() {
     const { data } = await api.post<SimResult>('/scoring/simuler', {
       profil_code:        sim.value.profil_code        || 'particulier_salarie',
       zone_geo:           sim.value.zone_geo           || 'cote_ivoire',
-      type_operation:     sim.value.type_operation     || 'location_simple',
+      type_operation:     sim.value.type_operation     || 'vente_immobiliere_simple',
       montant:            toInt(sim.value.montant),
       mode_paiement_code: sim.value.mode_paiement_code || 'virement',
       montage_juridique:  toInt(sim.value.montage_juridique),
