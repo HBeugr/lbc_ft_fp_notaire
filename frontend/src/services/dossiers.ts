@@ -326,7 +326,7 @@ export const dossiersService = {
   async saveTransaction(dossierId: string, payload: {
     montant_tranche?: 'moins_15m' | 'plus_15m'
     montant_transaction?: number
-    mode_paiement?: 'especes' | 'cheque' | 'virement' | 'autre'
+    mode_paiement?: 'especes' | 'cheque' | 'virement' | 'mix' | 'paiement_tiers' | 'autre'
   }): Promise<DossierOut> {
     const { data } = await api.patch<DossierOut>(`/dossiers/${dossierId}/transaction`, payload)
     return data

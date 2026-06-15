@@ -479,6 +479,84 @@
         </div>
       </div>
 
+      <!-- ── Transaction ── -->
+      <div v-else-if="activeSection === 'transaction'" class="card section-card">
+        <div class="section-header">
+          <h3 class="section-title">Transaction</h3>
+          <div v-if="!txEdit && canModify" style="display:flex;gap:0.5rem">
+            <button class="btn-ghost btn-sm" @click="startTxEdit">Modifier</button>
+          </div>
+          <div v-else-if="txEdit" style="display:flex;gap:0.5rem;align-items:center">
+            <button class="btn-ghost btn-sm" @click="txEdit=false;txError=''">Annuler</button>
+            <button class="btn-primary btn-sm-primary" :disabled="txSaving" @click="saveTransaction">
+              <svg v-if="txSaving" class="spin btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 11-6.219-8.56"/></svg>
+              {{ txSaving ? '…' : 'Enregistrer' }}
+            </button>
+          </div>
+        </div>
+        <p v-if="txError" class="save-error">{{ txError }}</p>
+
+        <!-- View mode -->
+        <template v-if="!txEdit">
+          <div class="info-grid">
+            <div class="info-item">
+              <span class="info-label">Tranche de montant</span>
+              <span class="info-value">{{ dossier.montant_tranche ? (dossier.montant_tranche === 'plus_15m' ? '> 15M FCFA' : '< 15M FCFA') : '—' }}</span>
+            </div>
+            <div class="info-item">
+              <span class="info-label">Montant exact</span>
+              <span class="info-value">{{ dossier.montant_transaction != null ? Number(dossier.montant_transaction).toLocaleString('fr-FR') + ' FCFA' : '—' }}</span>
+            </div>
+            <div class="info-item">
+              <span class="info-label">Mode de paiement</span>
+              <span class="info-value">{{ dossier.mode_paiement ? (MODE_PAIEMENT_LABELS[dossier.mode_paiement] ?? dossier.mode_paiement) : '—' }}</span>
+            </div>
+            <div class="info-item">
+              <span class="info-label">Déclaration systématique espèces</span>
+              <span class="info-value" :class="{ 'ppe-flag': dossier.surveillance_espece }">{{ dossier.surveillance_espece ? '⚠ À déclarer' : 'Non' }}</span>
+            </div>
+          </div>
+          <div v-if="dossier.surveillance_espece" class="surveillance-espece-banner">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+            <span>Déclaration systématique de transaction en espèce à faire. Opération à surveiller.</span>
+          </div>
+        </template>
+
+        <!-- Edit mode -->
+        <template v-else>
+          <div class="edit-grid">
+            <div class="edit-field">
+              <label class="info-label">Tranche de montant</label>
+              <select v-model="txForm.montant_tranche" class="field-input">
+                <option value="">— Choisir —</option>
+                <option value="moins_15m">Montant &lt; 15M FCFA</option>
+                <option value="plus_15m">Montant &gt; 15M FCFA</option>
+              </select>
+            </div>
+            <div class="edit-field">
+              <label class="info-label">Montant exact (FCFA)</label>
+              <input v-model.number="txForm.montant_transaction" type="number" min="0" class="field-input" placeholder="Ex : 25000000" />
+            </div>
+            <div class="edit-field">
+              <label class="info-label">Mode de paiement</label>
+              <select v-model="txForm.mode_paiement" class="field-input">
+                <option value="">— Choisir —</option>
+                <option value="especes">Espèces</option>
+                <option value="cheque">Chèque</option>
+                <option value="virement">Virement</option>
+                <option value="mix">Mixte</option>
+                <option value="paiement_tiers">Paiement via tiers</option>
+                <option value="autre">Autre</option>
+              </select>
+            </div>
+          </div>
+          <div v-if="txSurveillanceEspece" class="surveillance-espece-banner">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+            <span>Déclaration systématique de transaction en espèce à faire. Opération à surveiller.</span>
+          </div>
+        </template>
+      </div>
+
       <!-- ── Scoring risque ── -->
       <div v-else-if="activeSection === 'scoring'" class="card section-card">
         <div class="section-header">
@@ -681,6 +759,7 @@ const visibleTabs = computed(() => {
     const ppeCount = dossier.value.kyc_pm?.ppe_declarations?.length ?? 0
     tabs.push({ id: 'kyc-ppe', label: ppeCount > 0 ? `PPE (${ppeCount})` : 'PPE' })
   }
+  tabs.push({ id: 'transaction', label: 'Transaction' })
   if (!isAgent.value) {
     tabs.push({ id: 'scoring', label: 'Scoring risque' })
   }
@@ -817,6 +896,54 @@ const isAgent    = computed(() => CLERCS_ROLES.includes(auth.user?.role ?? ''))
 const isRC       = computed(() => CONFORMITE_ROLES.includes(auth.user?.role ?? ''))
 const canAssign  = computed(() => ASSIGNER_ROLES.includes(auth.user?.role ?? ''))
 const canCreateDos = computed(() => !!auth.user)
+// Édition : superviseur (RC/notaire principal/admin) ou assigné courant (aligné backend is_supervisor)
+const canModify = computed(() =>
+  isRC.value || (!!dossier.value?.assigned_to && dossier.value.assigned_to === auth.user?.id),
+)
+
+// ── Transaction edit ──────────────────────────────────────────────────────────
+
+type ModePaiement = '' | 'especes' | 'cheque' | 'virement' | 'mix' | 'paiement_tiers' | 'autre'
+const txEdit   = ref(false)
+const txForm   = ref<{ montant_tranche: '' | 'moins_15m' | 'plus_15m'; montant_transaction: number | null; mode_paiement: ModePaiement }>({ montant_tranche: '', montant_transaction: null, mode_paiement: '' })
+const txSaving = ref(false)
+const txError  = ref('')
+
+const txSurveillanceEspece = computed(() =>
+  txForm.value.mode_paiement === 'especes' &&
+  (txForm.value.montant_tranche === 'plus_15m' || Number(txForm.value.montant_transaction || 0) > 15_000_000),
+)
+
+function startTxEdit() {
+  const d = dossier.value!
+  txForm.value = {
+    montant_tranche:     (d.montant_tranche as any) ?? '',
+    montant_transaction: d.montant_transaction ?? null,
+    mode_paiement:       (d.mode_paiement as any) ?? '',
+  }
+  txEdit.value  = true
+  txError.value = ''
+}
+
+async function saveTransaction() {
+  if (!dossier.value) return
+  txSaving.value = true
+  txError.value  = ''
+  try {
+    const f = txForm.value
+    await dossiersService.saveTransaction(dossier.value.id, {
+      montant_tranche:     f.montant_tranche || undefined,
+      montant_transaction: f.montant_transaction != null ? f.montant_transaction : undefined,
+      mode_paiement:       f.mode_paiement || undefined,
+    })
+    dossier.value = await dossiersService.get(dossier.value.id)
+    txEdit.value  = false
+  } catch (e: any) {
+    txError.value = e?.response?.data?.detail ?? 'Erreur lors de la sauvegarde.'
+  } finally {
+    txSaving.value = false
+  }
+}
 
 // ── Assignation ───────────────────────────────────────────────────────────────
 

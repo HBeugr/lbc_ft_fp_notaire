@@ -390,7 +390,7 @@ class DossierCreate(BaseModel):
 class DossierTransactionRequest(BaseModel):
     montant_tranche: Literal["moins_15m", "plus_15m"] | None = None
     montant_transaction: float | None = Field(None, ge=0)
-    mode_paiement: Literal["especes", "cheque", "virement", "autre"] | None = None
+    mode_paiement: Literal["especes", "cheque", "virement", "mix", "paiement_tiers", "autre"] | None = None
 
 
 class DossierOut(BaseModel):

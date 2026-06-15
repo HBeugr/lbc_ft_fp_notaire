@@ -6,7 +6,7 @@ from app.core.database import get_db
 from app.core.deps import get_current_user, require_rc, require_supervisor
 from app.core.rbac import AssignedFilter
 from app.models.user import User
-from app.repositories import dossier_repo, audit_repo, user_repo
+from app.repositories import dossier_repo, audit_repo, user_repo, alertes_repo
 from pydantic import BaseModel
 from app.models.dossier import CommentaireInterne
 from app.schemas.kyc import DossierCreate, DossierOut, DossierTransactionRequest
@@ -189,17 +189,49 @@ async def update_transaction(
     if body.mode_paiement is not None:
         dossier.mode_paiement = body.mode_paiement
     montant = float(body.montant_transaction or dossier.montant_transaction or 0)
-    depasse_seuil = body.montant_tranche == "plus_15m" or montant > _SEUIL_ESPECE
-    dossier.surveillance_espece = bool(body.mode_paiement == "especes" and depasse_seuil)
+    depasse_seuil = dossier.montant_tranche == "plus_15m" or montant > _SEUIL_ESPECE
+    dossier.surveillance_espece = bool(dossier.mode_paiement == "especes" and depasse_seuil)
+
+    # ── Auto-trigger espèces T2 (Art. 72) — sans attendre le scoring ─────────────
+    # Espèces + (> 15M FCFA ou tranche plus_15m) → trigger T2 absolutoire, classification ÉLEVÉ.
+    candidat = "T2" if (dossier.mode_paiement == "especes" and depasse_seuil) else None
+    ancien = dossier.trigger_actif or ""
+    deja_score = dossier.score_base is not None
+    if candidat == "T2":
+        if ancien != "T2":
+            dossier.trigger_actif = "T2"
+            dossier.classification = "ELEVE"
+            dossier.force_par_trigger = True
+    elif not deja_score and ancien == "T2":
+        # plus d'espèces qualifiante + dossier non scoré → le trigger espèces auto disparaît
+        dossier.trigger_actif = None
+        dossier.classification = None
+        dossier.force_par_trigger = False
+
+    nouveau = dossier.trigger_actif or ""
     await db.commit()
     await db.refresh(dossier)
+
+    # Alertes : créer l'alerte T2_ESPECES (anti-doublon) ou résoudre l'ancienne si le trigger a disparu
+    existantes = await alertes_repo.list_alertes(db, type_alerte="T2_ESPECES", dossier_id=dossier_id, limit=50)
+    ouvertes_t2 = [a for a in existantes[0] if a.statut in ("ouverte", "en_cours")]
+    if nouveau == "T2":
+        if not ouvertes_t2:
+            await alertes_repo.create(
+                db, dossier_id=dossier_id, type_alerte="T2_ESPECES", niveau="ELEVE", statut="ouverte",
+                description=f"Trigger T2 (espèces > 15M FCFA, Art. 72) déclenché sur le dossier {dossier.reference}.",
+            )
+    elif ancien == "T2" and nouveau != "T2":
+        for a in ouvertes_t2:
+            await alertes_repo.update_statut(db, a, statut="traitee", traite_par=current_user.id,
+                                             note="Trigger T2 retiré — transaction corrigée (mode/montant).")
 
     ip = request.client.host if request.client else "unknown"
     await audit_repo.log(
         db, action="dossier.transaction_saved", user_id=current_user.id, user_role=current_user.role,
         entity_type="dossier", entity_id=dossier_id, ip=ip,
         detail={"montant_tranche": body.montant_tranche, "mode_paiement": body.mode_paiement,
-                "surveillance_espece": dossier.surveillance_espece},
+                "surveillance_espece": dossier.surveillance_espece, "trigger_actif": dossier.trigger_actif},
     )
     return await _serialize_dossier(db, dossier)
 
