@@ -31,10 +31,6 @@ class Dossier(Base):
         nullable=False,
     )
     type_operation_detail: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    # Nature de la relation d'affaires anticipée (M4) — une relation durable impose le KYC complet (Type B)
-    nature_relation: Mapped[str | None] = mapped_column(
-        SAEnum("ponctuelle", "durable", name="nature_relation_enum"), nullable=True
-    )
     # Données opération alimentant la matrice (axes 4 & 5, trigger T2) — CDC Module 2
     montant_transaction: Mapped[float | None] = mapped_column(Numeric(18, 2), nullable=True)
     # Tranche de montant (étape Transaction du KYC) — sélecteur < 15M / > 15M

@@ -44,23 +44,6 @@
             </div>
           </button>
         </div>
-        <div class="divider" />
-        <h2 class="setup-title">Nature de la relation d'affaires</h2>
-        <p class="page-subtitle" style="margin-bottom: 0.75rem;">Une relation durable impose une vigilance et un KYC complet (Type B).</p>
-        <div class="ops-grid">
-          <button
-            v-for="nr in NATURE_RELATIONS"
-            :key="nr.value"
-            class="op-card"
-            :class="{ 'op-card--selected': natureRelation === nr.value }"
-            @click="natureRelation = nr.value"
-          >
-            <div class="op-card-top">
-              <span class="op-label">{{ nr.label }}</span>
-            </div>
-            <div class="type-card-desc">{{ nr.desc }}</div>
-          </button>
-        </div>
       </template>
 
       <div v-if="createError" class="form-error">{{ createError }}</div>
@@ -68,7 +51,7 @@
       <div class="setup-actions">
         <button
           class="btn-primary"
-          :disabled="!typeClient || !typeOperation || !natureRelation || creating"
+          :disabled="!typeClient || !typeOperation || creating"
           @click="handleCreate"
         >
           <svg v-if="creating" class="btn-icon spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 11-6.219-8.56"/></svg>
@@ -94,14 +77,8 @@ const router = useRouter()
 
 const typeClient     = ref<TypeClient | ''>('')
 const typeOperation  = ref<TypeOperation | ''>('')
-const natureRelation = ref<'ponctuelle' | 'durable' | ''>('')
 const creating       = ref(false)
 const createError    = ref('')
-
-const NATURE_RELATIONS = [
-  { value: 'ponctuelle' as const, label: 'Ponctuelle', desc: 'Acte unique, sans relation suivie' },
-  { value: 'durable' as const,    label: 'Durable',    desc: 'Relation suivie — vigilance et KYC complet (Type B)' },
-]
 
 const TYPE_CLIENTS = [
   { value: 'PP' as TypeClient, icon: '👤', label: 'Personne physique', desc: 'Individu, particulier' },
@@ -130,7 +107,6 @@ async function handleCreate() {
     const created = await dossiersService.create({
       type_client: typeClient.value,
       type_operation: typeOperation.value as TypeOperation,
-      nature_relation: natureRelation.value || undefined,
     })
     if (created.type_client === 'PP') {
       router.push({ name: 'kyc-pp', params: { id: created.id } })

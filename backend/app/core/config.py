@@ -43,9 +43,9 @@ class Settings(BaseSettings):
     # Encryption
     AES_KEY: str
 
-    # 2FA
+    # 2FA — désactivé par défaut sur develop. Réactiver en prod via env var TOTP_REQUIRED=true.
     TOTP_ISSUER: str = "Notaire-LBC-FT-FP"
-    TOTP_REQUIRED: bool = True
+    TOTP_REQUIRED: bool = False
 
     # Scoring — T2 : espèces > 15M FCFA (Art. 72, verrouillé)
     ESPECES_THRESHOLD_FCFA: int = 15_000_000

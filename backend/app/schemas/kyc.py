@@ -381,7 +381,6 @@ class DossierCreate(BaseModel):
     type_client: TypeClient
     type_operation: TypeOperation
     type_operation_detail: str | None = None
-    nature_relation: Literal["ponctuelle", "durable"] | None = None
     montant_transaction: float | None = None
     mode_paiement: ModePaiement | None = None
     nb_parties: int = 1
@@ -399,7 +398,6 @@ class DossierOut(BaseModel):
     type_client: str
     type_operation: str
     type_operation_detail: str | None
-    nature_relation: str | None = None
     montant_transaction: float | None
     montant_tranche: str | None = None
     mode_paiement: str | None

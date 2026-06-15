@@ -320,7 +320,7 @@ export const dossiersService = {
 
   get: (id: string) => api.get<DossierOut>(`/dossiers/${id}`).then(r => r.data),
 
-  create: (payload: { type_client: TypeClient; type_operation: TypeOperation; type_operation_detail?: string; nature_relation?: 'ponctuelle' | 'durable' }) =>
+  create: (payload: { type_client: TypeClient; type_operation: TypeOperation; type_operation_detail?: string }) =>
     api.post<DossierOut>('/dossiers', payload).then(r => r.data),
 
   async saveTransaction(dossierId: string, payload: {

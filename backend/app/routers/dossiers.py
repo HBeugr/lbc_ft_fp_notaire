@@ -102,7 +102,6 @@ async def create_dossier(
         type_client=body.type_client,
         type_operation=body.type_operation,
         type_operation_detail=body.type_operation_detail,
-        nature_relation=body.nature_relation,
         created_by=current_user.id,
         assigned_to=current_user.id if current_user.role == "clercs" else None,
     )
