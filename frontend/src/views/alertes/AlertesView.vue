@@ -186,7 +186,7 @@ const pendingWrk09 = ref<PendingWrk09Item[]>([])
 const loading = ref(true)
 const total = ref(0)
 const page = ref(1)
-const pageSize = 20
+const pageSize = 10
 const stats = ref({ ouvertes: 0 })
 
 const filters = ref({ niveau: '', statut: 'OUVERTE', type_alerte: '', dossier_statut: '' })

@@ -10,7 +10,7 @@ from app.repositories import dossier_repo, audit_repo, alertes_repo, sanctions_r
 from app.schemas.kyc import (
     KycPPUpsert, KycPPOut,
     KycPMUpsert, KycPMOut,
-    KycBECreate, KycBEOut,
+    KycBECreate, KycBEUpdate, KycBEOut,
     KycActCreate, KycActOut,
     KycPPECreate, KycPPEOut,
 )
@@ -54,6 +54,12 @@ async def _check_sanctions_on_save(
     except Exception:
         return  # criblage best-effort
 
+    # Financement de la Prolifération (M1.2) — escalade en alerte dédiée
+    _PROLIF = {"ONU_PROLIFERATION", "OFAC_WMD", "UE_PROLIFERATION", "CENTIF_FP"}
+    is_prolif = result.get("type_liste") in _PROLIF
+    type_alerte = "PROLIFERATION_MATCH" if is_prolif else "T3_SANCTIONS"
+    motif_prolif = " Financement de la prolifération (M1.2)." if is_prolif else ""
+
     level = result["level"]
     if level == "blocked":
         await db.execute(
@@ -63,11 +69,11 @@ async def _check_sanctions_on_save(
             )
         )
         await alertes_repo.create(
-            db, dossier_id=dossier.id, type_alerte="T3_SANCTIONS",
+            db, dossier_id=dossier.id, type_alerte=type_alerte,
             niveau="ELEVE", statut="ouverte",
             description=(
                 f"Correspondance sanctions confirmée (score {result['score']}%) — "
-                f"liste {result['liste']}. Trigger T3, blocage Art. 89."
+                f"liste {result['liste']}. Trigger T3, blocage Art. 89.{motif_prolif}"
             ),
         )
         await audit_repo.log(
@@ -81,11 +87,11 @@ async def _check_sanctions_on_save(
     if level == "warning":
         try:
             await alertes_repo.create(
-                db, dossier_id=dossier.id, type_alerte="T3_SANCTIONS",
+                db, dossier_id=dossier.id, type_alerte=type_alerte,
                 niveau="MOYEN", statut="ouverte",
                 description=(
                     f"Correspondance partielle sanctions (score {result['score']}%) — "
-                    f"liste {result['liste']}. Date de naissance non confirmée — vérification RC requise."
+                    f"liste {result['liste']}. Date de naissance non confirmée — vérification RC requise.{motif_prolif}"
                 ),
             )
             if dossier.statut == "brouillon":
@@ -215,6 +221,31 @@ async def delete_be_pp(
     await db.commit()
 
 
+async def _update_be(db: AsyncSession, be_id: str, body: KycBEUpdate) -> KycBE:
+    result = await db.execute(select(KycBE).where(KycBE.id == be_id))
+    be = result.scalar_one_or_none()
+    if not be:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Bénéficiaire effectif introuvable.")
+    for k, v in body.model_dump(exclude_unset=True).items():
+        setattr(be, k, v)
+    await db.commit()
+    await db.refresh(be)
+    return be
+
+
+@router.patch("/{dossier_id}/kyc/pp/be/{be_id}", response_model=KycBEOut)
+async def update_be_pp(
+    dossier_id: str,
+    be_id: str,
+    body: KycBEUpdate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> KycBEOut:
+    await _get_dossier_or_404(db, dossier_id, current_user)
+    be = await _update_be(db, be_id, body)
+    return KycBEOut.model_validate(be)
+
+
 # ── PPE PP ────────────────────────────────────────────────────────────────────
 
 @router.post("/{dossier_id}/kyc/pp/ppe", response_model=KycPPEOut, status_code=status.HTTP_201_CREATED)
@@ -270,6 +301,20 @@ async def upsert_kyc_pm(
     for field in ("mandataire", "operations_cochees", "origine_fonds", "infos_pm"):
         if data.get(field) is not None and not isinstance(data[field], dict):
             data[field] = data[field].model_dump() if hasattr(data[field], "model_dump") else dict(data[field])
+    # RCCM — validité 90 jours (M7) : expiration calculée + alerte proactive si dépassée
+    from datetime import date as _date, timedelta as _timedelta
+    emission = data.get("date_emission_rccm")
+    if emission:
+        data["date_expiration_rccm"] = emission + _timedelta(days=90)
+        jours = (_date.today() - emission).days
+        if jours > 90:
+            await alertes_repo.create(
+                db, dossier_id=dossier_id, type_alerte="RCCM_EXPIRE",
+                niveau="ELEVE" if jours > 120 else "MOYEN", statut="ouverte",
+                description=f"Extrait RCCM émis il y a {jours} jours — validité 90 jours dépassée (M7).",
+            )
+    else:
+        data["date_expiration_rccm"] = None
     kyc = await dossier_repo.upsert_kyc_pm(db, dossier_id, **data)
     # Recalcule le score provisoire (axes auto dérivés du KYC) — CDC Module 2
     result = await recompute_cache(db, dossier, current_user.id)
@@ -334,6 +379,19 @@ async def delete_be_pm(
     await _get_dossier_or_404(db, dossier_id, current_user)
     await db.execute(sa_delete(KycBE).where(KycBE.id == be_id))
     await db.commit()
+
+
+@router.patch("/{dossier_id}/kyc/pm/be/{be_id}", response_model=KycBEOut)
+async def update_be_pm(
+    dossier_id: str,
+    be_id: str,
+    body: KycBEUpdate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> KycBEOut:
+    await _get_dossier_or_404(db, dossier_id, current_user)
+    be = await _update_be(db, be_id, body)
+    return KycBEOut.model_validate(be)
 
 
 @router.post("/{dossier_id}/kyc/pm/actionnaires", response_model=KycActOut, status_code=status.HTTP_201_CREATED)

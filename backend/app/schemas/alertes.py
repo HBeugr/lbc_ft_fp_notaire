@@ -18,6 +18,11 @@ class AlerteTraiter(BaseModel):
     resolution_note: str | None = None
 
 
+class SignalementInterneRequest(BaseModel):
+    description: str
+    dossier_reference: str | None = None
+
+
 class AlerteOut(BaseModel):
     id: str
     dossier_id: str
@@ -46,3 +51,10 @@ class AlerteOut(BaseModel):
             resolution_note=obj.resolution_note,
             created_at=obj.created_at.isoformat() if obj.created_at else "",
         )
+
+
+class AlerteListResponse(BaseModel):
+    items: list[AlerteOut]
+    total: int
+    page: int
+    page_size: int

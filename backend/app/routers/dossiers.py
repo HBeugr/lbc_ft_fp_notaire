@@ -9,7 +9,7 @@ from app.models.user import User
 from app.repositories import dossier_repo, audit_repo, user_repo
 from pydantic import BaseModel
 from app.models.dossier import CommentaireInterne
-from app.schemas.kyc import DossierCreate, DossierOut
+from app.schemas.kyc import DossierCreate, DossierOut, DossierTransactionRequest
 
 
 class CommentaireCreate(BaseModel):
@@ -53,29 +53,40 @@ _ASSIGNABLE_ROLES = ("notaire_principal", "clercs")
 
 
 def _ref() -> str:
-    return f"DOS-{uuid.uuid4().hex[:8].upper()}"
+    return f"KYC-{uuid.uuid4().hex[:8].upper()}"
 
 
-@router.get("", response_model=list[DossierOut])
+class DossierListOut(BaseModel):
+    items: list[DossierOut]
+    total: int
+    page: int
+    page_size: int
+
+
+@router.get("", response_model=DossierListOut)
 async def list_dossiers(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     statut: str | None = Query(None),
     classification: str | None = Query(None),
-    limit: int = Query(50, ge=1, le=200),
-    offset: int = Query(0, ge=0),
-) -> list[DossierOut]:
+    reference: str | None = Query(None),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=200),
+) -> DossierListOut:
     af = AssignedFilter(None if current_user.is_supervisor else current_user.id)
-    filters = af.apply({})
-    dossiers = await dossier_repo.list_dossiers(
-        db,
-        assigned_to=filters.get("assigned_to"),
-        statut=statut,
-        classification=classification,
-        limit=limit,
-        offset=offset,
+    assigned_to = af.apply({}).get("assigned_to")
+    common = dict(
+        assigned_to=assigned_to, statut=statut,
+        classification=classification, reference=reference,
     )
-    return [DossierOut.model_validate(d) for d in dossiers]
+    total = await dossier_repo.count_dossiers(db, **common)
+    dossiers = await dossier_repo.list_dossiers(
+        db, **common, limit=page_size, offset=(page - 1) * page_size,
+    )
+    return DossierListOut(
+        items=[DossierOut.model_validate(d) for d in dossiers],
+        total=total, page=page, page_size=page_size,
+    )
 
 
 @router.post("", response_model=DossierOut, status_code=status.HTTP_201_CREATED)
@@ -91,6 +102,7 @@ async def create_dossier(
         type_client=body.type_client,
         type_operation=body.type_operation,
         type_operation_detail=body.type_operation_detail,
+        nature_relation=body.nature_relation,
         created_by=current_user.id,
         assigned_to=current_user.id if current_user.role == "clercs" else None,
     )
@@ -105,6 +117,8 @@ async def create_dossier(
         ip=ip,
         detail={"reference": dossier.reference, "type_client": body.type_client},
     )
+    # Re-fetch avec eager-load des relations KYC (évite MissingGreenlet à la sérialisation)
+    dossier = await dossier_repo.get_by_id(db, dossier.id)
     return DossierOut.model_validate(dossier)
 
 
@@ -126,6 +140,16 @@ async def list_assignables(
     ]
 
 
+async def _serialize_dossier(db: AsyncSession, dossier) -> DossierOut:
+    """DossierOut + résolution du nom de l'agent assigné."""
+    out = DossierOut.model_validate(dossier)
+    if dossier.assigned_to:
+        u = await user_repo.get_by_id(db, dossier.assigned_to)
+        if u:
+            out.assigned_to_name = getattr(u, "full_name", None) or f"{u.first_name} {u.last_name}".strip()
+    return out
+
+
 @router.get("/{dossier_id}", response_model=DossierOut)
 async def get_dossier(
     dossier_id: str,
@@ -137,7 +161,47 @@ async def get_dossier(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Dossier introuvable.")
     if not current_user.is_supervisor and dossier.assigned_to != current_user.id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Accès refusé.")
-    return DossierOut.model_validate(dossier)
+    return await _serialize_dossier(db, dossier)
+
+
+_SEUIL_ESPECE = 15_000_000
+
+
+@router.patch("/{dossier_id}/transaction", response_model=DossierOut)
+async def update_transaction(
+    dossier_id: str,
+    body: DossierTransactionRequest,
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> DossierOut:
+    """Étape Transaction du KYC — montant (tranche + exact) et mode de paiement.
+    Espèces > 15M FCFA → déclaration systématique de transaction en espèces (opération à surveiller)."""
+    dossier = await dossier_repo.get_by_id(db, dossier_id)
+    if not dossier:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Dossier introuvable.")
+    if not current_user.is_supervisor and dossier.assigned_to != current_user.id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Accès refusé.")
+
+    dossier.montant_tranche = body.montant_tranche
+    if body.montant_transaction is not None:
+        dossier.montant_transaction = body.montant_transaction
+    if body.mode_paiement is not None:
+        dossier.mode_paiement = body.mode_paiement
+    montant = float(body.montant_transaction or dossier.montant_transaction or 0)
+    depasse_seuil = body.montant_tranche == "plus_15m" or montant > _SEUIL_ESPECE
+    dossier.surveillance_espece = bool(body.mode_paiement == "especes" and depasse_seuil)
+    await db.commit()
+    await db.refresh(dossier)
+
+    ip = request.client.host if request.client else "unknown"
+    await audit_repo.log(
+        db, action="dossier.transaction_saved", user_id=current_user.id, user_role=current_user.role,
+        entity_type="dossier", entity_id=dossier_id, ip=ip,
+        detail={"montant_tranche": body.montant_tranche, "mode_paiement": body.mode_paiement,
+                "surveillance_espece": dossier.surveillance_espece},
+    )
+    return await _serialize_dossier(db, dossier)
 
 
 @router.patch("/{dossier_id}/assign", response_model=DossierOut)
@@ -189,6 +253,12 @@ async def change_statut(
 ) -> DossierOut:
     if new_statut not in _STATUTS_VALIDES:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=f"Statut '{new_statut}' invalide.")
+    # WRK-04 — la clôture (et l'archivage) est réservée à l'Admin et au Notaire Principal (séparation Art. 12)
+    if new_statut in ("cloture", "archive") and current_user.role not in ("admin", "notaire_principal"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="La clôture d'un dossier est réservée au Notaire Principal et à l'Administrateur.",
+        )
     dossier = await dossier_repo.get_by_id(db, dossier_id)
     if not dossier:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Dossier introuvable.")

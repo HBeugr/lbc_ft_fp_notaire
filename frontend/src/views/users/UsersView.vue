@@ -280,19 +280,27 @@ const availableRoles = computed(() =>
 
 const ROLE_PERMISSIONS: Record<string, { modules: string[]; operations: string[] }> = {
   admin: {
-    modules: ['Tableau de bord', 'Dossiers KYC', 'Dossiers de Gels', 'Matrice de risque', 'Alertes', 'Décl. Op. Suspecte', 'Screening sanctions', 'Registres légaux', 'Journal d\'audit', 'Utilisateurs', 'Paramètres'],
+    modules: ['Tableau de bord', 'Dossiers KYC', 'Matrice de risque', 'Alertes', 'Décl. Op. Suspecte', 'Screening sanctions', 'Registres légaux', 'Journal d\'audit', 'Utilisateurs', 'Paramètres'],
     operations: [],
   },
   notaire_principal: {
-    modules: ['Tableau de bord', 'Dossiers KYC', 'Dossiers de Gels', 'Matrice de risque', 'Alertes', 'Décl. Op. Suspecte', 'Screening sanctions', 'Registres légaux', 'Journal d\'audit', 'Paramètres'],
+    modules: ['Tableau de bord', 'Dossiers KYC', 'Matrice de risque', 'Alertes', 'Décl. Op. Suspecte', 'Screening sanctions', 'Registres légaux', 'Journal d\'audit', 'Paramètres'],
     operations: [],
   },
   responsable_conformite: {
-    modules: ['Tableau de bord', 'Dossiers KYC', 'Dossiers de Gels', 'Matrice de risque', 'Alertes', 'Décl. Op. Suspecte', 'Screening sanctions', 'Registres légaux', 'Journal d\'audit', 'Utilisateurs (lecture seule)'],
+    modules: ['Tableau de bord', 'Dossiers KYC', 'Matrice de risque', 'Alertes', 'Décl. Op. Suspecte', 'Screening sanctions', 'Registres légaux', 'Journal d\'audit', 'Utilisateurs (lecture seule)'],
     operations: [],
   },
   clercs: {
     modules: ['Tableau de bord', 'Dossiers KYC', 'Signalement alerte'],
+    operations: [],
+  },
+  declarant_centif: {
+    modules: ['Tableau de bord', 'Dossiers KYC', 'Alertes', 'Décl. Op. Suspecte', 'Screening sanctions'],
+    operations: [],
+  },
+  autre_utilisateur: {
+    modules: ['Tableau de bord', 'Dossiers KYC (lecture seule)'],
     operations: [],
   },
 }

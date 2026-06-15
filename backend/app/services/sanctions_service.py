@@ -181,9 +181,11 @@ def pre_check(
         if norm_dob and entry_dob:
             if _dob_exact_match(norm_dob, entry_dob):
                 return {"level": "blocked", "score": score, "liste": liste.nom,
+                        "type_liste": liste.type_liste,
                         "nom_correspondant": matched_name, "reason": "name_and_dob_match"}
             if _dob_year_only_match(norm_dob, entry_dob):
                 return {"level": "warning", "score": score, "liste": liste.nom,
+                        "type_liste": liste.type_liste,
                         "nom_correspondant": matched_name, "reason": "year_only_match"}
             return {"level": "clear", "score": score, "liste": liste.nom,
                     "nom_correspondant": matched_name, "reason": "dob_mismatch"}
@@ -191,11 +193,13 @@ def pre_check(
         if norm_lieu and entry_lieu:
             if _lieu_match(norm_lieu, entry_lieu):
                 return {"level": "warning", "score": score, "liste": liste.nom,
+                        "type_liste": liste.type_liste,
                         "nom_correspondant": matched_name, "reason": "lieu_match"}
             return {"level": "clear", "score": score, "liste": liste.nom,
                     "nom_correspondant": matched_name, "reason": "lieu_mismatch"}
         # 4. Aucun facteur → alerte, RC décide
         return {"level": "warning", "score": score, "liste": liste.nom,
+                "type_liste": liste.type_liste,
                 "nom_correspondant": matched_name, "reason": "name_only"}
 
     if not listes_avec_entrees:

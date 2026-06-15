@@ -241,8 +241,10 @@ const STATUT_LABELS: Record<string, string> = {
   archive:                 'Archivé',
 }
 
-function formatDate(iso: string): string {
-  return new Date(iso).toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric' })
+function formatDate(iso: string | null | undefined): string {
+  if (!iso) return '—'
+  const d = new Date(iso)
+  return isNaN(d.getTime()) ? '—' : d.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric' })
 }
 
 const recentDossiers = computed<RecentDossier[]>(() => stats.value?.recent_dossiers ?? [])

@@ -26,7 +26,13 @@ from app.services import sanctions_parser_service, sanctions_service
 
 router = APIRouter(prefix="/sanctions", tags=["sanctions"])
 
-_TYPES_VALIDES = {"GIABA", "BCEAO", "OFAC", "UE_CSDNU", "AUTRE"}
+_TYPES_VALIDES = {
+    "GIABA", "BCEAO", "OFAC", "UE_CSDNU", "AUTRE",
+    # Financement de la Prolifération (M1.2)
+    "ONU_PROLIFERATION", "OFAC_WMD", "UE_PROLIFERATION", "CENTIF_FP",
+}
+# Types de listes relevant du Financement de la Prolifération
+_TYPES_PROLIFERATION = {"ONU_PROLIFERATION", "OFAC_WMD", "UE_PROLIFERATION", "CENTIF_FP"}
 _EXT_VALIDES = {".csv", ".pdf", ".html", ".htm"}
 _MAX_UPLOAD_BYTES = 10 * 1024 * 1024  # 10 Mo
 

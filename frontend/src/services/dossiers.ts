@@ -70,18 +70,49 @@ export interface KycBEData {
   raison_sociale_nom: string
   cni_passeport: string | null
   pourcentage: number | null
+  pourcentage_droits_vote?: number | null
+  entite_intermediaire_nom?: string | null
+  entite_intermediaire_pct?: number | null
   pays_residence: string | null
   date_naissance: string | null
   nationalite: string | null
+  lien_avec_client?: string | null
+  entreprise_cotee?: boolean
+  registre_be_demande?: string | null
+  registre_be_resultat?: string | null
+  registre_be_note?: string | null
+  filtrage_sfc_resultat?: string | null
+  filtrage_sfc_listes?: Record<string, unknown> | null
+  filtrage_sfc_justification?: string | null
+  statut_validation?: string
+  commentaire_validation?: string | null
 }
 
 export interface KycActData {
   id?: string
   raison_sociale_nom: string
+  type_personne?: string | null
   cni_passeport: string | null
   pourcentage: number
   pays_residence: string | null
   ordre: number
+}
+
+export interface KycPPEData {
+  id?: string
+  statut_ppe: string
+  fonctions: string | null
+  pays_concerne: string | null
+  verification_giaba: boolean
+  verification_ofac: boolean
+  verification_ue: boolean
+  ras: boolean
+  resultat_presse?: string | null
+  details_presse?: string | null
+  niveau_exposition?: string | null
+  mesures_proposees?: string | null
+  statut_validation?: string
+  commentaire_validation?: string | null
 }
 
 export interface KycPPData {
@@ -97,9 +128,14 @@ export interface KycPPData {
   lieu_naissance?: string | null
   nationalite?: string | null
   autres_nationalites?: string | null
+  sexe?: string | null
   statut_matrimonial?: string | null
   type_piece?: string | null
   numero_piece?: string | null
+  pays_emetteur_piece?: string | null
+  date_emission_piece?: string | null
+  date_expiration_piece?: string | null
+  mode_verification_piece?: string | null
   adresse_geo?: string | null
   adresse_postale?: string | null
   telephone?: string | null
@@ -107,20 +143,27 @@ export interface KycPPData {
   email?: string | null
   non_resident?: boolean
   pays_residence?: string | null
+  ville_residence?: string | null
   numero_contribuable?: string | null
   profession?: string | null
   profession_5_ans?: string | null
   employeur?: string | null
   secteur_activite?: string | null
+  retraite?: boolean
+  tranche_revenus?: string | null
+  note?: string | null
   mandataire?: MandataireData | null
   est_ppe?: boolean
   ppe_detail?: string | null
+  objet_relation?: string | null
   operations_cochees?: OperationsCochees | null
   description_operation?: string | null
   origine_fonds?: OrigineFonds | null
   anciennete_pro?: string | null
   date_signature?: string | null
+  photo_path?: string | null
   beneficiaires_effectifs?: KycBEData[]
+  ppe_declarations?: KycPPEData[]
 }
 
 export interface KycPMData {
@@ -128,11 +171,21 @@ export interface KycPMData {
   dossier_id?: string
   relation_type?: string
   denomination_sociale?: string
+  nom_commercial?: string | null
   forme_juridique?: string | null
+  pays_constitution?: string | null
   nom_representant_legal?: string | null
   numero_rccm?: string | null
+  date_emission_rccm?: string | null
+  date_expiration_rccm?: string | null
   numero_contribuable?: string | null
+  objet_social?: string | null
   libelle_activite?: string | null
+  ca_annuel?: number | null
+  effectif?: number | null
+  pays_operations?: string | null
+  volume_transactions?: string | null
+  representant_statut_ppe?: boolean
   adresse?: string | null
   telephone?: string | null
   whatsapp?: string | null
@@ -148,6 +201,7 @@ export interface KycPMData {
   date_signature?: string | null
   beneficiaires_effectifs?: KycBEData[]
   actionnaires?: KycActData[]
+  ppe_declarations?: KycPPEData[]
 }
 
 export type ModePaiement = 'virement' | 'cheque' | 'especes' | 'mix' | 'paiement_tiers'
@@ -159,19 +213,22 @@ export interface DossierOut {
   type_operation: string
   type_operation_detail: string | null
   montant_transaction: number | null
+  montant_tranche?: 'moins_15m' | 'plus_15m' | null
   mode_paiement: string | null
+  surveillance_espece?: boolean
   nb_parties: number
   statut: string
   assigned_to: string | null
+  assigned_to_name?: string | null
   created_by: string
   score_base: number | null
   classification: string | null
   trigger_actif: string | null
   force_par_trigger: boolean
+  created_at?: string | null
+  updated_at?: string | null
   kyc_pp?: KycPPData | null
   kyc_pm?: KycPMData | null
-  kyc_be_list?: KycBEData[]
-  kyc_ppe_list?: unknown[]
 }
 
 // ── Scoring / Matrice de risque (CDC Module 2) ────────────────────────────────
@@ -225,6 +282,15 @@ export interface DossierListResponse {
   total: number
 }
 
+export interface DocumentOut {
+  id: string
+  dossier_id: string
+  nom_fichier: string
+  type_document: string
+  taille_octets: number
+  created_at: string
+}
+
 export interface CommentaireOut {
   id: string
   dossier_id: string
@@ -254,8 +320,17 @@ export const dossiersService = {
 
   get: (id: string) => api.get<DossierOut>(`/dossiers/${id}`).then(r => r.data),
 
-  create: (payload: { type_client: TypeClient; type_operation: TypeOperation; type_operation_detail?: string }) =>
+  create: (payload: { type_client: TypeClient; type_operation: TypeOperation; type_operation_detail?: string; nature_relation?: 'ponctuelle' | 'durable' }) =>
     api.post<DossierOut>('/dossiers', payload).then(r => r.data),
+
+  async saveTransaction(dossierId: string, payload: {
+    montant_tranche?: 'moins_15m' | 'plus_15m'
+    montant_transaction?: number
+    mode_paiement?: 'especes' | 'cheque' | 'virement' | 'autre'
+  }): Promise<DossierOut> {
+    const { data } = await api.patch<DossierOut>(`/dossiers/${dossierId}/transaction`, payload)
+    return data
+  },
 
   // KYC PP
   getKycPP: (dossierId: string) =>
@@ -299,12 +374,59 @@ export const dossiersService = {
   deleteActionnaire: (dossierId: string, actId: string) =>
     api.delete(`/dossiers/${dossierId}/kyc/pm/actionnaires/${actId}`),
 
+  // KYC BE — API unifiée selon le contexte client (PP ou PM)
+  async createKycBE(dossierId: string, payload: KycBEData, clientType: 'PP' | 'PM' = 'PP'): Promise<KycBEData> {
+    const seg = clientType === 'PM' ? 'pm' : 'pp'
+    const { data } = await api.post<KycBEData>(`/dossiers/${dossierId}/kyc/${seg}/be`, payload)
+    return data
+  },
+  async listKycBE(dossierId: string, clientType: 'PP' | 'PM' = 'PP'): Promise<KycBEData[]> {
+    try {
+      const kyc = clientType === 'PM'
+        ? await api.get<KycPMData>(`/dossiers/${dossierId}/kyc/pm`).then(r => r.data)
+        : await api.get<KycPPData>(`/dossiers/${dossierId}/kyc/pp`).then(r => r.data)
+      return (kyc.beneficiaires_effectifs ?? []) as KycBEData[]
+    } catch {
+      return []
+    }
+  },
+  async updateKycBE(dossierId: string, beId: string, payload: Partial<KycBEData>, clientType: 'PP' | 'PM' = 'PP'): Promise<KycBEData> {
+    const seg = clientType === 'PM' ? 'pm' : 'pp'
+    const { data } = await api.patch<KycBEData>(`/dossiers/${dossierId}/kyc/${seg}/be/${beId}`, payload)
+    return data
+  },
+  deleteKycBE(dossierId: string, beId: string, clientType: 'PP' | 'PM' = 'PP') {
+    const seg = clientType === 'PM' ? 'pm' : 'pp'
+    return api.delete(`/dossiers/${dossierId}/kyc/${seg}/be/${beId}`)
+  },
+
   // Scoring / Matrice de risque
   getScoringPrefill: (dossierId: string) =>
     api.get<ScoringPrefill>(`/dossiers/${dossierId}/scoring/prefill`).then(r => r.data),
 
   calculateScore: (dossierId: string, payload: ScoreCalcPayload) =>
     api.post<ScoreResult>(`/dossiers/${dossierId}/scoring/calculate`, payload).then(r => r.data),
+
+  // Documents (stockage chiffré, accès API uniquement)
+  async listDocuments(dossierId: string): Promise<DocumentOut[]> {
+    const { data } = await api.get<DocumentOut[]>(`/dossiers/${dossierId}/documents`)
+    return data
+  },
+
+  async downloadDocument(docId: string): Promise<Blob> {
+    const { data } = await api.get(`/documents/${docId}/download`, { responseType: 'blob' })
+    return data as Blob
+  },
+
+  async deleteDocument(docId: string): Promise<void> {
+    await api.delete(`/documents/${docId}`)
+  },
+
+  // Déclenchement manuel d'un trigger (T5 refus documentaire / T6 BE non identifiable)
+  async triggerManuel(dossierId: string, trigger: 'T5' | 'T6', commentaire: string): Promise<DossierOut> {
+    const { data } = await api.post<DossierOut>(`/dossiers/${dossierId}/trigger-manuel`, { trigger, commentaire })
+    return data
+  },
 
   // Commentaires
   async listCommentaires(dossierId: string): Promise<CommentaireOut[]> {

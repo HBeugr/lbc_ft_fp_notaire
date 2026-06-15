@@ -43,6 +43,26 @@
         </div>
         <div class="form-row">
           <div class="field-group">
+            <label class="field-label">Sexe</label>
+            <select v-model="local.sexe" class="field-input">
+              <option :value="null">— Choisir —</option>
+              <option value="M">Masculin</option>
+              <option value="F">Féminin</option>
+            </select>
+          </div>
+          <div class="field-group">
+            <label class="field-label">Situation matrimoniale</label>
+            <select v-model="local.statut_matrimonial" class="field-input">
+              <option :value="null">— Choisir —</option>
+              <option value="Célibataire">Célibataire</option>
+              <option value="Marié(e)">Marié(e)</option>
+              <option value="Divorcé(e)">Divorcé(e)</option>
+              <option value="Veuf(ve)">Veuf(ve)</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="field-group">
             <label class="field-label">Date de naissance</label>
             <input v-model="local.date_naissance" type="date" class="field-input" @blur="triggerSanctionsCheck" />
           </div>
@@ -53,9 +73,32 @@
         </div>
         <div class="form-row">
           <CountrySelect v-model="local.nationalite" label="Nationalité" @blur="triggerSanctionsCheck" />
+          <div class="field-group">
+            <label class="field-label">Autre(s) nationalité(s)</label>
+            <input v-model="local.autres_nationalites" type="text" class="field-input" placeholder="Double nationalité éventuelle" />
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="field-group">
+            <label class="field-label">Téléphone</label>
+            <input v-model="local.telephone" type="text" class="field-input" placeholder="+225…" />
+          </div>
+          <div class="field-group">
+            <label class="field-label">E-mail</label>
+            <input v-model="local.email" type="email" class="field-input" placeholder="exemple@domaine.ci" />
+          </div>
+        </div>
+        <div class="form-row">
+          <CountrySelect v-model="local.pays_residence" label="Pays de résidence" />
+          <div class="field-group">
+            <label class="field-label">Ville de résidence</label>
+            <input v-model="local.ville_residence" type="text" class="field-input" placeholder="Ville" />
+          </div>
+        </div>
+        <div class="form-row">
           <div class="field-group field-group--full">
             <label class="field-label">Adresse de résidence</label>
-            <input v-model="local.adresse_residence" type="text" class="field-input" placeholder="Quartier, Commune, Ville" />
+            <input v-model="local.adresse_geo" type="text" class="field-input" placeholder="Quartier, Commune, Ville" />
           </div>
         </div>
       </section>
@@ -66,15 +109,15 @@
         <div class="form-row">
           <div class="field-group">
             <label class="field-label">Type de pièce <span class="req">*</span></label>
-            <select v-model="local.type_piece_identite" class="field-input" :class="{ 'field-input--error': errors.type_piece_identite }">
-              <option value="">— Choisir —</option>
+            <select v-model="local.type_piece" class="field-input" :class="{ 'field-input--error': errors.type_piece }">
+              <option :value="null">— Choisir —</option>
               <option value="CNI">Carte Nationale d'Identité</option>
-              <option value="PASSEPORT">Passeport</option>
-              <option value="TITRE_SEJOUR">Titre de séjour</option>
-              <option value="PERMIS">Permis de conduire</option>
-              <option value="ATTESTATION">Attestation d'identité</option>
+              <option value="Passeport">Passeport</option>
+              <option value="Titre_sejour">Titre de séjour</option>
+              <option value="Carte_consulaire">Carte consulaire</option>
+              <option value="Autre">Autre</option>
             </select>
-            <p v-if="errors.type_piece_identite" class="field-error">{{ errors.type_piece_identite }}</p>
+            <p v-if="errors.type_piece" class="field-error">{{ errors.type_piece }}</p>
           </div>
           <div class="field-group">
             <label class="field-label">Numéro de pièce <span class="req">*</span></label>
@@ -83,11 +126,26 @@
           </div>
         </div>
         <div class="form-row">
+          <CountrySelect v-model="local.pays_emetteur_piece" label="Pays émetteur" />
+          <div class="field-group">
+            <label class="field-label">Mode de vérification</label>
+            <select v-model="local.mode_verification_piece" class="field-input">
+              <option :value="null">— Choisir —</option>
+              <option value="original_vu">Original vu</option>
+              <option value="copie_certifiee">Copie certifiée</option>
+              <option value="en_ligne">Vérification en ligne</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="field-group">
+            <label class="field-label">Date d'émission</label>
+            <input v-model="local.date_emission_piece" type="date" class="field-input" />
+          </div>
           <div class="field-group">
             <label class="field-label">Date d'expiration</label>
             <input v-model="local.date_expiration_piece" type="date" class="field-input" />
           </div>
-          <CountrySelect v-model="local.pays_emission_piece" label="Pays émetteur" />
         </div>
 
         <!-- Upload photo / scan pièce d'identité -->
@@ -129,21 +187,12 @@
         <h3 class="section-title">Situation professionnelle & financière</h3>
         <div class="form-row">
           <div class="field-group">
-            <label class="field-label">Situation professionnelle</label>
-            <select v-model="local.situation_professionnelle" class="field-input">
-              <option value="">— Choisir —</option>
-              <option value="Salarié">Salarié</option>
-              <option value="Indépendant">Indépendant / Entrepreneur</option>
-              <option value="Professionnel libéral">Professionnel libéral</option>
-              <option value="Retraité">Retraité</option>
-              <option value="Étudiant">Étudiant</option>
-              <option value="Sans emploi">Sans emploi</option>
-              <option value="Autre">Autre</option>
-            </select>
+            <label class="field-label">Profession / Occupation</label>
+            <input v-model="local.profession" type="text" class="field-input" placeholder="Ex : Commerçant, Fonctionnaire…" />
           </div>
           <div class="field-group">
-            <label class="field-label">Profession / Secteur d'activité</label>
-            <input v-model="local.profession" type="text" class="field-input" placeholder="Ex : Commerçant, Fonctionnaire…" />
+            <label class="field-label">Secteur d'activité</label>
+            <input v-model="local.secteur_activite" type="text" class="field-input" placeholder="Ex : Commerce, BTP, Finance…" />
           </div>
         </div>
         <div class="form-row">
@@ -152,60 +201,78 @@
             <input v-model="local.employeur" type="text" class="field-input" placeholder="Nom de l'employeur ou entreprise" />
           </div>
           <div class="field-group">
-            <label class="field-label">Revenus annuels estimés (FCFA)</label>
-            <input v-model.number="local.revenus_annuels" type="number" min="0" class="field-input" placeholder="Ex : 12000000" />
+            <label class="field-label">Tranche de revenus (FCFA)</label>
+            <select v-model="local.tranche_revenus" class="field-input">
+              <option :value="null">— Choisir —</option>
+              <option value="moins_500k">&lt; 500 000</option>
+              <option value="500k_2m">500 000 – 2 000 000</option>
+              <option value="2m_10m">2 000 000 – 10 000 000</option>
+              <option value="plus_10m">&gt; 10 000 000</option>
+            </select>
           </div>
         </div>
+        <div class="form-row">
+          <div class="field-group field-group--full">
+            <label class="field-label">Profession exercée durant les 5 dernières années</label>
+            <textarea v-model="local.profession_5_ans" class="field-input field-textarea" rows="2" placeholder="Historique professionnel récent…" />
+          </div>
+        </div>
+        <div class="field-group">
+          <label class="field-label checkbox-label">
+            <input v-model="local.retraite" type="checkbox" class="checkbox" />
+            <span>Personne retraitée</span>
+          </label>
+        </div>
       </section>
 
-      <!-- Section 4 — Profil patrimonial -->
+      <!-- Section 4 — Objet de la relation -->
       <section v-else-if="currentStep === 4" class="section-form">
-        <h3 class="section-title">Profil patrimonial</h3>
-        <div class="field-group">
-          <label class="field-label">Patrimoine estimé (FCFA)</label>
-          <input v-model.number="local.patrimoine_estime" type="number" min="0" class="field-input" placeholder="Ex : 50000000" />
-        </div>
-        <div class="field-group">
-          <label class="field-label">Sources de revenus</label>
-          <textarea v-model="local.sources_revenus" class="field-input field-textarea" rows="3" placeholder="Décrivez les sources de revenus du client…" />
-        </div>
-        <div class="field-group">
-          <label class="field-label">Origine des fonds</label>
-          <textarea v-model="local.origine_fonds" class="field-input field-textarea" rows="3" placeholder="Ex : salaire, héritage, cession d'actifs, revenus locatifs…" />
-        </div>
-      </section>
-
-      <!-- Section 5 — Objet de la relation -->
-      <section v-else-if="currentStep === 5" class="section-form">
         <h3 class="section-title">Objet de la relation</h3>
         <div class="field-group">
           <label class="field-label">Objet précis de la relation</label>
-          <textarea v-model="local.objet_relation" class="field-input field-textarea" rows="3" placeholder="Décrivez l'objet de la relation commerciale…" />
+          <textarea v-model="local.objet_relation" class="field-input field-textarea" rows="3" placeholder="Décrivez l'objet de la relation d'affaires…" />
         </div>
+        <div class="field-group">
+          <label class="field-label">Description de l'opération</label>
+          <textarea v-model="local.description_operation" class="field-input field-textarea" rows="3" placeholder="Nature de l'acte / opération envisagée…" />
+        </div>
+        <div class="field-group">
+          <label class="field-label">Note / Observations</label>
+          <textarea v-model="local.note" class="field-input field-textarea" rows="2" placeholder="Remarques complémentaires…" />
+        </div>
+      </section>
+
+      <!-- Section 5 — PPE & mandataire -->
+      <section v-else-if="currentStep === 5" class="section-form">
+        <h3 class="section-title">Exposition politique & mandataire</h3>
 
         <!-- Statut PPE -->
         <div class="field-group">
           <label class="field-label checkbox-label">
-            <input v-model="local.statut_ppe" type="checkbox" class="checkbox" />
+            <input v-model="local.est_ppe" type="checkbox" class="checkbox" />
             <span>Le client est une Personne Politiquement Exposée (PPE)</span>
           </label>
-          <div v-if="local.statut_ppe" class="ppe-banner">
+          <div v-if="local.est_ppe" class="ppe-banner">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
             <span>Trigger T1 activé — Le dossier sera classifié ÉLEVÉ automatiquement</span>
           </div>
         </div>
+        <div v-if="local.est_ppe" class="field-group">
+          <label class="field-label">Détail PPE (fonction, pays, lien)</label>
+          <textarea v-model="local.ppe_detail" class="field-input field-textarea" rows="2" placeholder="Précisez la fonction politique, le pays et le lien…" />
+        </div>
 
-        <!-- Compte de tiers -->
+        <!-- Mandataire -->
         <div class="field-group">
           <label class="field-label checkbox-label">
-            <input v-model="local.est_compte_tiers" type="checkbox" class="checkbox" />
-            <span>Opération pour compte de tiers (mandant)</span>
+            <input v-model="estMandataire" type="checkbox" class="checkbox" />
+            <span>Le client agit via un mandataire / pour compte de tiers</span>
           </label>
         </div>
 
-        <!-- Mandant section — conditionally displayed -->
-        <div v-if="local.est_compte_tiers" class="mandant-block">
-          <h4 class="mandant-title">Informations sur le mandant</h4>
+        <!-- Mandataire section — conditionally displayed -->
+        <div v-if="estMandataire" class="mandant-block">
+          <h4 class="mandant-title">Informations sur le mandataire</h4>
           <div class="form-row">
             <div class="field-group">
               <label class="field-label">Nom du mandant <span class="req">*</span></label>
@@ -254,6 +321,41 @@
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
             Aucune correspondance — mandant non sanctionné
           </div>
+        </div>
+      </section>
+
+      <!-- Section 6 — Transaction -->
+      <section v-else-if="currentStep === 6" class="section-form">
+        <h3 class="section-title">Transaction</h3>
+        <div class="form-row">
+          <div class="field-group">
+            <label class="field-label">Montant de la transaction</label>
+            <select v-model="transaction.montant_tranche" class="field-input">
+              <option value="">— Choisir —</option>
+              <option value="moins_15m">Montant &lt; 15M FCFA</option>
+              <option value="plus_15m">Montant &gt; 15M FCFA</option>
+            </select>
+          </div>
+          <div class="field-group">
+            <label class="field-label">Montant exact (FCFA)</label>
+            <input v-model.number="transaction.montant_transaction" type="number" min="0" class="field-input" placeholder="Ex : 25000000" />
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="field-group">
+            <label class="field-label">Mode de paiement</label>
+            <select v-model="transaction.mode_paiement" class="field-input">
+              <option value="">— Choisir —</option>
+              <option value="especes">Espèces</option>
+              <option value="cheque">Chèque</option>
+              <option value="virement">Virement</option>
+              <option value="autre">Autre</option>
+            </select>
+          </div>
+        </div>
+        <div v-if="surveillanceEspece" class="espece-banner">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+          <span>Déclaration systématique de transaction en espèce à faire. Opération à surveiller.</span>
         </div>
       </section>
     </div>
@@ -330,7 +432,7 @@
         class="btn-primary"
         :disabled="saving
           || (currentStep === 1 && sanctionsState.status === 'blocked')
-          || (local.est_compte_tiers && (mandantScreening.status === 'blocked' || mandantScreening.status === 'checking'))"
+          || (estMandataire && (mandantScreening.status === 'blocked' || mandantScreening.status === 'checking'))"
         @click="saveAndFinish"
       >
         <span v-if="saving" class="spinner" />
@@ -394,10 +496,11 @@ const emit = defineEmits<{
 
 const STEPS = [
   { label: 'État civil' },
-  { label: 'Pièce d\'identité' },
-  { label: 'Situation pro.' },
-  { label: 'Patrimoine' },
+  { label: 'Pièce & vérification' },
+  { label: 'Situation pro. & fin.' },
   { label: 'Objet relation' },
+  { label: 'PPE & mandataire' },
+  { label: 'Transaction' },
 ]
 
 const steps = STEPS
@@ -460,18 +563,36 @@ watch([() => local.nom, () => local.prenoms], ([n, p]) => {
   }
 })
 
-// Form state — mirrors KycPPData fields flat
+// Form state — aligné sur le schéma backend notaire (KycPPUpsert)
 const local = reactive<KycPPData>({
   nom: '', prenoms: '',
-  date_naissance: null, lieu_naissance: null, nationalite: null, adresse_residence: null,
-  type_piece_identite: null, numero_piece: null, date_expiration_piece: null, pays_emission_piece: null,
-  situation_professionnelle: null, profession: null, employeur: null, revenus_annuels: null,
-  patrimoine_estime: null, sources_revenus: null, origine_fonds: null,
-  objet_relation: null, est_compte_tiers: false, statut_ppe: false, mandant_info: null,
+  sexe: null, date_naissance: null, lieu_naissance: null,
+  nationalite: null, autres_nationalites: null, statut_matrimonial: null,
+  adresse_geo: null, ville_residence: null, pays_residence: null,
+  telephone: null, whatsapp: null, email: null, non_resident: false,
+  type_piece: null, numero_piece: null, pays_emetteur_piece: null,
+  date_emission_piece: null, date_expiration_piece: null, mode_verification_piece: null,
+  numero_contribuable: null,
+  profession: null, employeur: null, secteur_activite: null, profession_5_ans: null,
+  retraite: false, tranche_revenus: null, note: null,
+  objet_relation: null, description_operation: null,
+  est_ppe: false, ppe_detail: null, mandataire: null,
 })
 
-// Mandant helper object (merged into mandant_info on save)
+// Mandataire helper object (sérialisé en JSON `mandataire` au save)
 const mandant = reactive({ nom: '', prenoms: '', date_naissance: '', lieu_naissance: '', lien: '', contact: '' })
+const estMandataire = ref(false)
+
+// Étape Transaction (montant + mode de paiement) — niveau dossier
+const transaction = reactive<{
+  montant_tranche: 'moins_15m' | 'plus_15m' | ''
+  montant_transaction: number | null
+  mode_paiement: 'especes' | 'cheque' | 'virement' | 'autre' | ''
+}>({ montant_tranche: '', montant_transaction: null, mode_paiement: '' })
+const surveillanceEspece = computed(() =>
+  transaction.mode_paiement === 'especes' &&
+  (transaction.montant_tranche === 'plus_15m' || Number(transaction.montant_transaction || 0) > 15_000_000),
+)
 
 // ── Mandant screening ─────────────────────────────────────────────────────────
 const mandantScreening = ref<{
@@ -508,16 +629,27 @@ watch([() => mandant.nom, () => mandant.prenoms], ([n, p]) => {
 onMounted(() => {
   if (props.initialData) {
     Object.assign(local, props.initialData)
-    if (props.initialData.mandant_info) {
-      Object.assign(mandant, props.initialData.mandant_info)
+    if (props.initialData.mandataire) {
+      Object.assign(mandant, props.initialData.mandataire)
+      estMandataire.value = true
     }
     // Mark sections complete based on filled data
     if (local.nom && local.prenoms) completedSections.value.add(1)
-    if (local.type_piece_identite && local.numero_piece) completedSections.value.add(2)
-    if (local.situation_professionnelle) completedSections.value.add(3)
-    if (local.origine_fonds || local.sources_revenus) completedSections.value.add(4)
-    if (local.objet_relation) completedSections.value.add(5)
+    if (local.type_piece && local.numero_piece) completedSections.value.add(2)
+    if (local.profession || local.employeur) completedSections.value.add(3)
+    if (local.objet_relation) completedSections.value.add(4)
+    if (local.est_ppe || local.mandataire) completedSections.value.add(5)
   }
+
+  // Pré-remplissage de l'étape Transaction depuis le dossier
+  dossiersService.get(props.dossierId).then(d => {
+    if (d.montant_tranche) transaction.montant_tranche = d.montant_tranche
+    if (d.montant_transaction != null) transaction.montant_transaction = d.montant_transaction
+    if (d.mode_paiement && ['especes','cheque','virement','autre'].includes(d.mode_paiement)) {
+      transaction.mode_paiement = d.mode_paiement as 'especes' | 'cheque' | 'virement' | 'autre'
+    }
+    if (d.montant_tranche || d.mode_paiement) completedSections.value.add(6)
+  }).catch(() => {})
 
   // Auto-save every 30 seconds
   autoSaveTimer = setInterval(() => autoSave(), 30_000)
@@ -547,7 +679,7 @@ function validateSection(step: number): boolean {
     if (!local.prenoms?.trim()) { errors.prenoms = 'Requis.'; return false }
   }
   if (step === 2) {
-    if (!local.type_piece_identite) { errors.type_piece_identite = 'Requis.'; return false }
+    if (!local.type_piece) { errors.type_piece = 'Requis.'; return false }
     if (!local.numero_piece?.trim()) { errors.numero_piece = 'Requis.'; return false }
   }
   return true
@@ -555,8 +687,8 @@ function validateSection(step: number): boolean {
 
 function buildPayload(): KycPPData {
   const payload = { ...local }
-  if (local.est_compte_tiers && (mandant.nom || mandant.prenoms)) {
-    payload.mandant_info = { ...mandant }
+  if (estMandataire.value && (mandant.nom || mandant.prenoms)) {
+    payload.mandataire = { ...mandant }
   }
   return payload
 }
@@ -564,6 +696,17 @@ function buildPayload(): KycPPData {
 async function saveSection(step: number): Promise<KycPPData | null> {
   saveStatus.value = 'saving'
   try {
+    if (step === 6) {
+      await dossiersService.saveTransaction(props.dossierId, {
+        montant_tranche: transaction.montant_tranche || undefined,
+        montant_transaction: transaction.montant_transaction ?? undefined,
+        mode_paiement: transaction.mode_paiement || undefined,
+      })
+      completedSections.value.add(step)
+      saveStatus.value = 'saved'
+      setTimeout(() => { if (saveStatus.value === 'saved') saveStatus.value = 'idle' }, 3000)
+      return local
+    }
     const data = await dossiersService.saveKycPP(props.dossierId, step, buildPayload())
     completedSections.value.add(step)
     saveStatus.value = 'saved'
@@ -780,6 +923,13 @@ async function saveAndFinish() {
   margin-top: 0.5rem;
 }
 .ppe-banner svg { width: 16px; height: 16px; flex-shrink: 0; }
+
+.espece-banner {
+  display: flex; align-items: center; gap: 0.5rem;
+  background: #fef2f2; color: #b91c1c; border: 1px solid #fca5a5;
+  border-radius: 7px; padding: 0.75rem 0.875rem; font-size: 0.8125rem; font-weight: 600; margin-top: 1rem;
+}
+.espece-banner svg { width: 18px; height: 18px; flex-shrink: 0; }
 
 /* Mandant block */
 .mandant-block {

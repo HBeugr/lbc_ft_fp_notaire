@@ -31,18 +31,17 @@
         <div class="be-card-left">
           <div class="be-avatar">{{ initials(be) }}</div>
           <div>
-            <p class="be-name">{{ be.nom }} {{ be.prenoms }}</p>
+            <p class="be-name">{{ be.raison_sociale_nom }}</p>
             <p class="be-meta">
               {{ be.nationalite ?? '—' }}
               <span class="sep">·</span>
-              <span class="pct-badge">{{ be.pourcentage_detention }}%</span>
-              <span v-if="(be.pourcentage_detention ?? 0) >= 25" class="be25-tag">≥ 25%</span>
-              <span v-if="be.type_controle" class="controle-badge">{{ be.type_controle }}</span>
+              <span class="pct-badge">{{ be.pourcentage ?? 0 }}%</span>
+              <span v-if="(be.pourcentage ?? 0) >= 25" class="be25-tag">≥ 25%</span>
+              <span v-if="be.entreprise_cotee" class="controle-badge">Cotée</span>
             </p>
           </div>
         </div>
         <div class="be-card-right">
-          <span v-if="be.statut_ppe" class="ppe-chip">PPE</span>
           <span class="validation-badge" :class="`validation--${be.statut_validation}`">
             {{ VALIDATION_LABELS[be.statut_validation ?? 'en_attente'] }}
           </span>
@@ -61,17 +60,11 @@
       Limite de {{ MAX_BE }} bénéficiaires effectifs atteinte.
     </p>
 
-    <!-- PPE warning if any -->
-    <div v-if="hasPPE" class="ppe-global-banner">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
-      <span>Un ou plusieurs bénéficiaires sont PPE — un KYC-PPE doit être complété pour chacun d'eux (Story 2.4).</span>
-    </div>
-
     <!-- Delete confirmation -->
     <Teleport to="body">
       <div v-if="beToDelete" class="modal-backdrop" @click.self="beToDelete = null">
         <div class="confirm-modal">
-          <p class="confirm-text">Supprimer <strong>{{ beToDelete.nom }} {{ beToDelete.prenoms }}</strong> ?</p>
+          <p class="confirm-text">Supprimer <strong>{{ beToDelete.raison_sociale_nom }}</strong> ?</p>
           <div class="confirm-actions">
             <button class="btn-ghost" @click="beToDelete = null">Annuler</button>
             <button class="btn-danger" :disabled="deleting" @click="doDelete">
@@ -87,6 +80,7 @@
       v-if="showForm"
       :dossier-id="dossierId"
       :be="editingBE"
+      :client-type="clientType"
       @close="showForm = false"
       @saved="handleSaved"
     />
@@ -98,7 +92,7 @@ import { ref, computed, onMounted } from 'vue'
 import KycBEForm from './KycBEForm.vue'
 import { dossiersService, type KycBEData } from '@/services/dossiers'
 
-const props = defineProps<{ dossierId: string }>()
+const props = defineProps<{ dossierId: string; clientType?: 'PP' | 'PM' }>()
 
 const MAX_BE = 10
 
@@ -115,8 +109,6 @@ const editingBE = ref<KycBEData | null>(null)
 const beToDelete = ref<KycBEData | null>(null)
 const deleting  = ref(false)
 
-const hasPPE = computed(() => beList.value.some(b => b.statut_ppe))
-
 onMounted(async () => {
   await refresh()
 })
@@ -124,14 +116,15 @@ onMounted(async () => {
 async function refresh() {
   loading.value = true
   try {
-    beList.value = await dossiersService.listKycBE(props.dossierId)
+    beList.value = await dossiersService.listKycBE(props.dossierId, props.clientType ?? 'PP')
   } finally {
     loading.value = false
   }
 }
 
 function initials(be: KycBEData): string {
-  return `${(be.nom ?? '')[0] ?? ''}${(be.prenoms ?? '')[0] ?? ''}`.toUpperCase()
+  const r = (be.raison_sociale_nom ?? '').trim().split(' ')
+  return `${(r[0] ?? '')[0] ?? ''}${(r[1] ?? '')[0] ?? ''}`.toUpperCase()
 }
 
 function openForm(be: KycBEData | null) {
@@ -154,7 +147,7 @@ async function doDelete() {
   if (!beToDelete.value?.id) return
   deleting.value = true
   try {
-    await dossiersService.deleteKycBE(props.dossierId, beToDelete.value.id)
+    await dossiersService.deleteKycBE(props.dossierId, beToDelete.value.id, props.clientType ?? 'PP')
     beList.value = beList.value.filter(b => b.id !== beToDelete.value?.id)
     beToDelete.value = null
   } finally {

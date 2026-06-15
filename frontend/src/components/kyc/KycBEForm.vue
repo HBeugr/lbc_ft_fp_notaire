@@ -37,84 +37,95 @@
               <label class="form-label">Date de naissance</label>
               <input v-model="form.date_naissance" type="date" class="form-input" @blur="triggerSanctionsCheck" />
             </div>
-            <div class="form-group">
-              <label class="form-label">Lieu de naissance</label>
-              <input v-model="form.lieu_naissance" type="text" class="form-input" />
-            </div>
             <CountrySelect v-model="form.nationalite" label="Nationalité" @blur="triggerSanctionsCheck" />
-            <div class="form-group form-group--full">
-              <label class="form-label">Adresse de résidence</label>
-              <textarea v-model="form.adresse_residence" class="form-textarea" rows="2" />
+            <CountrySelect v-model="form.pays_residence" label="Pays de résidence" />
+            <div class="form-group">
+              <label class="form-label">N° pièce (CNI / passeport)</label>
+              <input v-model="form.cni_passeport" type="text" class="form-input" />
             </div>
             <div class="form-group">
-              <label class="form-label">Type de pièce</label>
-              <select v-model="form.type_piece_identite" class="form-select">
-                <option value="">— Sélectionner —</option>
-                <option v-for="p in TYPES_PIECE" :key="p" :value="p">{{ p }}</option>
-              </select>
+              <label class="form-label">Lien avec le client</label>
+              <input v-model="form.lien_avec_client" type="text" class="form-input" placeholder="Ex : actionnaire, dirigeant, parent…" />
             </div>
-            <div class="form-group">
-              <label class="form-label">Numéro de pièce</label>
-              <input v-model="form.numero_piece" type="text" class="form-input" />
-            </div>
-            <div class="form-group">
-              <label class="form-label">Date d'expiration</label>
-              <input v-model="form.date_expiration_piece" type="date" class="form-input" />
-            </div>
-            <CountrySelect v-model="form.pays_emission_piece" label="Pays d'émission" />
-          </div>
-
-          <!-- Tab 2 — Qualification -->
-          <div v-else-if="activeTab === 1" class="form-grid">
-            <div class="form-group">
-              <label class="form-label">% de détention <span class="req">*</span></label>
-              <input v-model.number="form.pourcentage_detention" type="number" min="25" max="100" step="0.01" class="form-input" placeholder="≥ 25 %" />
-              <p v-if="errors.pourcentage_detention" class="form-error">{{ errors.pourcentage_detention }}</p>
-            </div>
-            <div class="form-group">
-              <label class="form-label">Type de contrôle</label>
-              <select v-model="form.type_controle" class="form-select">
-                <option value="">— Sélectionner —</option>
-                <option value="Direct">Direct</option>
-                <option value="Indirect">Indirect</option>
-                <option value="Mixte">Mixte</option>
-              </select>
-            </div>
-            <div class="form-group form-group--full">
-              <label class="form-label">Nature du contrôle</label>
-              <textarea v-model="form.nature_controle" class="form-textarea" rows="3" placeholder="Décrivez la nature et les modalités du contrôle exercé" />
-            </div>
-          </div>
-
-          <!-- Tab 3 — Statut PPE -->
-          <div v-else-if="activeTab === 2" class="form-grid">
-            <div class="form-group form-group--full">
+            <div class="form-group" style="align-self:end">
               <label class="checkbox-row">
-                <input v-model="form.statut_ppe" type="checkbox" class="checkbox" />
-                <span class="form-label" style="margin:0">Personne Politiquement Exposée (PPE)</span>
+                <input v-model="form.entreprise_cotee" type="checkbox" class="checkbox" />
+                <span class="form-label" style="margin:0">Entreprise cotée en bourse</span>
               </label>
             </div>
-            <template v-if="form.statut_ppe">
-              <div class="form-group form-group--full">
-                <div class="ppe-banner">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
-                  <div>
-                    <strong>Vigilance renforcée obligatoire (Trigger T1)</strong>
-                    <p>Un sous-module KYC-PPE devra être complété pour ce bénéficiaire.</p>
-                  </div>
-                </div>
-              </div>
-              <div class="form-group form-group--full">
-                <label class="form-label">Fonctions politiques exercées</label>
-                <textarea v-model="form.fonctions_politiques" class="form-textarea" rows="3" placeholder="Décrivez les fonctions politiques actuelles ou passées" />
-              </div>
-              <div class="form-group form-group--full">
-                <label class="form-label">Pays d'exposition</label>
-                <input v-model="form.pays_exposition" type="text" class="form-input" placeholder="Pays dans lequel les fonctions sont/étaient exercées" />
-              </div>
-            </template>
-            <div v-else class="form-group form-group--full">
-              <p class="info-text">Cochez si ce bénéficiaire est ou a été une personne politiquement exposée (chef d'État, ministre, parlementaire, etc.)</p>
+          </div>
+
+          <!-- Tab 2 — Détention & registre BE -->
+          <div v-else-if="activeTab === 1" class="form-grid">
+            <div class="form-group">
+              <label class="form-label">% de détention du capital <span class="req">*</span></label>
+              <input v-model.number="form.pourcentage" type="number" min="0" max="100" step="0.01" class="form-input" placeholder="≥ 25 %" />
+              <p v-if="errors.pourcentage" class="form-error">{{ errors.pourcentage }}</p>
+            </div>
+            <div class="form-group">
+              <label class="form-label">% de droits de vote</label>
+              <input v-model.number="form.pourcentage_droits_vote" type="number" min="0" max="100" step="0.01" class="form-input" />
+            </div>
+            <div class="form-group">
+              <label class="form-label">Entité intermédiaire (contrôle indirect)</label>
+              <input v-model="form.entite_intermediaire_nom" type="text" class="form-input" placeholder="Nom de l'entité interposée" />
+            </div>
+            <div class="form-group">
+              <label class="form-label">% via l'entité intermédiaire</label>
+              <input v-model.number="form.entite_intermediaire_pct" type="number" min="0" max="100" step="0.01" class="form-input" />
+            </div>
+            <div class="divider form-group--full" />
+            <div class="form-group">
+              <label class="form-label">Registre officiel BE (greffe) — demande</label>
+              <select v-model="form.registre_be_demande" class="form-select">
+                <option :value="null">— Sélectionner —</option>
+                <option value="oui">Oui</option>
+                <option value="non">Non</option>
+                <option value="en_cours">En cours</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Résultat registre BE</label>
+              <select v-model="form.registre_be_resultat" class="form-select">
+                <option :value="null">— Sélectionner —</option>
+                <option value="conforme">Conforme</option>
+                <option value="divergence">Divergence</option>
+                <option value="non_trouve">Non trouvé</option>
+              </select>
+            </div>
+            <div class="form-group form-group--full">
+              <label class="form-label">Note registre BE</label>
+              <textarea v-model="form.registre_be_note" class="form-textarea" rows="2" placeholder="Observations sur le registre officiel des BE" />
+            </div>
+          </div>
+
+          <!-- Tab 3 — Filtrage SFC & validation -->
+          <div v-else-if="activeTab === 2" class="form-grid">
+            <div class="form-group">
+              <label class="form-label">Résultat filtrage SFC</label>
+              <select v-model="form.filtrage_sfc_resultat" class="form-select">
+                <option :value="null">— Sélectionner —</option>
+                <option value="aucune">Aucune correspondance</option>
+                <option value="faux_positif">Faux positif</option>
+                <option value="correspondance">Correspondance</option>
+              </select>
+            </div>
+            <div class="form-group form-group--full">
+              <label class="form-label">Justification du filtrage SFC</label>
+              <textarea v-model="form.filtrage_sfc_justification" class="form-textarea" rows="2" placeholder="Listes consultées, analyse, décision…" />
+            </div>
+            <div class="divider form-group--full" />
+            <div class="form-group">
+              <label class="form-label">Statut de validation (RC)</label>
+              <select v-model="form.statut_validation" class="form-select">
+                <option value="en_attente">En attente</option>
+                <option value="valide">Validé</option>
+                <option value="rejete">Rejeté</option>
+              </select>
+            </div>
+            <div class="form-group form-group--full">
+              <label class="form-label">Commentaire de validation</label>
+              <textarea v-model="form.commentaire_validation" class="form-textarea" rows="2" />
             </div>
           </div>
         </div>
@@ -173,6 +184,7 @@ import CountrySelect from '@/components/common/CountrySelect.vue'
 const props = defineProps<{
   dossierId: string
   be?: KycBEData | null
+  clientType?: 'PP' | 'PM'
 }>()
 
 const emit = defineEmits<{
@@ -180,8 +192,7 @@ const emit = defineEmits<{
   saved: [data: KycBEData]
 }>()
 
-const TABS = ['Identification', 'Qualification', 'Statut PPE']
-const TYPES_PIECE = ["Carte Nationale d'Identité", 'Passeport', 'Titre de séjour']
+const TABS = ['Identification', 'Détention & registre', 'Filtrage & validation']
 
 const router = useRouter()
 const activeTab  = ref(0)
@@ -222,35 +233,73 @@ watch([() => form.value.nom, () => form.value.prenoms], ([n, p]) => {
   }
 })
 
-const form = ref<Partial<KycBEData>>({
+// Aligné sur le schéma backend (KycBECreate). `nom`/`prenoms` sont des champs
+// d'aide fusionnés en `raison_sociale_nom` au save.
+const form = ref<Partial<KycBEData> & { nom?: string; prenoms?: string }>({
   nom: '',
   prenoms: '',
   date_naissance: null,
-  lieu_naissance: null,
   nationalite: null,
-  adresse_residence: null,
-  type_piece_identite: '',
-  numero_piece: null,
-  date_expiration_piece: null,
-  pays_emission_piece: null,
-  pourcentage_detention: undefined,
-  type_controle: null,
-  nature_controle: null,
-  statut_ppe: false,
-  fonctions_politiques: null,
-  pays_exposition: null,
+  pays_residence: null,
+  cni_passeport: null,
+  lien_avec_client: null,
+  entreprise_cotee: false,
+  pourcentage: null,
+  pourcentage_droits_vote: null,
+  entite_intermediaire_nom: null,
+  entite_intermediaire_pct: null,
+  registre_be_demande: null,
+  registre_be_resultat: null,
+  registre_be_note: null,
+  filtrage_sfc_resultat: null,
+  filtrage_sfc_justification: null,
+  statut_validation: 'en_attente',
+  commentaire_validation: null,
 })
 
 watch(() => props.be, (val) => {
-  if (val) Object.assign(form.value, val)
+  if (val) {
+    Object.assign(form.value, val)
+    // `raison_sociale_nom` (backend) → champs d'aide nom/prenoms
+    if (val.raison_sociale_nom && !form.value.nom) {
+      const parts = val.raison_sociale_nom.trim().split(' ')
+      form.value.nom = parts[0] ?? ''
+      form.value.prenoms = parts.slice(1).join(' ')
+    }
+  }
 }, { immediate: true })
+
+function buildBEPayload(): KycBEData {
+  const f = form.value
+  const raison = `${f.nom ?? ''} ${f.prenoms ?? ''}`.trim()
+  return {
+    raison_sociale_nom: raison,
+    cni_passeport: f.cni_passeport ?? null,
+    pourcentage: f.pourcentage ?? null,
+    pourcentage_droits_vote: f.pourcentage_droits_vote ?? null,
+    entite_intermediaire_nom: f.entite_intermediaire_nom ?? null,
+    entite_intermediaire_pct: f.entite_intermediaire_pct ?? null,
+    pays_residence: f.pays_residence ?? null,
+    date_naissance: f.date_naissance ?? null,
+    nationalite: f.nationalite ?? null,
+    lien_avec_client: f.lien_avec_client ?? null,
+    entreprise_cotee: f.entreprise_cotee ?? false,
+    registre_be_demande: f.registre_be_demande ?? null,
+    registre_be_resultat: f.registre_be_resultat ?? null,
+    registre_be_note: f.registre_be_note ?? null,
+    filtrage_sfc_resultat: f.filtrage_sfc_resultat ?? null,
+    filtrage_sfc_justification: f.filtrage_sfc_justification ?? null,
+    statut_validation: f.statut_validation ?? 'en_attente',
+    commentaire_validation: f.commentaire_validation ?? null,
+  }
+}
 
 function validate(): boolean {
   errors.value = {}
   if (!form.value.nom?.trim()) errors.value.nom = 'Champ requis.'
   if (!form.value.prenoms?.trim()) errors.value.prenoms = 'Champ requis.'
-  const pct = Number(form.value.pourcentage_detention)
-  if (!pct || pct < 0 || pct > 100) errors.value.pourcentage_detention = 'Pourcentage entre 0 et 100 requis.'
+  const pct = Number(form.value.pourcentage)
+  if (pct < 0 || pct > 100) errors.value.pourcentage = 'Pourcentage entre 0 et 100.'
   return Object.keys(errors.value).length === 0
 }
 
@@ -262,16 +311,12 @@ async function submitForReview() {
   submittingReview.value = true
   serverError.value = ''
   try {
-    // Le save déclenche _handle_sanctions_warning côté backend → transition automatique
-    // vers en_analyse. Pas d'appel séparé à dossiersService.transition() pour éviter
-    // la double-transition (dossier déjà en en_analyse après le save).
+    // Le save déclenche le criblage côté backend → transition automatique vers en_analyse.
+    const ct = props.clientType ?? 'PP'
     if (props.be?.id) {
-      await dossiersService.updateKycBE(props.dossierId, props.be.id, form.value)
+      await dossiersService.updateKycBE(props.dossierId, props.be.id, buildBEPayload(), ct)
     } else {
-      await dossiersService.createKycBE(
-        props.dossierId,
-        form.value as Parameters<typeof dossiersService.createKycBE>[1],
-      )
+      await dossiersService.createKycBE(props.dossierId, buildBEPayload(), ct)
     }
     router.push({ name: 'kyc-detail', params: { id: props.dossierId } })
   } catch (err: unknown) {
@@ -292,12 +337,10 @@ async function handleSave() {
   saving.value = true
   serverError.value = ''
   try {
-    let result: KycBEData
-    if (props.be?.id) {
-      result = await dossiersService.updateKycBE(props.dossierId, props.be.id, form.value)
-    } else {
-      result = await dossiersService.createKycBE(props.dossierId, form.value as Parameters<typeof dossiersService.createKycBE>[1])
-    }
+    const ct = props.clientType ?? 'PP'
+    const result = props.be?.id
+      ? await dossiersService.updateKycBE(props.dossierId, props.be.id, buildBEPayload(), ct)
+      : await dossiersService.createKycBE(props.dossierId, buildBEPayload(), ct)
     emit('saved', result)
   } catch (err: unknown) {
     const e = err as { response?: { data?: { detail?: string } } }

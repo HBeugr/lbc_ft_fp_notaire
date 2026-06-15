@@ -404,7 +404,7 @@ const TRIGGERS = [
     niveau: 'CRITIQUE',
     color: 'critique',
     description: 'Le client figure sur une liste de sanctions (OFAC, UE-CSNU, GIABA-BCEAO).',
-    consequence: 'Force ÉLEVÉ. Blocage immédiat et gel des avoirs. DOS obligatoire.',
+    consequence: 'Force ÉLEVÉ. Blocage immédiat du dossier. DOS obligatoire.',
     ref: 'Art. 89 Ordonnance 2023-875 ; Résolutions ONU 1267/1373',
   },
   {

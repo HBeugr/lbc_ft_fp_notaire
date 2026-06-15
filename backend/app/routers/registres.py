@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.core.deps import get_current_user, require_rc
 from app.models.audit import AuditLog
+from app.models.dossier import Dossier
 from app.models.user import User
 from app.repositories import audit_repo
 
@@ -24,6 +25,12 @@ REGISTRE_DEFS: dict[str, dict] = {
         "filter_actions": ["alerte.created", "alerte.traitee"],
         "confidential": False,
         "roles": None,
+    },
+    "risque_eleve": {
+        "label": "Registre des Dossiers à Risque Élevé (score >= 14)",
+        "source": "dossiers",
+        "confidential": False,
+        "roles": ["admin", "notaire_principal", "responsable_conformite"],
     },
     "dos": {
         "label": "Registre DOS (confidentiel — Art. 63)",
@@ -107,6 +114,45 @@ def _generate_pdf(label: str, items: list[AuditLog]) -> bytes:
     return bytes(pdf.output())
 
 
+def _generate_pdf_dossiers(label: str, rows: list) -> bytes:
+    from fpdf import FPDF
+    from datetime import datetime, timezone
+
+    pdf = FPDF(format="A4")
+    pdf.set_auto_page_break(auto=True, margin=12)
+    pdf.add_page()
+    pdf.set_fill_color(26, 46, 74)
+    pdf.set_text_color(232, 184, 75)
+    pdf.set_font("Helvetica", "B", 13)
+    pdf.cell(0, 10, _s(label), ln=True, fill=True, align="C")
+    pdf.set_text_color(100, 116, 139)
+    pdf.set_font("Helvetica", "", 8)
+    pdf.cell(0, 5, f"Exporte le {datetime.now(timezone.utc).strftime('%d/%m/%Y %H:%M')} UTC", ln=True, align="C")
+    pdf.ln(3)
+
+    headers = ["Reference", "Client", "Operation", "Score", "Classif.", "Trigger", "Statut"]
+    col_w = [38, 20, 38, 16, 22, 20, 28]
+    pdf.set_fill_color(26, 46, 74)
+    pdf.set_text_color(255, 255, 255)
+    pdf.set_font("Helvetica", "B", 8)
+    for w, h in zip(col_w, headers):
+        pdf.cell(w, 7, h, fill=True, align="C")
+    pdf.ln()
+
+    pdf.set_font("Helvetica", "", 7)
+    for i, d in enumerate(rows):
+        pdf.set_fill_color(248, 250, 252) if i % 2 == 0 else pdf.set_fill_color(255, 255, 255)
+        pdf.set_text_color(30, 41, 59)
+        row = [d.reference or "-", d.type_client or "-", d.type_operation or "-",
+               str(d.score_base if d.score_base is not None else "-"),
+               d.classification or "-", d.trigger_actif or "-", d.statut or "-"]
+        for w, v in zip(col_w, row):
+            pdf.cell(w, 5, _s(str(v))[:34], fill=True)
+        pdf.ln()
+
+    return bytes(pdf.output())
+
+
 @router.get("")
 async def list_registres(current_user: User = Depends(get_current_user)) -> dict:
     visible = {}
@@ -129,6 +175,33 @@ async def get_registre(
 ) -> dict:
     _require_registre_access(registre_id, current_user)
     reg = REGISTRE_DEFS[registre_id]
+
+    # Registre des dossiers à risque élevé — source = table dossiers (score >= 14 / classification ÉLEVÉ)
+    if reg.get("source") == "dossiers":
+        base = select(Dossier).where(
+            (Dossier.classification == "ELEVE") | (Dossier.score_base >= 14)
+        ).order_by(Dossier.updated_at.desc())
+        total = (await db.execute(select(func.count()).select_from(base.subquery()))).scalar_one()
+        rows = (await db.execute(base.limit(limit).offset(offset))).scalars().all()
+        return {
+            "id": registre_id,
+            "label": reg["label"],
+            "total": total,
+            "items": [
+                {
+                    "id": d.id,
+                    "reference": d.reference,
+                    "type_client": d.type_client,
+                    "type_operation": d.type_operation,
+                    "score_base": d.score_base,
+                    "classification": d.classification,
+                    "trigger_actif": d.trigger_actif,
+                    "statut": d.statut,
+                    "updated_at": d.updated_at.isoformat() if d.updated_at else None,
+                }
+                for d in rows
+            ],
+        }
 
     q = select(AuditLog).order_by(AuditLog.timestamp_utc.desc())
     if reg.get("filter_actions"):
@@ -168,6 +241,23 @@ async def export_registre(
 ) -> Response:
     _require_registre_access(registre_id, current_user)
     reg = REGISTRE_DEFS[registre_id]
+    from datetime import datetime, timezone
+
+    if reg.get("source") == "dossiers":
+        rows = list((await db.execute(
+            select(Dossier).where(
+                (Dossier.classification == "ELEVE") | (Dossier.score_base >= 14)
+            ).order_by(Dossier.updated_at.desc()).limit(1000)
+        )).scalars().all())
+        await audit_repo.log(
+            db, action=f"registre.{registre_id}.exported", user_id=current_user.id,
+            user_role=current_user.role, entity_type="registre", entity_id=registre_id,
+            ip="internal", detail={"format": format, "count": len(rows)},
+        )
+        pdf_bytes = _generate_pdf_dossiers(reg["label"], rows)
+        filename = f"registre-{registre_id}-{datetime.now(timezone.utc).strftime('%Y%m%d')}.pdf"
+        return Response(content=pdf_bytes, media_type="application/pdf",
+                        headers={"Content-Disposition": f'attachment; filename="{filename}"'})
 
     q = select(AuditLog).order_by(AuditLog.timestamp_utc.desc()).limit(1000)
     if reg.get("filter_actions"):
@@ -175,7 +265,6 @@ async def export_registre(
     result = await db.execute(q)
     items = list(result.scalars().all())
 
-    from datetime import datetime, timezone
     await audit_repo.log(
         db,
         action=f"registre.{registre_id}.exported",
@@ -191,49 +280,3 @@ async def export_registre(
     filename = f"registre-{registre_id}-{datetime.now(timezone.utc).strftime('%Y%m%d')}.pdf"
     return Response(content=pdf_bytes, media_type="application/pdf",
                     headers={"Content-Disposition": f'attachment; filename="{filename}"'})
-
-
-@router.get("/dashboard/stats")
-async def dashboard_stats(
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-) -> dict:
-    """Dashboard stats — rôle filtré."""
-    from app.models.dossier import Dossier
-    from app.models.alerte import Alerte
-    from app.models.revision import RevisionKyc
-    from datetime import date
-
-    total_dossiers = (await db.execute(select(func.count()).select_from(Dossier))).scalar_one()
-    by_classification = (await db.execute(
-        select(Dossier.classification, func.count()).group_by(Dossier.classification)
-    )).all()
-    alertes_ouvertes = (await db.execute(
-        select(func.count()).select_from(Alerte).where(Alerte.statut == "ouverte")
-    )).scalar_one()
-    revisions_en_retard = (await db.execute(
-        select(func.count()).select_from(RevisionKyc).where(
-            RevisionKyc.statut == "planifiee",
-            RevisionKyc.date_echeance < date.today(),
-        )
-    )).scalar_one()
-
-    stats: dict = {
-        "total_dossiers": total_dossiers,
-        "alertes_ouvertes": alertes_ouvertes,
-        "revisions_en_retard": revisions_en_retard,
-        "by_classification": [{"classification": c or "NON_EVALUE", "count": n} for c, n in by_classification],
-    }
-
-    if current_user.role in ("admin", "notaire_principal", "responsable_conformite"):
-        from app.models.dos import DeclarationSuspicion
-        dos_total = (await db.execute(select(func.count()).select_from(DeclarationSuspicion))).scalar_one()
-        dos_en_cours = (await db.execute(
-            select(func.count()).select_from(DeclarationSuspicion).where(
-                DeclarationSuspicion.statut.in_(["brouillon", "en_cours"])
-            )
-        )).scalar_one()
-        stats["dos_total"] = dos_total
-        stats["dos_en_cours"] = dos_en_cours
-
-    return stats

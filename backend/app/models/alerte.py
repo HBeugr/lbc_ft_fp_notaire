@@ -9,16 +9,18 @@ class Alerte(Base):
     __tablename__ = "alertes"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
-    dossier_id: Mapped[str] = mapped_column(String(36), ForeignKey("dossiers.id"), nullable=False)
+    dossier_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("dossiers.id"), nullable=True)
     type_alerte: Mapped[str] = mapped_column(
         SAEnum(
             "T1_PPE", "T2_ESPECES", "T3_SANCTIONS", "T4_GAFI",
             "T5_REFUS_DOC", "T6_BE_NON_IDENTIFIABLE",
-            "INCOHERENCE_DOC", "MONTAGE_COMPLEXE", "AUTRE",
+            "INCOHERENCE_DOC", "MONTAGE_COMPLEXE", "SIGNALEMENT_INTERNE",
+            "DOSSIER_BLOQUE", "DOS_ACCUSE_J15", "PROLIFERATION_MATCH", "RCCM_EXPIRE", "AUTRE",
             name="type_alerte_enum",
         ),
         nullable=False,
     )
+    signaleur_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("users.id"), nullable=True)
     niveau: Mapped[str] = mapped_column(
         SAEnum("FAIBLE", "MOYEN", "ELEVE", name="niveau_alerte_enum"), nullable=False
     )

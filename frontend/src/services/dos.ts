@@ -107,4 +107,36 @@ export const dosService = {
     const { data } = await api.post<DosAddendumOut>(`/dos/${dosId}/addendum`, { contenu })
     return data
   },
+
+  // --- Workflow CENTIF (backend notaire) : soumettre → valider (RC) → transmettre (DG) / classer → accusé ---
+  async soumettre(dosId: string): Promise<unknown> {
+    const { data } = await api.post(`/dos/${dosId}/soumettre`)
+    return data
+  },
+
+  // Validation conformité — Responsable Conformité (1re validation, Art. 100)
+  async valider(dosId: string): Promise<unknown> {
+    const { data } = await api.post(`/dos/${dosId}/valider`)
+    return data
+  },
+
+  // Autorisation finale + transmission CENTIF — Notaire Principal (DG, distinct du RC)
+  async transmettre(dosId: string): Promise<unknown> {
+    const { data } = await api.post(`/dos/${dosId}/transmettre`)
+    return data
+  },
+
+  // Classement sans suite, motivé
+  async classer(dosId: string, motif: string): Promise<unknown> {
+    const { data } = await api.post(`/dos/${dosId}/classer`, { motif })
+    return data
+  },
+
+  // Accusé de réception CENTIF
+  async accuseRecu(dosId: string, referenceCentif: string): Promise<unknown> {
+    const { data } = await api.patch(`/dos/${dosId}/accuse-recu`, null, {
+      params: { reference_centif: referenceCentif },
+    })
+    return data
+  },
 }

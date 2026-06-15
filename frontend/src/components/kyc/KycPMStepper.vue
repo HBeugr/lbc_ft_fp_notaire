@@ -42,8 +42,12 @@
       <div class="form-grid">
         <div class="form-group form-group--full">
           <label class="form-label">Raison sociale <span class="req">*</span></label>
-          <input v-model="form.raison_sociale" type="text" class="form-input" placeholder="Nom complet de la société" />
-          <p v-if="errors.raison_sociale" class="form-error">{{ errors.raison_sociale }}</p>
+          <input v-model="form.denomination_sociale" type="text" class="form-input" placeholder="Nom complet de la société" />
+          <p v-if="errors.denomination_sociale" class="form-error">{{ errors.denomination_sociale }}</p>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Nom commercial</label>
+          <input v-model="form.nom_commercial" type="text" class="form-input" placeholder="Enseigne / nom commercial" />
         </div>
         <div class="form-group">
           <label class="form-label">Forme juridique <span class="req">*</span></label>
@@ -53,19 +57,20 @@
           </select>
           <p v-if="errors.forme_juridique" class="form-error">{{ errors.forme_juridique }}</p>
         </div>
-        <CountrySelect v-model="form.pays_enregistrement" label="Pays d'enregistrement *" />
-        <p v-if="errors.pays_enregistrement" class="form-error" style="grid-column:1/-1">{{ errors.pays_enregistrement }}</p>
+        <CountrySelect v-model="form.pays_constitution" label="Pays de constitution *" />
+        <p v-if="errors.pays_constitution" class="form-error" style="grid-column:1/-1">{{ errors.pays_constitution }}</p>
         <div class="form-group">
           <label class="form-label">RCCM</label>
-          <input v-model="form.rccm" type="text" class="form-input" placeholder="CI-ABJ-2020-B-12345" />
+          <input v-model="form.numero_rccm" type="text" class="form-input" placeholder="CI-ABJ-2020-B-12345" />
+        </div>
+        <div class="form-group">
+          <label class="form-label">Date d'émission RCCM</label>
+          <input v-model="form.date_emission_rccm" type="date" class="form-input" />
+          <span class="field-hint">Validité 90 jours (M7) — alerte au-delà</span>
         </div>
         <div class="form-group">
           <label class="form-label">NIF</label>
-          <input v-model="form.nif" type="text" class="form-input" placeholder="Numéro d'identification fiscale" />
-        </div>
-        <div class="form-group">
-          <label class="form-label">Date de création</label>
-          <input v-model="form.date_creation" type="date" class="form-input" />
+          <input v-model="form.numero_contribuable" type="text" class="form-input" placeholder="Numéro d'identification fiscale" />
         </div>
       </div>
     </div>
@@ -76,24 +81,44 @@
       <div class="form-grid">
         <div class="form-group form-group--full">
           <label class="form-label">Adresse du siège social <span class="req">*</span></label>
-          <textarea v-model="form.adresse_siege" class="form-textarea" rows="2" placeholder="Adresse complète" />
-          <p v-if="errors.adresse_siege" class="form-error">{{ errors.adresse_siege }}</p>
+          <textarea v-model="form.adresse" class="form-textarea" rows="2" placeholder="Adresse complète" />
+          <p v-if="errors.adresse" class="form-error">{{ errors.adresse }}</p>
         </div>
         <div class="form-group">
           <label class="form-label">Secteur d'activité <span class="req">*</span></label>
-          <select v-model="form.secteur_activite" class="form-select">
+          <select v-model="form.libelle_activite" class="form-select">
             <option value="">— Sélectionner —</option>
             <option v-for="s in SECTEURS" :key="s" :value="s">{{ s }}</option>
           </select>
-          <p v-if="errors.secteur_activite" class="form-error">{{ errors.secteur_activite }}</p>
+          <p v-if="errors.libelle_activite" class="form-error">{{ errors.libelle_activite }}</p>
         </div>
         <div class="form-group">
-          <label class="form-label">Capital social (FCFA)</label>
-          <input v-model.number="form.capital_social" type="number" min="0" class="form-input" placeholder="0" />
+          <label class="form-label">Téléphone</label>
+          <input v-model="form.telephone" type="text" class="form-input" placeholder="+225…" />
+        </div>
+        <div class="form-group">
+          <label class="form-label">E-mail</label>
+          <input v-model="form.email" type="email" class="form-input" placeholder="contact@societe.ci" />
+        </div>
+        <div class="form-group">
+          <label class="form-label">Chiffre d'affaires annuel (FCFA)</label>
+          <input v-model.number="form.ca_annuel" type="number" min="0" class="form-input" placeholder="0" />
+        </div>
+        <div class="form-group">
+          <label class="form-label">Effectif</label>
+          <input v-model.number="form.effectif" type="number" min="0" class="form-input" placeholder="Nombre d'employés" />
+        </div>
+        <div class="form-group">
+          <label class="form-label">Pays d'opérations</label>
+          <input v-model="form.pays_operations" type="text" class="form-input" placeholder="Pays où la société opère" />
+        </div>
+        <div class="form-group">
+          <label class="form-label">Volume des transactions</label>
+          <input v-model="form.volume_transactions" type="text" class="form-input" placeholder="Ex : 50M FCFA/an" />
         </div>
         <div class="form-group form-group--full">
-          <label class="form-label">Description de l'activité</label>
-          <textarea v-model="form.description_activite" class="form-textarea" rows="3" placeholder="Décrivez l'activité principale de la société" />
+          <label class="form-label">Objet social / Description de l'activité</label>
+          <textarea v-model="form.objet_social" class="form-textarea" rows="3" placeholder="Objet social et activité principale de la société" />
         </div>
       </div>
     </div>
@@ -105,42 +130,48 @@
       <div class="form-grid">
         <div class="form-group">
           <label class="form-label">Nom <span class="req">*</span></label>
-          <input v-model="form.representant_nom" type="text" class="form-input" />
+          <input v-model="representant.nom" type="text" class="form-input" />
           <p v-if="errors.representant_nom" class="form-error">{{ errors.representant_nom }}</p>
         </div>
         <div class="form-group">
           <label class="form-label">Prénoms <span class="req">*</span></label>
-          <input v-model="form.representant_prenoms" type="text" class="form-input" />
+          <input v-model="representant.prenoms" type="text" class="form-input" />
           <p v-if="errors.representant_prenoms" class="form-error">{{ errors.representant_prenoms }}</p>
         </div>
         <div class="form-group">
           <label class="form-label">Fonction <span class="req">*</span></label>
-          <input v-model="form.representant_fonction" type="text" class="form-input" placeholder="DG, PDG, Gérant…" />
+          <input v-model="representant.fonction" type="text" class="form-input" placeholder="DG, PDG, Gérant…" />
           <p v-if="errors.representant_fonction" class="form-error">{{ errors.representant_fonction }}</p>
         </div>
-        <CountrySelect v-model="form.representant_nationalite" label="Nationalité" />
+        <CountrySelect v-model="representant.nationalite" label="Nationalité" />
         <div class="form-group">
           <label class="form-label">Type de pièce</label>
-          <select v-model="form.representant_type_piece" class="form-select">
+          <select v-model="representant.type_piece" class="form-select">
             <option value="">— Sélectionner —</option>
             <option v-for="p in TYPES_PIECE" :key="p" :value="p">{{ p }}</option>
           </select>
         </div>
         <div class="form-group">
           <label class="form-label">Numéro de pièce</label>
-          <input v-model="form.representant_numero_piece" type="text" class="form-input" />
+          <input v-model="representant.numero_piece" type="text" class="form-input" />
         </div>
         <div class="form-group">
           <label class="form-label">Expiration pièce</label>
-          <input v-model="form.representant_date_expiration_piece" type="date" class="form-input" />
+          <input v-model="representant.date_expiration_piece" type="date" class="form-input" />
         </div>
         <div class="form-group">
           <label class="form-label">Date de naissance</label>
-          <input v-model="form.representant_date_naissance" type="date" class="form-input" />
+          <input v-model="representant.date_naissance" type="date" class="form-input" />
         </div>
         <div class="form-group">
           <label class="form-label">Lieu d'habitation</label>
-          <input v-model="form.representant_lieu_habitation" type="text" class="form-input" placeholder="Ville, Pays" />
+          <input v-model="representant.lieu_habitation" type="text" class="form-input" placeholder="Ville, Pays" />
+        </div>
+        <div class="form-group form-group--full">
+          <label class="checkbox-row">
+            <input v-model="form.representant_statut_ppe" type="checkbox" class="checkbox" />
+            <span class="form-label" style="margin:0">Le représentant légal est une Personne Politiquement Exposée (PPE)</span>
+          </label>
         </div>
       </div>
 
@@ -223,32 +254,43 @@
       <div class="divider" />
       <div class="form-grid">
         <div class="form-group form-group--full">
-          <label class="form-label">Objet de la relation d'affaires <span class="req">*</span></label>
-          <textarea v-model="form.objet_relation" class="form-textarea" rows="2" placeholder="Décrivez la nature et l'objet de la relation commerciale…" />
-          <p v-if="errors.objet_relation" class="form-error">{{ errors.objet_relation }}</p>
-        </div>
-        <div class="form-group form-group--full">
-          <label class="form-label">Origine des fonds <span class="req">*</span></label>
-          <textarea v-model="form.origine_fonds" class="form-textarea" rows="2" placeholder="Précisez la source des fonds (salaire, revenus, capital social…)" />
-          <p v-if="errors.origine_fonds" class="form-error">{{ errors.origine_fonds }}</p>
-        </div>
-        <div class="form-group form-group--full">
-          <label class="checkbox-row">
-            <input v-model="form.est_compte_tiers" type="checkbox" class="checkbox" />
-            <span class="form-label" style="margin:0">Opération pour le compte d'un tiers</span>
-          </label>
+          <label class="form-label">Objet de la relation / opération <span class="req">*</span></label>
+          <textarea v-model="form.description_operation" class="form-textarea" rows="2" placeholder="Décrivez la nature et l'objet de la relation commerciale…" />
+          <p v-if="errors.description_operation" class="form-error">{{ errors.description_operation }}</p>
         </div>
       </div>
+    </div>
 
-      <!-- Mandant block -->
-      <div v-if="form.est_compte_tiers" class="mandant-block">
-        <p class="step-section-label">Informations sur le mandant</p>
-        <div class="form-grid">
-          <div class="form-group"><label class="form-label">Nom</label><input v-model="mandant.nom" type="text" class="form-input" /></div>
-          <div class="form-group"><label class="form-label">Prénoms</label><input v-model="mandant.prenoms" type="text" class="form-input" /></div>
-          <div class="form-group"><label class="form-label">Lien avec l'opération</label><input v-model="mandant.lien" type="text" class="form-input" /></div>
-          <div class="form-group"><label class="form-label">Contact</label><input v-model="mandant.contact" type="text" class="form-input" /></div>
+    <!-- Step 5 — Transaction -->
+    <div v-else-if="currentStep === 4" class="step-panel card">
+      <h3 class="step-title">Transaction</h3>
+      <div class="form-grid">
+        <div class="form-group">
+          <label class="form-label">Montant de la transaction</label>
+          <select v-model="transaction.montant_tranche" class="form-select">
+            <option value="">— Choisir —</option>
+            <option value="moins_15m">Montant &lt; 15M FCFA</option>
+            <option value="plus_15m">Montant &gt; 15M FCFA</option>
+          </select>
         </div>
+        <div class="form-group">
+          <label class="form-label">Montant exact (FCFA)</label>
+          <input v-model.number="transaction.montant_transaction" type="number" min="0" class="form-input" placeholder="Ex : 25000000" />
+        </div>
+        <div class="form-group">
+          <label class="form-label">Mode de paiement</label>
+          <select v-model="transaction.mode_paiement" class="form-select">
+            <option value="">— Choisir —</option>
+            <option value="especes">Espèces</option>
+            <option value="cheque">Chèque</option>
+            <option value="virement">Virement</option>
+            <option value="autre">Autre</option>
+          </select>
+        </div>
+      </div>
+      <div v-if="surveillanceEspece" class="espece-banner">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+        <span>Déclaration systématique de transaction en espèce à faire. Opération à surveiller.</span>
       </div>
     </div>
 
@@ -302,6 +344,7 @@ const STEPS = [
   { label: 'Siège & activité' },
   { label: 'Représentant' },
   { label: 'Actionnaires' },
+  { label: 'Transaction' },
 ]
 
 const FORMES_JURIDIQUES = ['SA', 'SARL', 'SNC', 'SCS', 'GIE', 'Association', 'Coopérative', 'Autre']
@@ -318,34 +361,44 @@ const errors      = ref<Record<string, string>>({})
 type Dirigeant = { nom: string; prenoms: string; fonction: string; nationalite: string; date_naissance: string; lieu_habitation: string }
 type BE = { nom: string; prenoms: string; nationalite: string; date_naissance: string; lieu_habitation: string; pourcentage: number | null; statut_ppe: boolean }
 
+// Étape Transaction (montant + mode de paiement) — niveau dossier
+const transaction = ref<{
+  montant_tranche: 'moins_15m' | 'plus_15m' | ''
+  montant_transaction: number | null
+  mode_paiement: 'especes' | 'cheque' | 'virement' | 'autre' | ''
+}>({ montant_tranche: '', montant_transaction: null, mode_paiement: '' })
+const surveillanceEspece = computed(() =>
+  transaction.value.mode_paiement === 'especes' &&
+  (transaction.value.montant_tranche === 'plus_15m' || Number(transaction.value.montant_transaction || 0) > 15_000_000),
+)
+
+// Aligné sur le schéma backend notaire (KycPMUpsert)
 const form = ref<Partial<KycPMData>>({
-  raison_sociale: '',
+  denomination_sociale: '',
+  nom_commercial: '',
   forme_juridique: '',
-  rccm: '',
-  nif: '',
-  date_creation: '',
-  pays_enregistrement: '',
-  adresse_siege: '',
-  secteur_activite: '',
-  description_activite: '',
-  capital_social: null,
-  representant_nom: '',
-  representant_prenoms: '',
-  representant_fonction: '',
-  representant_nationalite: '',
-  representant_type_piece: '',
-  representant_numero_piece: '',
-  representant_date_expiration_piece: '',
-  representant_date_naissance: '',
-  representant_lieu_habitation: '',
-  objet_relation: '',
-  origine_fonds: '',
-  est_compte_tiers: false,
+  pays_constitution: '',
+  numero_rccm: '',
+  date_emission_rccm: null,
+  numero_contribuable: '',
+  adresse: '',
+  telephone: '',
+  email: '',
+  libelle_activite: '',
+  objet_social: '',
+  ca_annuel: null,
+  effectif: null,
+  pays_operations: '',
+  volume_transactions: '',
+  representant_statut_ppe: false,
+  description_operation: '',
 })
+
+// Représentant légal (sérialisé en JSON `mandataire` + `nom_representant_legal`)
+const representant = ref({ nom: '', prenoms: '', fonction: '', nationalite: '', type_piece: '', numero_piece: '', date_expiration_piece: '', date_naissance: '', lieu_habitation: '' })
 
 const dirigeants   = ref<Dirigeant[]>([])
 const beneficiaires = ref<BE[]>([])
-const mandant      = ref({ nom: '', prenoms: '', lien: '', contact: '' })
 
 // ── SFC Screening — représentant légal ───────────────────────────────────────
 const sfcState = ref<{ status: 'idle' | 'checking' | 'clear' | 'warning' | 'blocked'; liste: string | null }>({
@@ -354,7 +407,7 @@ const sfcState = ref<{ status: 'idle' | 'checking' | 'clear' | 'warning' | 'bloc
 let _sfcTimer: ReturnType<typeof setTimeout> | null = null
 
 watch(
-  () => [form.value.representant_nom, form.value.representant_prenoms],
+  () => [representant.value.nom, representant.value.prenoms],
   ([nom, prenoms]) => {
     if (_sfcTimer) clearTimeout(_sfcTimer)
     const full = `${nom ?? ''} ${prenoms ?? ''}`.trim()
@@ -436,16 +489,32 @@ onMounted(async () => {
   }
   if (data) {
     Object.assign(form.value, data)
-    if (data.dirigeants) {
-      dirigeants.value = data.dirigeants as unknown as Dirigeant[]
-      dirigeantScreenings.value = dirigeants.value.map(() => ({ status: 'idle' as const, liste: null }))
-    }
     if (data.beneficiaires_effectifs) {
       beneficiaires.value = data.beneficiaires_effectifs as unknown as BE[]
       beScreenings.value = beneficiaires.value.map(() => ({ status: 'idle' as const, liste: null }))
     }
-    if (data.mandant_info) Object.assign(mandant.value, data.mandant_info)
+    // Représentant légal stocké en JSON `mandataire`
+    const m = data.mandataire as Record<string, string> | null | undefined
+    if (m) {
+      representant.value.nom = m.nom ?? ''
+      representant.value.prenoms = m.prenoms ?? ''
+      representant.value.fonction = m.fonction ?? ''
+      representant.value.nationalite = m.nationalite ?? ''
+      representant.value.type_piece = m.type_piece ?? ''
+      representant.value.numero_piece = m.numero_piece ?? ''
+      representant.value.date_naissance = m.date_naissance ?? ''
+      representant.value.lieu_habitation = m.lieu_habitation ?? ''
+    }
   }
+  // Pré-remplissage de l'étape Transaction depuis le dossier
+  try {
+    const d = await dossiersService.get(props.dossierId)
+    if (d.montant_tranche) transaction.value.montant_tranche = d.montant_tranche
+    if (d.montant_transaction != null) transaction.value.montant_transaction = d.montant_transaction
+    if (d.mode_paiement && ['especes','cheque','virement','autre'].includes(d.mode_paiement)) {
+      transaction.value.mode_paiement = d.mode_paiement as 'especes' | 'cheque' | 'virement' | 'autre'
+    }
+  } catch { /* dossier non chargé */ }
 })
 
 // ── Validation ────────────────────────────────────────────────────────────────
@@ -455,38 +524,39 @@ const hasBE25 = computed(() => beneficiaires.value.some(b => Number(b.pourcentag
 
 const canNext = computed(() => {
   const f = form.value
+  const r = representant.value
   if (currentStep.value === 0)
-    return !!f.raison_sociale?.trim() && !!f.forme_juridique && !!f.pays_enregistrement
+    return !!f.denomination_sociale?.trim() && !!f.forme_juridique && !!f.pays_constitution
   if (currentStep.value === 1)
-    return !!f.adresse_siege?.trim() && !!f.secteur_activite
+    return !!f.adresse?.trim() && !!f.libelle_activite
   if (currentStep.value === 2)
-    return !!f.representant_nom?.trim() && !!f.representant_prenoms?.trim() && !!f.representant_fonction?.trim()
+    return !!r.nom?.trim() && !!r.prenoms?.trim() && !!r.fonction?.trim()
       && sfcState.value.status !== 'blocked'
   if (currentStep.value === 3)
-    return !!f.objet_relation?.trim() && !!f.origine_fonds?.trim()
+    return !!f.description_operation?.trim()
   return true
 })
 
 function validateStep(): boolean {
   errors.value = {}
   const f = form.value
+  const r = representant.value
   if (currentStep.value === 0) {
-    if (!f.raison_sociale?.trim()) { errors.value.raison_sociale = 'La raison sociale est obligatoire.'; return false }
-    if (!f.forme_juridique)        { errors.value.forme_juridique = 'La forme juridique est obligatoire.'; return false }
-    if (!f.pays_enregistrement)    { errors.value.pays_enregistrement = 'Le pays d\'enregistrement est obligatoire.'; return false }
+    if (!f.denomination_sociale?.trim()) { errors.value.denomination_sociale = 'La raison sociale est obligatoire.'; return false }
+    if (!f.forme_juridique)              { errors.value.forme_juridique = 'La forme juridique est obligatoire.'; return false }
+    if (!f.pays_constitution)            { errors.value.pays_constitution = 'Le pays de constitution est obligatoire.'; return false }
   }
   if (currentStep.value === 1) {
-    if (!f.adresse_siege?.trim()) { errors.value.adresse_siege = 'L\'adresse du siège est obligatoire.'; return false }
-    if (!f.secteur_activite)      { errors.value.secteur_activite = 'Le secteur d\'activité est obligatoire.'; return false }
+    if (!f.adresse?.trim())        { errors.value.adresse = 'L\'adresse du siège est obligatoire.'; return false }
+    if (!f.libelle_activite)       { errors.value.libelle_activite = 'Le secteur d\'activité est obligatoire.'; return false }
   }
   if (currentStep.value === 2) {
-    if (!f.representant_nom?.trim())      { errors.value.representant_nom = 'Le nom du représentant est obligatoire.'; return false }
-    if (!f.representant_prenoms?.trim())  { errors.value.representant_prenoms = 'Les prénoms sont obligatoires.'; return false }
-    if (!f.representant_fonction?.trim()) { errors.value.representant_fonction = 'La fonction est obligatoire.'; return false }
+    if (!r.nom?.trim())      { errors.value.representant_nom = 'Le nom du représentant est obligatoire.'; return false }
+    if (!r.prenoms?.trim())  { errors.value.representant_prenoms = 'Les prénoms sont obligatoires.'; return false }
+    if (!r.fonction?.trim()) { errors.value.representant_fonction = 'La fonction est obligatoire.'; return false }
   }
   if (currentStep.value === 3) {
-    if (!f.objet_relation?.trim()) { errors.value.objet_relation = 'L\'objet de la relation est obligatoire (LBC/FT Art. 42).'; return false }
-    if (!f.origine_fonds?.trim())  { errors.value.origine_fonds = 'L\'origine des fonds est obligatoire (LBC/FT Art. 43).'; return false }
+    if (!f.description_operation?.trim()) { errors.value.description_operation = 'L\'objet de la relation est obligatoire (LBC/FT Art. 42).'; return false }
   }
   return true
 }
@@ -503,7 +573,7 @@ onUnmounted(() => {
 })
 
 async function autoSave() {
-  if (!form.value.raison_sociale?.trim()) return
+  if (!form.value.denomination_sociale?.trim()) return
   saveStatus.value = 'saving'
   try {
     await saveCurrentSection()
@@ -515,6 +585,15 @@ async function autoSave() {
 }
 
 async function saveCurrentSection(): Promise<KycPMData> {
+  // Étape Transaction → sauvegarde au niveau dossier
+  if (currentStep.value === 4) {
+    await dossiersService.saveTransaction(props.dossierId, {
+      montant_tranche: transaction.value.montant_tranche || undefined,
+      montant_transaction: transaction.value.montant_transaction ?? undefined,
+      mode_paiement: transaction.value.mode_paiement || undefined,
+    })
+    return form.value as KycPMData
+  }
   const section = currentStep.value + 1
   const payload = buildPayload()
   const result = await dossiersService.saveKycPM(props.dossierId, section, payload)
@@ -522,20 +601,15 @@ async function saveCurrentSection(): Promise<KycPMData> {
   return result
 }
 
-const DATE_FIELDS: (keyof KycPMData)[] = ['date_creation', 'representant_date_expiration_piece']
-
 function buildPayload(): Partial<KycPMData> {
   const p: Partial<KycPMData> = { ...form.value }
-  // Pydantic rejects "" for date fields — send null instead
-  for (const f of DATE_FIELDS) {
-    if ((p as Record<string, unknown>)[f] === '') (p as Record<string, unknown>)[f] = null
-  }
-  const nonEmptyDirigeants = dirigeants.value.filter(d => d.nom?.trim() || d.prenoms?.trim())
-  p.dirigeants = nonEmptyDirigeants.length ? nonEmptyDirigeants as unknown as Record<string, string>[] : undefined
-  const nonEmptyBE = beneficiaires.value.filter(be => be.nom?.trim() || be.prenoms?.trim())
-  p.beneficiaires_effectifs = nonEmptyBE.length ? nonEmptyBE as unknown as Record<string, string | number | boolean>[] : undefined
-  if (form.value.est_compte_tiers && (mandant.value.nom || mandant.value.prenoms)) {
-    p.mandant_info = { ...mandant.value }
+  // Pydantic rejette "" pour les dates → null
+  if ((p as Record<string, unknown>).date_emission_rccm === '') (p as Record<string, unknown>).date_emission_rccm = null
+  // Représentant légal → JSON `mandataire` + libellé `nom_representant_legal`
+  const r = representant.value
+  if (r.nom?.trim() || r.prenoms?.trim()) {
+    p.nom_representant_legal = `${r.prenoms ?? ''} ${r.nom ?? ''}`.trim()
+    p.mandataire = { ...r } as unknown as KycPMData['mandataire']
   }
   return p
 }
@@ -559,11 +633,45 @@ function prev() {
   currentStep.value--
 }
 
+async function persistActionnaires() {
+  // Persiste les actionnaires/associés (et BE ≥25%) via les endpoints dédiés.
+  const rows = beneficiaires.value.filter(b => (b.nom?.trim() || b.prenoms?.trim()))
+  for (let i = 0; i < rows.length; i++) {
+    const b = rows[i]
+    const nomComplet = `${b.prenoms ?? ''} ${b.nom ?? ''}`.trim()
+    const pct = Number(b.pourcentage) || 0
+    try {
+      await dossiersService.addActionnaire(props.dossierId, {
+        raison_sociale_nom: nomComplet,
+        type_personne: 'PP',
+        cni_passeport: null,
+        pourcentage: pct,
+        pays_residence: b.nationalite || null,
+        ordre: i + 1,
+      })
+      // Un actionnaire ≥ 25% est aussi un bénéficiaire effectif (Art. 12b)
+      if (pct >= 25) {
+        await dossiersService.addBePM(props.dossierId, {
+          raison_sociale_nom: nomComplet,
+          cni_passeport: null,
+          pourcentage: pct,
+          pays_residence: b.nationalite || null,
+          date_naissance: b.date_naissance || null,
+          nationalite: b.nationalite || null,
+        })
+      }
+    } catch {
+      // best-effort : ne bloque pas la finalisation du KYC-PM
+    }
+  }
+}
+
 async function finish() {
   if (!validateStep()) return
   saving.value = true
   try {
     const result = await saveCurrentSection()
+    await persistActionnaires()
     emit('completed', result)
   } catch {
     saveStatus.value = 'error'
@@ -656,6 +764,8 @@ function removeBE(i: number) {
 
 /* FR-2 — BE ≥25% notice */
 .be25-notice { display: flex; align-items: flex-start; gap: 0.5rem; background: #fff7ed; color: #c2410c; border: 1px solid #fed7aa; border-radius: 8px; padding: 0.625rem 0.875rem; font-size: 0.8125rem; font-weight: 500; margin-bottom: 0.75rem; }
+.espece-banner { display: flex; align-items: center; gap: 0.5rem; background: #fef2f2; color: #b91c1c; border: 1px solid #fca5a5; border-radius: 8px; padding: 0.75rem 0.875rem; font-size: 0.8125rem; font-weight: 600; margin-top: 1rem; }
+.espece-banner svg { width: 18px; height: 18px; flex-shrink: 0; }
 
 /* Mandant */
 .mandant-block { background: var(--color-bg-page); border: 1px solid var(--color-border); border-radius: 8px; padding: 0.875rem; margin-top: 0.75rem; }

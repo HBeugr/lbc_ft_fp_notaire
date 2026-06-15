@@ -5,6 +5,7 @@ from sqlalchemy.dialects.mysql import JSON
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
+from app.core.crypto import EncryptedString
 
 
 class Dossier(Base):
@@ -30,12 +31,22 @@ class Dossier(Base):
         nullable=False,
     )
     type_operation_detail: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # Nature de la relation d'affaires anticipée (M4) — une relation durable impose le KYC complet (Type B)
+    nature_relation: Mapped[str | None] = mapped_column(
+        SAEnum("ponctuelle", "durable", name="nature_relation_enum"), nullable=True
+    )
     # Données opération alimentant la matrice (axes 4 & 5, trigger T2) — CDC Module 2
     montant_transaction: Mapped[float | None] = mapped_column(Numeric(18, 2), nullable=True)
+    # Tranche de montant (étape Transaction du KYC) — sélecteur < 15M / > 15M
+    montant_tranche: Mapped[str | None] = mapped_column(
+        SAEnum("moins_15m", "plus_15m", name="montant_tranche_enum"), nullable=True
+    )
     mode_paiement: Mapped[str | None] = mapped_column(
-        SAEnum("virement", "cheque", "especes", "mix", "paiement_tiers", name="mode_paiement_enum"),
+        SAEnum("virement", "cheque", "especes", "mix", "paiement_tiers", "autre", name="mode_paiement_enum"),
         nullable=True,
     )
+    # Déclaration systématique de transaction en espèces (espèces > 15M FCFA) — opération à surveiller
+    surveillance_espece: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     nb_parties: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     statut: Mapped[str] = mapped_column(
         SAEnum(
@@ -55,6 +66,8 @@ class Dossier(Base):
     trigger_actif: Mapped[str | None] = mapped_column(String(10), nullable=True)
     force_par_trigger: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     vigilance_justification: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Blocage du dossier (sanctions T3 / DOS)
+    is_bloque: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     archivage_date: Mapped[Date | None] = mapped_column(Date, nullable=True)
     archivage_expiration: Mapped[Date | None] = mapped_column(Date, nullable=True)
     created_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now())
@@ -87,19 +100,29 @@ class KycPP(Base):
     nom_prenoms_mere: Mapped[str | None] = mapped_column(String(255), nullable=True)
     date_naissance: Mapped[Date | None] = mapped_column(Date, nullable=True)
     lieu_naissance: Mapped[str | None] = mapped_column(String(150), nullable=True)
-    adresse_geo: Mapped[str | None] = mapped_column(String(500), nullable=True)
-    adresse_postale: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    telephone: Mapped[str | None] = mapped_column(String(30), nullable=True)
-    whatsapp: Mapped[str | None] = mapped_column(String(30), nullable=True)
-    email: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # Champs sensibles chiffrés au repos (AES-256, CDC §5.2)
+    adresse_geo: Mapped[str | None] = mapped_column(EncryptedString, nullable=True)
+    adresse_postale: Mapped[str | None] = mapped_column(EncryptedString, nullable=True)
+    telephone: Mapped[str | None] = mapped_column(EncryptedString, nullable=True)
+    whatsapp: Mapped[str | None] = mapped_column(EncryptedString, nullable=True)
+    email: Mapped[str | None] = mapped_column(EncryptedString, nullable=True)
     type_piece: Mapped[str | None] = mapped_column(
         SAEnum("CNI", "Passeport", "Titre_sejour", "Carte_consulaire", "Autre", name="type_piece_pp_enum"),
         nullable=True,
     )
-    numero_piece: Mapped[str | None] = mapped_column(String(100), nullable=True)
-    numero_contribuable: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    numero_piece: Mapped[str | None] = mapped_column(EncryptedString, nullable=True)
+    pays_emetteur_piece: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    date_emission_piece: Mapped[Date | None] = mapped_column(Date, nullable=True)
+    date_expiration_piece: Mapped[Date | None] = mapped_column(Date, nullable=True)
+    mode_verification_piece: Mapped[str | None] = mapped_column(
+        SAEnum("original_vu", "copie_certifiee", "en_ligne", name="mode_verification_piece_enum"), nullable=True
+    )
+    numero_contribuable: Mapped[str | None] = mapped_column(EncryptedString, nullable=True)
+    # Identité complémentaire (CDC Module 1.1)
+    sexe: Mapped[str | None] = mapped_column(SAEnum("M", "F", name="sexe_enum"), nullable=True)
     non_resident: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     pays_residence: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    ville_residence: Mapped[str | None] = mapped_column(String(150), nullable=True)
     statut_matrimonial: Mapped[str | None] = mapped_column(String(100), nullable=True)
     nationalite: Mapped[str | None] = mapped_column(String(100), nullable=True)
     autres_nationalites: Mapped[str | None] = mapped_column(String(255), nullable=True)
@@ -107,6 +130,12 @@ class KycPP(Base):
     profession_5_ans: Mapped[str | None] = mapped_column(Text, nullable=True)
     employeur: Mapped[str | None] = mapped_column(String(255), nullable=True)
     secteur_activite: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    retraite: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # Tranche réglementaire de revenus (CDC : <500K / 500K-2M / 2M-10M / >10M FCFA)
+    tranche_revenus: Mapped[str | None] = mapped_column(
+        SAEnum("moins_500k", "500k_2m", "2m_10m", "plus_10m", name="tranche_revenus_enum"), nullable=True
+    )
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # Section 2 — Mandataire (JSON : nom, cni_passeport, date_naissance, nationalite, pays_residence, fonction)
     mandataire: Mapped[dict | None] = mapped_column(JSON, nullable=True)
@@ -116,6 +145,8 @@ class KycPP(Base):
     ppe_detail: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # Section 4 — Description de l'opération
+    # Objet de la relation d'affaires (finalité anticipée — obligatoire pour une relation durable)
+    objet_relation: Mapped[str | None] = mapped_column(Text, nullable=True)
     # JSON : {achat_immo, manipulation_fonds, creation_societe, fiducicommis, autre_detail}
     operations_cochees: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     description_operation: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -152,15 +183,28 @@ class KycPM(Base):
         SAEnum("initiale", "actualisation", name="relation_type_pm_enum"), nullable=False, default="initiale"
     )
     denomination_sociale: Mapped[str] = mapped_column(String(255), nullable=False)
+    nom_commercial: Mapped[str | None] = mapped_column(String(255), nullable=True)
     forme_juridique: Mapped[str | None] = mapped_column(String(50), nullable=True)
-    nom_representant_legal: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    numero_rccm: Mapped[str | None] = mapped_column(String(100), nullable=True)
-    numero_contribuable: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    pays_constitution: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    nom_representant_legal: Mapped[str | None] = mapped_column(EncryptedString, nullable=True)
+    numero_rccm: Mapped[str | None] = mapped_column(EncryptedString, nullable=True)
+    # RCCM — validité 90 jours (M7) : date d'émission saisie, expiration calculée (+90 j) au save
+    date_emission_rccm: Mapped[Date | None] = mapped_column(Date, nullable=True)
+    date_expiration_rccm: Mapped[Date | None] = mapped_column(Date, nullable=True)
+    numero_contribuable: Mapped[str | None] = mapped_column(EncryptedString, nullable=True)
+    objet_social: Mapped[str | None] = mapped_column(Text, nullable=True)
     libelle_activite: Mapped[str | None] = mapped_column(String(500), nullable=True)
-    adresse: Mapped[str | None] = mapped_column(String(500), nullable=True)
-    telephone: Mapped[str | None] = mapped_column(String(30), nullable=True)
-    whatsapp: Mapped[str | None] = mapped_column(String(30), nullable=True)
-    email: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # Profil financier (CDC Module 1.2)
+    ca_annuel: Mapped[float | None] = mapped_column(Numeric(18, 2), nullable=True)
+    effectif: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    pays_operations: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    volume_transactions: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # Le représentant légal est-il une PPE ? (M5)
+    representant_statut_ppe: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    adresse: Mapped[str | None] = mapped_column(EncryptedString, nullable=True)
+    telephone: Mapped[str | None] = mapped_column(EncryptedString, nullable=True)
+    whatsapp: Mapped[str | None] = mapped_column(EncryptedString, nullable=True)
+    email: Mapped[str | None] = mapped_column(EncryptedString, nullable=True)
 
     # Section 2 — Représentant légal / Mandataire (JSON : même structure que PP)
     mandataire: Mapped[dict | None] = mapped_column(JSON, nullable=True)
@@ -203,11 +247,43 @@ class KycBE(Base):
     kyc_pp_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("kyc_pp.id"), nullable=True)
     kyc_pm_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("kyc_pm.id"), nullable=True)
     raison_sociale_nom: Mapped[str] = mapped_column(String(255), nullable=False)
-    cni_passeport: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    cni_passeport: Mapped[str | None] = mapped_column(EncryptedString, nullable=True)
     pourcentage: Mapped[float | None] = mapped_column(Numeric(5, 2), nullable=True)
+    # % de droits de vote (distinct de la détention du capital)
+    pourcentage_droits_vote: Mapped[float | None] = mapped_column(Numeric(5, 2), nullable=True)
+    # Contrôle indirect via entité intermédiaire (chaîne de détention)
+    entite_intermediaire_nom: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    entite_intermediaire_pct: Mapped[float | None] = mapped_column(Numeric(5, 2), nullable=True)
     pays_residence: Mapped[str | None] = mapped_column(String(100), nullable=True)
     date_naissance: Mapped[Date | None] = mapped_column(Date, nullable=True)
     nationalite: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    # Lien avec le client (CDC 1.1 BE PP) + entreprise cotée (CDC 1.2 BE PM)
+    lien_avec_client: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    entreprise_cotee: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+
+    # Registre officiel des bénéficiaires effectifs (greffe / RCCM)
+    registre_be_demande: Mapped[str | None] = mapped_column(
+        SAEnum("oui", "non", "en_cours", name="registre_be_demande_enum"), nullable=True
+    )
+    registre_be_resultat: Mapped[str | None] = mapped_column(
+        SAEnum("conforme", "divergence", "non_trouve", name="registre_be_resultat_enum"), nullable=True
+    )
+    registre_be_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # Filtrage SFC (Sanctions / Fichiers de Criblage) structuré
+    filtrage_sfc_resultat: Mapped[str | None] = mapped_column(
+        SAEnum("aucune", "faux_positif", "correspondance", name="filtrage_sfc_resultat_enum"), nullable=True
+    )
+    filtrage_sfc_listes: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    filtrage_sfc_date: Mapped[DateTime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    filtrage_sfc_justification: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # Validation du BE par le Responsable Conformité (gate : PM non validable sans ≥1 BE validé)
+    statut_validation: Mapped[str] = mapped_column(
+        SAEnum("en_attente", "valide", "rejete", name="statut_validation_be_enum"),
+        nullable=False, default="en_attente",
+    )
+    commentaire_validation: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     kyc_pp: Mapped["KycPP | None"] = relationship("KycPP", back_populates="beneficiaires_effectifs")
     kyc_pm: Mapped["KycPM | None"] = relationship("KycPM", back_populates="beneficiaires_effectifs")
@@ -220,6 +296,9 @@ class KycActionnaire(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     kyc_pm_id: Mapped[str] = mapped_column(String(36), ForeignKey("kyc_pm.id"), nullable=False)
     raison_sociale_nom: Mapped[str] = mapped_column(String(255), nullable=False)
+    type_personne: Mapped[str | None] = mapped_column(
+        SAEnum("PP", "PM", name="type_personne_actionnaire_enum"), nullable=True
+    )
     cni_passeport: Mapped[str | None] = mapped_column(String(100), nullable=True)
     pourcentage: Mapped[float] = mapped_column(Numeric(5, 2), nullable=False)
     pays_residence: Mapped[str | None] = mapped_column(String(100), nullable=True)
@@ -246,6 +325,22 @@ class KycPPE(Base):
     verification_ofac: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     verification_ue: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     ras: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # Recherche de presse négative (adverse media)
+    resultat_presse: Mapped[str | None] = mapped_column(
+        SAEnum("Negatif", "Positif", "Ambigu", name="resultat_presse_enum"), nullable=True
+    )
+    details_presse: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Évaluation du niveau d'exposition + mesures de vigilance renforcée
+    niveau_exposition: Mapped[str | None] = mapped_column(
+        SAEnum("Faible", "Moyen", "Eleve", name="niveau_exposition_ppe_enum"), nullable=True
+    )
+    mesures_proposees: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Validation par le Responsable Conformité
+    statut_validation: Mapped[str] = mapped_column(
+        SAEnum("en_attente", "valide", "rejete", name="statut_validation_ppe_enum"),
+        nullable=False, default="en_attente",
+    )
+    commentaire_validation: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     kyc_pp: Mapped["KycPP | None"] = relationship("KycPP", back_populates="ppe_declarations")

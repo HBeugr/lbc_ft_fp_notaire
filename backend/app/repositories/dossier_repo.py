@@ -4,13 +4,39 @@ from sqlalchemy.orm import selectinload
 from app.models.dossier import Dossier, KycPP, KycPM, DossierHistorique, CommentaireInterne
 
 
+def _with_kyc(q):
+    """Charge les relations KYC PP/PM et leurs sous-collections pour éviter les
+    lazy-loads asynchrones lors de la sérialisation DossierOut."""
+    return q.options(
+        selectinload(Dossier.kyc_pp).selectinload(KycPP.beneficiaires_effectifs),
+        selectinload(Dossier.kyc_pp).selectinload(KycPP.ppe_declarations),
+        selectinload(Dossier.kyc_pm).selectinload(KycPM.beneficiaires_effectifs),
+        selectinload(Dossier.kyc_pm).selectinload(KycPM.actionnaires),
+        selectinload(Dossier.kyc_pm).selectinload(KycPM.ppe_declarations),
+    )
+
+
+def _apply_dossier_filters(q, *, assigned_to=None, statut=None, classification=None, reference=None):
+    if assigned_to:
+        q = q.where(Dossier.assigned_to == assigned_to)
+    if statut:
+        q = q.where(Dossier.statut == statut)
+    if classification:
+        q = q.where(Dossier.classification == classification)
+    if reference:
+        q = q.where(Dossier.reference.ilike(f"%{reference}%"))
+    return q
+
+
 async def get_by_id(db: AsyncSession, dossier_id: str) -> Dossier | None:
-    result = await db.execute(select(Dossier).where(Dossier.id == dossier_id))
+    result = await db.execute(_with_kyc(select(Dossier)).where(Dossier.id == dossier_id))
     return result.scalar_one_or_none()
 
 
 async def get_by_reference(db: AsyncSession, reference: str) -> Dossier | None:
-    result = await db.execute(select(Dossier).where(Dossier.reference == reference))
+    result = await db.execute(
+        _with_kyc(select(Dossier)).where(Dossier.reference == reference)
+    )
     return result.scalar_one_or_none()
 
 
@@ -19,27 +45,32 @@ async def list_dossiers(
     assigned_to: str | None = None,
     statut: str | None = None,
     classification: str | None = None,
+    reference: str | None = None,
     limit: int = 50,
     offset: int = 0,
 ) -> list[Dossier]:
-    q = select(Dossier)
-    if assigned_to:
-        q = q.where(Dossier.assigned_to == assigned_to)
-    if statut:
-        q = q.where(Dossier.statut == statut)
-    if classification:
-        q = q.where(Dossier.classification == classification)
+    q = _apply_dossier_filters(
+        _with_kyc(select(Dossier)),
+        assigned_to=assigned_to, statut=statut,
+        classification=classification, reference=reference,
+    )
     q = q.order_by(Dossier.created_at.desc()).limit(limit).offset(offset)
     result = await db.execute(q)
     return list(result.scalars().all())
 
 
-async def count_dossiers(db: AsyncSession, **filters) -> int:
-    q = select(func.count(Dossier.id))
-    if filters.get("statut"):
-        q = q.where(Dossier.statut == filters["statut"])
-    if filters.get("classification"):
-        q = q.where(Dossier.classification == filters["classification"])
+async def count_dossiers(
+    db: AsyncSession,
+    assigned_to: str | None = None,
+    statut: str | None = None,
+    classification: str | None = None,
+    reference: str | None = None,
+) -> int:
+    q = _apply_dossier_filters(
+        select(func.count(Dossier.id)),
+        assigned_to=assigned_to, statut=statut,
+        classification=classification, reference=reference,
+    )
     result = await db.execute(q)
     return result.scalar_one()
 

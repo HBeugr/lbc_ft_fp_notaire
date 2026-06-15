@@ -20,6 +20,7 @@ from app.routers import kyc_screening as kyc_screening_router
 from app.routers import documents as documents_router
 from app.routers import rapports as rapports_router
 from app.routers import admin as admin_router
+from app.routers import dashboard as dashboard_router
 
 
 def _ensure_minio_bucket() -> None:
@@ -118,6 +119,7 @@ app.include_router(kyc_screening_router.router, prefix="/api")
 app.include_router(documents_router.router, prefix="/api")
 app.include_router(rapports_router.router, prefix="/api")
 app.include_router(admin_router.router, prefix="/api")
+app.include_router(dashboard_router.router, prefix="/api")
 
 
 @app.get("/health", tags=["system"])

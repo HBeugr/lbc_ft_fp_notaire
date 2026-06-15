@@ -18,6 +18,8 @@ class User(Base):
             "notaire_principal",
             "responsable_conformite",
             "clercs",
+            "declarant_centif",
+            "autre_utilisateur",
             name="user_role_enum",
         ),
         nullable=False,

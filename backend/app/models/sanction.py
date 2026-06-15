@@ -17,7 +17,12 @@ class ListeSanctions(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     nom: Mapped[str] = mapped_column(String(255), nullable=False)
     type_liste: Mapped[str] = mapped_column(
-        SAEnum("GIABA", "BCEAO", "OFAC", "UE_CSDNU", "AUTRE", name="type_liste_sanctions_enum"),
+        SAEnum(
+            "GIABA", "BCEAO", "OFAC", "UE_CSDNU", "AUTRE",
+            # Listes Financement de la Prolifération (M1.2)
+            "ONU_PROLIFERATION", "OFAC_WMD", "UE_PROLIFERATION", "CENTIF_FP",
+            name="type_liste_sanctions_enum",
+        ),
         nullable=False,
     )
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)

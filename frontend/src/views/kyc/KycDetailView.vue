@@ -8,7 +8,7 @@
           <span v-if="dossier">{{ dossier.reference }}</span>
         </div>
         <h1 class="page-title" v-if="dossier">
-          {{ dossier.type_client === 'PP' ? clientName : dossier.kyc_pm?.raison_sociale ?? dossier.reference }}
+          {{ dossier.type_client === 'PP' ? clientName : dossier.kyc_pm?.denomination_sociale ?? dossier.reference }}
         </h1>
       </div>
       <div class="header-actions" v-if="dossier">
@@ -132,7 +132,7 @@
       <TriggerBanner
         v-else-if="dossier.trigger_actif === 'T3'"
         trigger="T3"
-        description="Client figurant sur une liste de sanctions (OFAC / UE-CSNU / GIABA-BCEAO) — blocage et gel des avoirs, DOS obligatoire."
+        description="Client figurant sur une liste de sanctions (OFAC / UE-CSNU / GIABA-BCEAO) — blocage du dossier, DOS obligatoire."
       />
       <TriggerBanner
         v-else-if="dossier.trigger_actif === 'T4'"
@@ -206,7 +206,17 @@
         </div>
         <div class="meta-item">
           <span class="meta-label">Opération</span>
-          <span class="meta-value">{{ OPERATION_LABELS[dossier.type_operation] ?? dossier.type_operation }}</span>
+          <span class="meta-value">{{ operationLabel(dossier.type_operation) }}</span>
+        </div>
+        <div class="meta-item">
+          <span class="meta-label">Transaction</span>
+          <span class="meta-value">
+            <template v-if="dossier.montant_transaction != null || dossier.montant_tranche || dossier.mode_paiement">
+              {{ dossier.montant_transaction != null ? Number(dossier.montant_transaction).toLocaleString('fr-FR') + ' FCFA' : (dossier.montant_tranche === 'plus_15m' ? '> 15M FCFA' : '< 15M FCFA') }}
+              <span v-if="dossier.mode_paiement"> · {{ MODE_PAIEMENT_LABELS[dossier.mode_paiement] ?? dossier.mode_paiement }}</span>
+            </template>
+            <span v-else style="color:var(--color-text-muted);font-style:italic">Non renseignée</span>
+          </span>
         </div>
         <div class="meta-item">
           <span class="meta-label">Score risque</span>
@@ -230,15 +240,21 @@
           <span class="meta-value">
             <span v-if="dossier.assigned_to" class="assigned-chip">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="assigned-icon"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>
-              {{ assignedUserName || dossier.assigned_to.slice(0, 8) + '…' }}
+              {{ dossier.assigned_to_name || assignedUserName || dossier.assigned_to.slice(0, 8) + '…' }}
             </span>
             <span v-else class="meta-value" style="color:var(--color-text-muted);font-style:italic">Non assigné</span>
           </span>
         </div>
         <div class="meta-item">
           <span class="meta-label">Créé le</span>
-          <span class="meta-value">{{ formatDate(dossier.created_at) }}</span>
+          <span class="meta-value">{{ dossier.created_at ? formatDate(dossier.created_at) : '—' }}</span>
         </div>
+      </div>
+
+      <!-- Déclaration systématique espèces (> 15M réglé en espèces) -->
+      <div v-if="dossier.surveillance_espece" class="surveillance-espece-banner">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+        <span>Déclaration systématique de transaction en espèce à faire. Opération à surveiller.</span>
       </div>
 
       <!-- ── Onglets de navigation plats ── -->
@@ -257,164 +273,52 @@
         <template v-if="dossier.kyc_pp">
           <div class="section-header">
             <h3 class="section-title">Fiche KYC — Personne physique</h3>
-            <div v-if="!ppEdit" style="display:flex;gap:0.5rem">
-              <button class="btn-ghost btn-sm" @click="startPPEdit">Modifier</button>
-            </div>
-            <div v-else style="display:flex;gap:0.5rem;align-items:center">
-              <button class="btn-ghost btn-sm" @click="ppEdit=false;ppError=''">Annuler</button>
-              <button class="btn-primary btn-sm-primary" :disabled="ppSaving" @click="savePP">
-                <svg v-if="ppSaving" class="spin btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 11-6.219-8.56"/></svg>
-                {{ ppSaving ? '…' : 'Enregistrer' }}
-              </button>
-            </div>
+            <button class="btn-ghost btn-sm" @click="router.push({ name: 'kyc-pp', params: { id: dossier.id } })">Modifier</button>
           </div>
-          <p v-if="ppError" class="save-error">{{ ppError }}</p>
 
-          <!-- View mode -->
-          <template v-if="!ppEdit">
-            <div class="info-grid">
-              <div class="info-item"><span class="info-label">Nom & Prénoms</span><span class="info-value">{{ clientName }}</span></div>
-              <div class="info-item"><span class="info-label">Date de naissance</span><span class="info-value">{{ dossier.kyc_pp.date_naissance ?? '—' }}</span></div>
-              <div class="info-item"><span class="info-label">Lieu de naissance</span><span class="info-value">{{ dossier.kyc_pp.lieu_naissance ?? '—' }}</span></div>
-              <div class="info-item"><span class="info-label">Nationalité</span><span class="info-value">{{ dossier.kyc_pp.nationalite ?? '—' }}</span></div>
-              <div class="info-item"><span class="info-label">Pièce d'identité</span><span class="info-value">{{ dossier.kyc_pp.type_piece_identite ?? '—' }} {{ dossier.kyc_pp.numero_piece ?? '' }}</span></div>
-              <div class="info-item"><span class="info-label">Situation professionnelle</span><span class="info-value">{{ dossier.kyc_pp.situation_professionnelle ?? '—' }}</span></div>
-              <div class="info-item"><span class="info-label">Revenus annuels</span><span class="info-value">{{ dossier.kyc_pp.revenus_annuels ? formatAmount(dossier.kyc_pp.revenus_annuels) : '—' }}</span></div>
-              <div class="info-item info-item--full"><span class="info-label">Adresse</span><span class="info-value">{{ dossier.kyc_pp.adresse_residence ?? '—' }}</span></div>
-              <div class="info-item"><span class="info-label">Statut PPE</span><span class="info-value" :class="{ 'ppe-flag': dossier.kyc_pp.statut_ppe }">{{ dossier.kyc_pp.statut_ppe ? '⚠ PPE' : 'Non' }}</span></div>
-              <div class="info-item"><span class="info-label">Opération tiers</span><span class="info-value">{{ dossier.kyc_pp.est_compte_tiers ? 'Oui — mandant renseigné' : 'Non' }}</span></div>
-            </div>
-            <template v-if="dossier.kyc_pp.est_compte_tiers && dossier.kyc_pp.mandant_info">
-              <h4 class="subsection-title">Mandant (opération pour compte de tiers)</h4>
-              <div class="mandant-detail-block">
-                <div class="info-grid">
-                  <div class="info-item"><span class="info-label">Nom & Prénoms</span><span class="info-value">{{ (dossier.kyc_pp.mandant_info['nom'] || '') + (dossier.kyc_pp.mandant_info['prenoms'] ? ' ' + dossier.kyc_pp.mandant_info['prenoms'] : '') || '—' }}</span></div>
-                  <div class="info-item"><span class="info-label">Date de naissance</span><span class="info-value">{{ dossier.kyc_pp.mandant_info['date_naissance'] || '—' }}</span></div>
-                  <div class="info-item"><span class="info-label">Lieu de naissance</span><span class="info-value">{{ dossier.kyc_pp.mandant_info['lieu_naissance'] || '—' }}</span></div>
-                  <div class="info-item"><span class="info-label">Lien avec le client</span><span class="info-value">{{ dossier.kyc_pp.mandant_info['lien'] || '—' }}</span></div>
-                  <div class="info-item"><span class="info-label">Contact</span><span class="info-value">{{ dossier.kyc_pp.mandant_info['contact'] || '—' }}</span></div>
-                </div>
-              </div>
-            </template>
-          </template>
+          <div class="info-grid">
+            <div class="info-item"><span class="info-label">Nom & Prénoms</span><span class="info-value">{{ clientName }}</span></div>
+            <div class="info-item"><span class="info-label">Nom de jeune fille</span><span class="info-value">{{ dossier.kyc_pp.nom_jeune_fille ?? '—' }}</span></div>
+            <div class="info-item"><span class="info-label">Nom & Prénoms du père</span><span class="info-value">{{ dossier.kyc_pp.nom_prenoms_pere ?? '—' }}</span></div>
+            <div class="info-item"><span class="info-label">Nom & Prénoms de la mère</span><span class="info-value">{{ dossier.kyc_pp.nom_prenoms_mere ?? '—' }}</span></div>
+            <div class="info-item"><span class="info-label">Date de naissance</span><span class="info-value">{{ dossier.kyc_pp.date_naissance ?? '—' }}</span></div>
+            <div class="info-item"><span class="info-label">Lieu de naissance</span><span class="info-value">{{ dossier.kyc_pp.lieu_naissance ?? '—' }}</span></div>
+            <div class="info-item"><span class="info-label">Nationalité</span><span class="info-value">{{ dossier.kyc_pp.nationalite ?? '—' }}</span></div>
+            <div class="info-item"><span class="info-label">Autres nationalités</span><span class="info-value">{{ dossier.kyc_pp.autres_nationalites ?? '—' }}</span></div>
+            <div class="info-item"><span class="info-label">Statut matrimonial</span><span class="info-value">{{ dossier.kyc_pp.statut_matrimonial ?? '—' }}</span></div>
+            <div class="info-item"><span class="info-label">Pièce d'identité</span><span class="info-value">{{ dossier.kyc_pp.type_piece ?? '—' }} {{ dossier.kyc_pp.numero_piece ?? '' }}</span></div>
+            <div class="info-item"><span class="info-label">N° Compte Contribuable</span><span class="info-value mono">{{ dossier.kyc_pp.numero_contribuable ?? '—' }}</span></div>
+            <div class="info-item"><span class="info-label">Profession</span><span class="info-value">{{ dossier.kyc_pp.profession ?? '—' }}</span></div>
+            <div class="info-item info-item--full"><span class="info-label">Professions (5 dernières années)</span><span class="info-value">{{ dossier.kyc_pp.profession_5_ans ?? '—' }}</span></div>
+            <div class="info-item"><span class="info-label">Employeur</span><span class="info-value">{{ dossier.kyc_pp.employeur ?? '—' }}</span></div>
+            <div class="info-item"><span class="info-label">Secteur d'activité</span><span class="info-value">{{ dossier.kyc_pp.secteur_activite ?? '—' }}</span></div>
+            <div class="info-item"><span class="info-label">Ancienneté professionnelle</span><span class="info-value">{{ dossier.kyc_pp.anciennete_pro ?? '—' }}</span></div>
+            <div class="info-item info-item--full"><span class="info-label">Adresse géographique</span><span class="info-value">{{ dossier.kyc_pp.adresse_geo ?? '—' }}</span></div>
+            <div class="info-item info-item--full"><span class="info-label">Adresse postale</span><span class="info-value">{{ dossier.kyc_pp.adresse_postale ?? '—' }}</span></div>
+            <div class="info-item"><span class="info-label">Téléphone</span><span class="info-value">{{ dossier.kyc_pp.telephone ?? '—' }}</span></div>
+            <div class="info-item"><span class="info-label">WhatsApp</span><span class="info-value">{{ dossier.kyc_pp.whatsapp ?? '—' }}</span></div>
+            <div class="info-item"><span class="info-label">Email</span><span class="info-value">{{ dossier.kyc_pp.email ?? '—' }}</span></div>
+            <div class="info-item"><span class="info-label">Non résident</span><span class="info-value">{{ dossier.kyc_pp.non_resident ? 'Oui' : 'Non' }}{{ dossier.kyc_pp.non_resident && dossier.kyc_pp.pays_residence ? ' — ' + dossier.kyc_pp.pays_residence : '' }}</span></div>
+            <div class="info-item"><span class="info-label">Statut PPE</span><span class="info-value" :class="{ 'ppe-flag': dossier.kyc_pp.est_ppe }">{{ dossier.kyc_pp.est_ppe ? '⚠ PPE' : 'Non' }}</span></div>
+          </div>
 
-          <!-- Edit mode -->
-          <template v-else>
-            <div class="edit-grid">
-              <div class="edit-field">
-                <label class="info-label">Nom <span class="req">*</span></label>
-                <input v-model="ppForm.nom" type="text" class="field-input" />
-              </div>
-              <div class="edit-field">
-                <label class="info-label">Prénoms <span class="req">*</span></label>
-                <input v-model="ppForm.prenoms" type="text" class="field-input" />
-              </div>
-              <div class="edit-field">
-                <label class="info-label">Date de naissance</label>
-                <input v-model="ppForm.date_naissance" type="date" class="field-input" />
-              </div>
-              <div class="edit-field">
-                <label class="info-label">Lieu de naissance</label>
-                <input v-model="ppForm.lieu_naissance" type="text" class="field-input" />
-              </div>
-              <div class="edit-field">
-                <label class="info-label">Nationalité</label>
-                <input v-model="ppForm.nationalite" type="text" class="field-input" />
-              </div>
-              <div class="edit-field edit-field--full">
-                <label class="info-label">Adresse de résidence</label>
-                <input v-model="ppForm.adresse_residence" type="text" class="field-input" />
-              </div>
-              <div class="edit-field">
-                <label class="info-label">Type de pièce d'identité</label>
-                <select v-model="ppForm.type_piece_identite" class="field-input">
-                  <option value="">— Choisir —</option>
-                  <option>Carte nationale d'identité</option>
-                  <option>Passeport</option>
-                  <option>Titre de séjour</option>
-                  <option>Autre</option>
-                </select>
-              </div>
-              <div class="edit-field">
-                <label class="info-label">Numéro de pièce</label>
-                <input v-model="ppForm.numero_piece" type="text" class="field-input" />
-              </div>
-              <div class="edit-field">
-                <label class="info-label">Date d'expiration pièce</label>
-                <input v-model="ppForm.date_expiration_piece" type="date" class="field-input" />
-              </div>
-              <div class="edit-field">
-                <label class="info-label">Pays d'émission</label>
-                <input v-model="ppForm.pays_emission_piece" type="text" class="field-input" />
-              </div>
-              <div class="edit-field">
-                <label class="info-label">Situation professionnelle</label>
-                <input v-model="ppForm.situation_professionnelle" type="text" class="field-input" />
-              </div>
-              <div class="edit-field">
-                <label class="info-label">Revenus annuels (FCFA)</label>
-                <input v-model.number="ppForm.revenus_annuels" type="number" class="field-input" />
-              </div>
-              <div class="edit-field">
-                <label class="info-label">Patrimoine estimé (FCFA)</label>
-                <input v-model.number="ppForm.patrimoine_estime" type="number" class="field-input" />
-              </div>
-              <div class="edit-field">
-                <label class="info-label">Source des revenus</label>
-                <input v-model="ppForm.sources_revenus" type="text" class="field-input" />
-              </div>
-              <div class="edit-field edit-field--full">
-                <label class="info-label">Origine des fonds</label>
-                <input v-model="ppForm.origine_fonds" type="text" class="field-input" />
-              </div>
-              <div class="edit-field edit-field--full">
-                <label class="info-label">Objet de la relation</label>
-                <input v-model="ppForm.objet_relation" type="text" class="field-input" />
-              </div>
-              <div class="edit-field edit-field--full" style="display:flex;align-items:center;gap:0.75rem">
-                <input type="checkbox" id="ppStatutPPE" v-model="ppForm.statut_ppe" style="width:1rem;height:1rem" />
-                <label for="ppStatutPPE" class="info-label" style="margin:0;cursor:pointer">Statut PPE (Personne Politiquement Exposée)</label>
-              </div>
-              <div class="edit-field edit-field--full" style="display:flex;align-items:center;gap:0.75rem">
-                <input type="checkbox" id="ppEstCompteTiers" v-model="ppForm.est_compte_tiers" style="width:1rem;height:1rem" />
-                <label for="ppEstCompteTiers" class="info-label" style="margin:0;cursor:pointer">Opération pour compte de tiers (mandant)</label>
+          <template v-if="dossier.kyc_pp.mandataire">
+            <h4 class="subsection-title">Mandataire</h4>
+            <div class="mandant-detail-block">
+              <div class="info-grid">
+                <div class="info-item"><span class="info-label">Prénom & Nom</span><span class="info-value">{{ dossier.kyc_pp.mandataire.prenom_nom || '—' }}</span></div>
+                <div class="info-item"><span class="info-label">Pièce d'identité</span><span class="info-value">{{ dossier.kyc_pp.mandataire.type_piece || '—' }} {{ dossier.kyc_pp.mandataire.numero_piece || '' }}</span></div>
+                <div class="info-item"><span class="info-label">Date de naissance</span><span class="info-value">{{ dossier.kyc_pp.mandataire.date_naissance || '—' }}</span></div>
+                <div class="info-item"><span class="info-label">Nationalité</span><span class="info-value">{{ dossier.kyc_pp.mandataire.nationalite || '—' }}</span></div>
+                <div class="info-item"><span class="info-label">Pays de résidence</span><span class="info-value">{{ dossier.kyc_pp.mandataire.pays_residence || '—' }}</span></div>
+                <div class="info-item"><span class="info-label">Fonction</span><span class="info-value">{{ dossier.kyc_pp.mandataire.fonction || '—' }}</span></div>
               </div>
             </div>
-
-            <template v-if="ppForm.est_compte_tiers">
-              <h4 class="subsection-title" style="margin-top:1.25rem">Informations du mandant</h4>
-              <div class="edit-grid">
-                <div class="edit-field">
-                  <label class="info-label">Nom du mandant</label>
-                  <input v-model="ppMandant.nom" type="text" class="field-input" />
-                </div>
-                <div class="edit-field">
-                  <label class="info-label">Prénoms du mandant</label>
-                  <input v-model="ppMandant.prenoms" type="text" class="field-input" />
-                </div>
-                <div class="edit-field">
-                  <label class="info-label">Date de naissance</label>
-                  <input v-model="ppMandant.date_naissance" type="date" class="field-input" />
-                </div>
-                <div class="edit-field">
-                  <label class="info-label">Lieu de naissance</label>
-                  <input v-model="ppMandant.lieu_naissance" type="text" class="field-input" />
-                </div>
-                <div class="edit-field">
-                  <label class="info-label">Lien avec le client</label>
-                  <input v-model="ppMandant.lien" type="text" class="field-input" />
-                </div>
-                <div class="edit-field">
-                  <label class="info-label">Contact</label>
-                  <input v-model="ppMandant.contact" type="text" class="field-input" />
-                </div>
-              </div>
-            </template>
           </template>
         </template>
         <div v-else class="empty-section">
           <p>Le formulaire KYC-PP n'a pas encore été rempli.</p>
-          <button v-if="dossier.statut === 'brouillon'" class="btn-primary btn-sm-primary" style="margin-top:1rem" @click="router.push({ name: 'kyc-edit', params: { id: dossier.id } })">
+          <button v-if="dossier.statut === 'brouillon'" class="btn-primary btn-sm-primary" style="margin-top:1rem" @click="router.push({ name: 'kyc-pp', params: { id: dossier.id } })">
             Remplir le formulaire KYC
           </button>
         </div>
@@ -425,94 +329,47 @@
         <template v-if="dossier.kyc_pm">
           <div class="section-header">
             <h3 class="section-title">Informations société</h3>
-            <div v-if="!pmEdit" style="display:flex;gap:0.5rem">
-              <button class="btn-ghost btn-sm" @click="startPMEdit">Modifier</button>
-            </div>
-            <div v-else style="display:flex;gap:0.5rem;align-items:center">
-              <button class="btn-ghost btn-sm" @click="pmEdit=false;pmError=''">Annuler</button>
-              <button class="btn-primary btn-sm-primary" :disabled="pmSaving" @click="savePMCompany">
-                <svg v-if="pmSaving" class="spin btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 11-6.219-8.56"/></svg>
-                {{ pmSaving ? '…' : 'Enregistrer' }}
-              </button>
-            </div>
+            <button class="btn-ghost btn-sm" @click="router.push({ name: 'kyc-pm', params: { id: dossier.id } })">Modifier</button>
           </div>
-          <p v-if="pmError" class="save-error">{{ pmError }}</p>
 
-          <!-- View mode -->
-          <template v-if="!pmEdit">
-            <div class="info-grid">
-              <div class="info-item"><span class="info-label">Raison sociale</span><span class="info-value">{{ dossier.kyc_pm.raison_sociale }}</span></div>
-              <div class="info-item"><span class="info-label">Forme juridique</span><span class="info-value">{{ dossier.kyc_pm.forme_juridique ?? '—' }}</span></div>
-              <div class="info-item"><span class="info-label">RCCM</span><span class="info-value mono">{{ dossier.kyc_pm.rccm ?? '—' }}</span></div>
-              <div class="info-item"><span class="info-label">NIF</span><span class="info-value mono">{{ dossier.kyc_pm.nif ?? '—' }}</span></div>
-              <div class="info-item"><span class="info-label">Pays d'enregistrement</span><span class="info-value">{{ dossier.kyc_pm.pays_enregistrement ?? '—' }}</span></div>
-              <div class="info-item"><span class="info-label">Date de création</span><span class="info-value">{{ dossier.kyc_pm.date_creation ?? '—' }}</span></div>
-              <div class="info-item"><span class="info-label">Capital social</span><span class="info-value">{{ dossier.kyc_pm.capital_social ? formatAmount(dossier.kyc_pm.capital_social) : '—' }}</span></div>
-              <div class="info-item"><span class="info-label">Secteur d'activité</span><span class="info-value">{{ dossier.kyc_pm.secteur_activite ?? '—' }}</span></div>
-              <div class="info-item info-item--full"><span class="info-label">Siège social</span><span class="info-value">{{ dossier.kyc_pm.adresse_siege ?? '—' }}</span></div>
-              <div class="info-item info-item--full"><span class="info-label">Description de l'activité</span><span class="info-value">{{ dossier.kyc_pm.description_activite ?? '—' }}</span></div>
-              <div class="info-item info-item--full"><span class="info-label">Objet de la relation</span><span class="info-value">{{ dossier.kyc_pm.objet_relation ?? '—' }}</span></div>
-              <div class="info-item info-item--full"><span class="info-label">Origine des fonds</span><span class="info-value">{{ dossier.kyc_pm.origine_fonds ?? '—' }}</span></div>
-            </div>
-          </template>
+          <div class="info-grid">
+            <div class="info-item"><span class="info-label">Dénomination sociale</span><span class="info-value">{{ dossier.kyc_pm.denomination_sociale ?? '—' }}</span></div>
+            <div class="info-item"><span class="info-label">Forme juridique</span><span class="info-value">{{ dossier.kyc_pm.forme_juridique ?? '—' }}</span></div>
+            <div class="info-item"><span class="info-label">N° RCCM</span><span class="info-value mono">{{ dossier.kyc_pm.numero_rccm ?? '—' }}</span></div>
+            <div class="info-item"><span class="info-label">N° Compte Contribuable</span><span class="info-value mono">{{ dossier.kyc_pm.numero_contribuable ?? '—' }}</span></div>
+            <div class="info-item info-item--full"><span class="info-label">Libellé d'activité</span><span class="info-value">{{ dossier.kyc_pm.libelle_activite ?? '—' }}</span></div>
+            <div class="info-item info-item--full"><span class="info-label">Adresse</span><span class="info-value">{{ dossier.kyc_pm.adresse ?? '—' }}</span></div>
+            <div class="info-item"><span class="info-label">Téléphone</span><span class="info-value">{{ dossier.kyc_pm.telephone ?? '—' }}</span></div>
+            <div class="info-item"><span class="info-label">WhatsApp</span><span class="info-value">{{ dossier.kyc_pm.whatsapp ?? '—' }}</span></div>
+            <div class="info-item"><span class="info-label">Email</span><span class="info-value">{{ dossier.kyc_pm.email ?? '—' }}</span></div>
+            <div class="info-item"><span class="info-label">Représentant légal</span><span class="info-value">{{ dossier.kyc_pm.nom_representant_legal ?? '—' }}</span></div>
+            <div class="info-item"><span class="info-label">Ancienneté professionnelle</span><span class="info-value">{{ dossier.kyc_pm.anciennete_pro ?? '—' }}</span></div>
+            <div class="info-item"><span class="info-label">PPE détectée</span><span class="info-value" :class="{ 'ppe-flag': dossier.kyc_pm.ppe_detectee }">{{ dossier.kyc_pm.ppe_detectee ? '⚠ Oui' : 'Non' }}</span></div>
+            <template v-if="dossier.kyc_pm.infos_pm">
+              <div class="info-item"><span class="info-label">Domaine d'activité</span><span class="info-value">{{ dossier.kyc_pm.infos_pm.domaine_activite || '—' }}</span></div>
+              <div class="info-item"><span class="info-label">Nature de la PM</span><span class="info-value">{{ dossier.kyc_pm.infos_pm.nature_pm || '—' }}</span></div>
+              <div class="info-item"><span class="info-label">Société cotée</span><span class="info-value">{{ dossier.kyc_pm.infos_pm.cotee ? 'Oui' : 'Non' }}</span></div>
+              <div class="info-item"><span class="info-label">Marché réglementé</span><span class="info-value">{{ dossier.kyc_pm.infos_pm.marche_reglemente || '—' }}</span></div>
+            </template>
+          </div>
 
-          <!-- Edit mode -->
-          <template v-else>
-            <div class="edit-grid">
-              <div class="edit-field edit-field--full">
-                <label class="info-label">Raison sociale <span class="req">*</span></label>
-                <input v-model="pmForm.raison_sociale" type="text" class="field-input" />
-              </div>
-              <div class="edit-field">
-                <label class="info-label">Forme juridique</label>
-                <input v-model="pmForm.forme_juridique" type="text" class="field-input" placeholder="SA, SARL, SAS…" />
-              </div>
-              <div class="edit-field">
-                <label class="info-label">RCCM</label>
-                <input v-model="pmForm.rccm" type="text" class="field-input" />
-              </div>
-              <div class="edit-field">
-                <label class="info-label">NIF</label>
-                <input v-model="pmForm.nif" type="text" class="field-input" />
-              </div>
-              <div class="edit-field">
-                <label class="info-label">Pays d'enregistrement</label>
-                <input v-model="pmForm.pays_enregistrement" type="text" class="field-input" />
-              </div>
-              <div class="edit-field">
-                <label class="info-label">Date de création</label>
-                <input v-model="pmForm.date_creation" type="date" class="field-input" />
-              </div>
-              <div class="edit-field">
-                <label class="info-label">Capital social (FCFA)</label>
-                <input v-model.number="pmForm.capital_social" type="number" min="0" class="field-input" />
-              </div>
-              <div class="edit-field">
-                <label class="info-label">Secteur d'activité</label>
-                <input v-model="pmForm.secteur_activite" type="text" class="field-input" />
-              </div>
-              <div class="edit-field edit-field--full">
-                <label class="info-label">Siège social</label>
-                <textarea v-model="pmForm.adresse_siege" class="field-textarea" rows="2" />
-              </div>
-              <div class="edit-field edit-field--full">
-                <label class="info-label">Description de l'activité</label>
-                <textarea v-model="pmForm.description_activite" class="field-textarea" rows="2" />
-              </div>
-              <div class="edit-field edit-field--full">
-                <label class="info-label">Objet de la relation</label>
-                <textarea v-model="pmForm.objet_relation" class="field-textarea" rows="2" />
-              </div>
-              <div class="edit-field edit-field--full">
-                <label class="info-label">Origine des fonds</label>
-                <textarea v-model="pmForm.origine_fonds" class="field-textarea" rows="2" />
+          <template v-if="dossier.kyc_pm.mandataire">
+            <h4 class="subsection-title">Mandataire</h4>
+            <div class="mandant-detail-block">
+              <div class="info-grid">
+                <div class="info-item"><span class="info-label">Prénom & Nom</span><span class="info-value">{{ dossier.kyc_pm.mandataire.prenom_nom || '—' }}</span></div>
+                <div class="info-item"><span class="info-label">Pièce d'identité</span><span class="info-value">{{ dossier.kyc_pm.mandataire.type_piece || '—' }} {{ dossier.kyc_pm.mandataire.numero_piece || '' }}</span></div>
+                <div class="info-item"><span class="info-label">Date de naissance</span><span class="info-value">{{ dossier.kyc_pm.mandataire.date_naissance || '—' }}</span></div>
+                <div class="info-item"><span class="info-label">Nationalité</span><span class="info-value">{{ dossier.kyc_pm.mandataire.nationalite || '—' }}</span></div>
+                <div class="info-item"><span class="info-label">Pays de résidence</span><span class="info-value">{{ dossier.kyc_pm.mandataire.pays_residence || '—' }}</span></div>
+                <div class="info-item"><span class="info-label">Fonction</span><span class="info-value">{{ dossier.kyc_pm.mandataire.fonction || '—' }}</span></div>
               </div>
             </div>
           </template>
         </template>
         <div v-else class="empty-section">
           <p>Le formulaire KYC-PM n'a pas encore été rempli.</p>
-          <button v-if="dossier.statut === 'brouillon'" class="btn-primary btn-sm-primary" style="margin-top:1rem" @click="router.push({ name: 'kyc-edit', params: { id: dossier.id } })">
+          <button v-if="dossier.statut === 'brouillon'" class="btn-primary btn-sm-primary" style="margin-top:1rem" @click="router.push({ name: 'kyc-pm', params: { id: dossier.id } })">
             Remplir le formulaire KYC
           </button>
         </div>
@@ -523,169 +380,30 @@
         <template v-if="dossier.kyc_pm">
           <div class="section-header">
             <h3 class="section-title">Représentant légal</h3>
-            <div v-if="!repEdit" style="display:flex;gap:0.5rem">
-              <button class="btn-ghost btn-sm" @click="startRepEdit">Modifier</button>
-            </div>
-            <div v-else style="display:flex;gap:0.5rem;align-items:center">
-              <button class="btn-ghost btn-sm" @click="repEdit=false;repError=''">Annuler</button>
-              <button class="btn-primary btn-sm-primary" :disabled="repSaving" @click="saveRep">
-                <svg v-if="repSaving" class="spin btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 11-6.219-8.56"/></svg>
-                {{ repSaving ? '…' : 'Enregistrer' }}
-              </button>
-            </div>
+            <button class="btn-ghost btn-sm" @click="router.push({ name: 'kyc-pm', params: { id: dossier.id } })">Modifier</button>
           </div>
-          <p v-if="repError" class="save-error">{{ repError }}</p>
 
-          <template v-if="!repEdit">
-            <div v-if="!dossier.kyc_pm.representant_nom" class="empty-section" style="padding:1.5rem 0">
-              <p>Aucun représentant légal renseigné.</p>
-              <button class="btn-ghost btn-sm" style="margin-top:0.5rem" @click="startRepEdit">Renseigner</button>
-            </div>
-            <div v-else class="info-grid">
-              <div class="info-item"><span class="info-label">Nom</span><span class="info-value">{{ dossier.kyc_pm.representant_nom ?? '—' }}</span></div>
-              <div class="info-item"><span class="info-label">Prénoms</span><span class="info-value">{{ dossier.kyc_pm.representant_prenoms ?? '—' }}</span></div>
-              <div class="info-item"><span class="info-label">Fonction</span><span class="info-value">{{ dossier.kyc_pm.representant_fonction ?? '—' }}</span></div>
-              <div class="info-item"><span class="info-label">Nationalité</span><span class="info-value">{{ dossier.kyc_pm.representant_nationalite ?? '—' }}</span></div>
-              <div class="info-item"><span class="info-label">Type de pièce</span><span class="info-value">{{ dossier.kyc_pm.representant_type_piece ?? '—' }}</span></div>
-              <div class="info-item"><span class="info-label">Numéro de pièce</span><span class="info-value mono">{{ dossier.kyc_pm.representant_numero_piece ?? '—' }}</span></div>
-              <div class="info-item"><span class="info-label">Expiration pièce</span><span class="info-value">{{ dossier.kyc_pm.representant_date_expiration_piece ?? '—' }}</span></div>
-              <div class="info-item"><span class="info-label">Date de naissance</span><span class="info-value">{{ dossier.kyc_pm.representant_date_naissance ?? '—' }}</span></div>
-              <div class="info-item info-item--full"><span class="info-label">Lieu d'habitation</span><span class="info-value">{{ dossier.kyc_pm.representant_lieu_habitation ?? '—' }}</span></div>
-            </div>
-          </template>
-
-          <template v-else>
-            <div class="edit-grid">
-              <div class="edit-field">
-                <label class="info-label">Nom <span class="req">*</span></label>
-                <input v-model="repForm.representant_nom" type="text" class="field-input" />
-              </div>
-              <div class="edit-field">
-                <label class="info-label">Prénoms <span class="req">*</span></label>
-                <input v-model="repForm.representant_prenoms" type="text" class="field-input" />
-              </div>
-              <div class="edit-field">
-                <label class="info-label">Fonction</label>
-                <input v-model="repForm.representant_fonction" type="text" class="field-input" placeholder="DG, PDG, Gérant…" />
-              </div>
-              <div class="edit-field">
-                <label class="info-label">Nationalité</label>
-                <input v-model="repForm.representant_nationalite" type="text" class="field-input" />
-              </div>
-              <div class="edit-field">
-                <label class="info-label">Type de pièce</label>
-                <select v-model="repForm.representant_type_piece" class="field-input">
-                  <option value="">— Sélectionner —</option>
-                  <option>CNI</option>
-                  <option>Passeport</option>
-                  <option>Titre de séjour</option>
-                  <option>Carte de résident</option>
-                </select>
-              </div>
-              <div class="edit-field">
-                <label class="info-label">Numéro de pièce</label>
-                <input v-model="repForm.representant_numero_piece" type="text" class="field-input" />
-              </div>
-              <div class="edit-field">
-                <label class="info-label">Expiration pièce</label>
-                <input v-model="repForm.representant_date_expiration_piece" type="date" class="field-input" />
-              </div>
-              <div class="edit-field">
-                <label class="info-label">Date de naissance</label>
-                <input v-model="repForm.representant_date_naissance" type="date" class="field-input" />
-              </div>
-              <div class="edit-field edit-field--full">
-                <label class="info-label">Lieu d'habitation</label>
-                <input v-model="repForm.representant_lieu_habitation" type="text" class="field-input" placeholder="Ville, Pays" />
-              </div>
-            </div>
-          </template>
-        </template>
-        <div v-else class="empty-section">
-          <p>Le formulaire KYC-PM doit être rempli en premier.</p>
-        </div>
-      </div>
-
-      <!-- ── Autres dirigeants ── -->
-      <div v-else-if="activeSection === 'dirigeants'" class="card section-card">
-        <template v-if="dossier.kyc_pm">
-          <div class="section-header">
-            <h3 class="section-title">Autres dirigeants</h3>
-            <div style="display:flex;gap:0.5rem;align-items:center">
-              <template v-if="!dirigEdit">
-                <button class="btn-ghost btn-sm" @click="startDirigEdit">Modifier</button>
-              </template>
-              <template v-else>
-                <button class="btn-ghost btn-sm btn-add-row" @click="addDirigeant">+ Ajouter</button>
-                <button class="btn-ghost btn-sm" @click="dirigEdit=false;dirigError=''">Annuler</button>
-                <button class="btn-primary btn-sm-primary" :disabled="dirigSaving" @click="saveDirig">
-                  <svg v-if="dirigSaving" class="spin btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 11-6.219-8.56"/></svg>
-                  {{ dirigSaving ? '…' : 'Enregistrer' }}
-                </button>
-              </template>
-            </div>
+          <div v-if="!dossier.kyc_pm.nom_representant_legal && !dossier.kyc_pm.mandataire" class="empty-section" style="padding:1.5rem 0">
+            <p>Aucun représentant légal renseigné.</p>
+            <button class="btn-ghost btn-sm" style="margin-top:0.5rem" @click="router.push({ name: 'kyc-pm', params: { id: dossier.id } })">Renseigner</button>
           </div>
-          <p v-if="dirigError" class="save-error">{{ dirigError }}</p>
-
-          <!-- View mode -->
-          <template v-if="!dirigEdit">
-            <div v-if="!dossier.kyc_pm.dirigeants?.length" class="empty-section" style="padding:1.5rem 0">
-              <p>Aucun autre dirigeant renseigné.</p>
-              <button class="btn-ghost btn-sm" style="margin-top:0.5rem" @click="startDirigEdit">Ajouter</button>
-            </div>
-            <div v-else class="persons-list">
-              <div v-for="(d, i) in dossier.kyc_pm.dirigeants" :key="i" class="person-row">
-                <div class="person-avatar">{{ (d.nom ?? '')[0]?.toUpperCase() }}{{ (d.prenoms ?? '')[0]?.toUpperCase() }}</div>
-                <div class="person-info">
-                  <span class="person-name">{{ d.nom }} {{ d.prenoms }}</span>
-                  <div class="person-tags">
-                    <span v-if="d.fonction" class="person-tag">{{ d.fonction }}</span>
-                    <span v-if="d.nationalite" class="person-nat">{{ d.nationalite }}</span>
-                    <span v-if="d.date_naissance" class="person-nat">né·e {{ d.date_naissance }}</span>
-                    <span v-if="d.lieu_habitation" class="person-nat">{{ d.lieu_habitation }}</span>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </template>
-
-          <!-- Edit mode -->
           <template v-else>
-            <div v-if="dirigRows.length === 0" class="empty-section" style="padding:1rem 0">
-              <p>Aucun dirigeant — cliquez sur "+ Ajouter".</p>
+            <div class="info-grid">
+              <div class="info-item info-item--full"><span class="info-label">Nom du représentant légal</span><span class="info-value">{{ dossier.kyc_pm.nom_representant_legal ?? '—' }}</span></div>
             </div>
-            <div v-for="(d, i) in dirigRows" :key="i" class="entity-edit-block">
-              <div class="entity-edit-header">
-                <span class="entity-edit-num">Dirigeant {{ i + 1 }}</span>
-                <button class="btn-remove-row" @click="removeDirigeant(i)">Supprimer</button>
-              </div>
-              <div class="edit-grid">
-                <div class="edit-field">
-                  <label class="info-label">Nom</label>
-                  <input v-model="d.nom" type="text" class="field-input" />
-                </div>
-                <div class="edit-field">
-                  <label class="info-label">Prénoms</label>
-                  <input v-model="d.prenoms" type="text" class="field-input" />
-                </div>
-                <div class="edit-field">
-                  <label class="info-label">Fonction</label>
-                  <input v-model="d.fonction" type="text" class="field-input" placeholder="DG, Administrateur…" />
-                </div>
-                <div class="edit-field">
-                  <label class="info-label">Nationalité</label>
-                  <input v-model="d.nationalite" type="text" class="field-input" />
-                </div>
-                <div class="edit-field">
-                  <label class="info-label">Date de naissance</label>
-                  <input v-model="d.date_naissance" type="date" class="field-input" />
-                </div>
-                <div class="edit-field">
-                  <label class="info-label">Lieu d'habitation</label>
-                  <input v-model="d.lieu_habitation" type="text" class="field-input" placeholder="Ville, Pays" />
+            <template v-if="dossier.kyc_pm.mandataire">
+              <h4 class="subsection-title">Mandataire</h4>
+              <div class="mandant-detail-block">
+                <div class="info-grid">
+                  <div class="info-item"><span class="info-label">Prénom & Nom</span><span class="info-value">{{ dossier.kyc_pm.mandataire.prenom_nom || '—' }}</span></div>
+                  <div class="info-item"><span class="info-label">Pièce d'identité</span><span class="info-value">{{ dossier.kyc_pm.mandataire.type_piece || '—' }} {{ dossier.kyc_pm.mandataire.numero_piece || '' }}</span></div>
+                  <div class="info-item"><span class="info-label">Date de naissance</span><span class="info-value">{{ dossier.kyc_pm.mandataire.date_naissance || '—' }}</span></div>
+                  <div class="info-item"><span class="info-label">Nationalité</span><span class="info-value">{{ dossier.kyc_pm.mandataire.nationalite || '—' }}</span></div>
+                  <div class="info-item"><span class="info-label">Pays de résidence</span><span class="info-value">{{ dossier.kyc_pm.mandataire.pays_residence || '—' }}</span></div>
+                  <div class="info-item"><span class="info-label">Fonction</span><span class="info-value">{{ dossier.kyc_pm.mandataire.fonction || '—' }}</span></div>
                 </div>
               </div>
-            </div>
+            </template>
           </template>
         </template>
         <div v-else class="empty-section">
@@ -695,139 +413,68 @@
 
       <!-- ── Actionnaires / BEs ── -->
       <div v-else-if="activeSection === 'actionnaires-be'" class="card section-card">
-        <!-- Actionnaires (kyc_pm.beneficiaires_effectifs) -->
+        <!-- Actionnaires (kyc_pm.actionnaires) -->
         <div class="section-header">
           <h3 class="section-title">Actionnaires / Associés</h3>
-          <div style="display:flex;gap:0.5rem;align-items:center">
-            <template v-if="!actEdit">
-              <button class="btn-ghost btn-sm" @click="startActEdit">Modifier</button>
-            </template>
-            <template v-else>
-              <button class="btn-ghost btn-sm btn-add-row" @click="addActionnaire">+ Ajouter</button>
-              <button class="btn-ghost btn-sm" @click="actEdit=false;actError=''">Annuler</button>
-              <button class="btn-primary btn-sm-primary" :disabled="actSaving" @click="saveAct">
-                <svg v-if="actSaving" class="spin btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 11-6.219-8.56"/></svg>
-                {{ actSaving ? '…' : 'Enregistrer' }}
-              </button>
-            </template>
+          <button class="btn-ghost btn-sm" @click="router.push({ name: 'kyc-pm', params: { id: dossier.id } })">Modifier</button>
+        </div>
+
+        <div v-if="!dossier.kyc_pm?.actionnaires?.length" class="empty-section" style="padding:1rem 0">
+          <p>Aucun actionnaire renseigné.</p>
+        </div>
+        <div v-else class="persons-list" style="margin-bottom:0.5rem">
+          <div v-for="(a, i) in dossier.kyc_pm.actionnaires" :key="i" class="person-row">
+            <div class="person-avatar">{{ String(a.raison_sociale_nom ?? '')[0]?.toUpperCase() }}</div>
+            <div class="person-info">
+              <span class="person-name">{{ a.raison_sociale_nom }}</span>
+              <div class="person-tags">
+                <span class="person-tag pct-tag">{{ a.pourcentage }}%</span>
+                <span v-if="a.cni_passeport" class="person-nat">{{ a.cni_passeport }}</span>
+                <span v-if="a.pays_residence" class="person-nat">{{ a.pays_residence }}</span>
+              </div>
+            </div>
           </div>
         </div>
-        <p v-if="actError" class="save-error">{{ actError }}</p>
-
-        <!-- View mode actionnaires -->
-        <template v-if="!actEdit">
-          <div v-if="!dossier.kyc_pm?.beneficiaires_effectifs?.filter((a: any) => a.nom?.trim() || a.prenoms?.trim()).length" class="empty-section" style="padding:1rem 0">
-            <p>Aucun actionnaire renseigné.</p>
-            <button class="btn-ghost btn-sm" style="margin-top:0.5rem" @click="startActEdit">Ajouter</button>
-          </div>
-          <div v-else class="persons-list" style="margin-bottom:0.5rem">
-            <div v-for="(a, i) in dossier.kyc_pm!.beneficiaires_effectifs!.filter((a: any) => a.nom?.trim() || a.prenoms?.trim())" :key="i" class="person-row">
-              <div class="person-avatar">{{ String(a.nom ?? '')[0]?.toUpperCase() }}{{ String(a.prenoms ?? '')[0]?.toUpperCase() }}</div>
-              <div class="person-info">
-                <span class="person-name">{{ a.nom }} {{ a.prenoms }}</span>
-                <div class="person-tags">
-                  <span class="person-tag pct-tag">{{ a.pourcentage }}%</span>
-                  <span v-if="a.nationalite" class="person-nat">{{ a.nationalite }}</span>
-                  <span v-if="a.statut_ppe" class="ppe-mini">PPE</span>
-                </div>
-              </div>
-            </div>
-          </div>
-        </template>
-
-        <!-- Edit mode actionnaires -->
-        <template v-else>
-          <div v-if="actRows.length === 0" class="empty-section" style="padding:1rem 0">
-            <p>Aucun actionnaire — cliquez sur "+ Ajouter".</p>
-          </div>
-          <div v-for="(a, i) in actRows" :key="i" class="entity-edit-block">
-            <div class="entity-edit-header">
-              <span class="entity-edit-num">Actionnaire {{ i + 1 }}</span>
-              <button class="btn-remove-row" @click="removeActionnaire(i)">Supprimer</button>
-            </div>
-            <div class="edit-grid">
-              <div class="edit-field">
-                <label class="info-label">Nom</label>
-                <input v-model="a.nom" type="text" class="field-input" />
-              </div>
-              <div class="edit-field">
-                <label class="info-label">Prénoms</label>
-                <input v-model="a.prenoms" type="text" class="field-input" />
-              </div>
-              <div class="edit-field">
-                <label class="info-label">Nationalité</label>
-                <input v-model="a.nationalite" type="text" class="field-input" />
-              </div>
-              <div class="edit-field">
-                <label class="info-label">% de détention</label>
-                <input v-model.number="a.pourcentage" type="number" min="0" max="100" class="field-input" />
-              </div>
-              <div class="edit-field" style="display:flex;align-items:center;gap:0.5rem;padding-top:1.25rem">
-                <input v-model="a.statut_ppe" type="checkbox" class="checkbox" :id="`ppe-act-${i}`" />
-                <label :for="`ppe-act-${i}`" class="info-label" style="margin:0;cursor:pointer">PPE</label>
-              </div>
-            </div>
-          </div>
-        </template>
 
         <!-- BEs formels (KycBEPanel) -->
         <div class="be-separator">
           <h4 class="subsection-title">Bénéficiaires effectifs — KYC-BE</h4>
         </div>
-        <KycBEPanel :dossier-id="dossier.id" />
+        <KycBEPanel :dossier-id="dossier.id" :client-type="dossier.type_client === 'PM' ? 'PM' : 'PP'" />
       </div>
 
       <!-- ── KYC-PPE ── -->
       <div v-else-if="activeSection === 'kyc-ppe'" class="card section-card">
         <div class="section-header">
           <h3 class="section-title">Personnes Politiquement Exposées (PPE)</h3>
-          <button
-            v-if="ppeSources.length > dossier.kyc_ppe_list.length"
-            class="btn-primary btn-sm-primary"
-            @click="openPPENew"
-          >
-            + Créer un KYC-PPE
+          <button class="btn-ghost btn-sm" @click="router.push({ name: kycFormRoute, params: { id: dossier.id } })">
+            Modifier
           </button>
         </div>
 
-        <div v-if="dossier.kyc_ppe_list.length === 0" class="empty-section">
-          <p>Aucun formulaire KYC-PPE créé.</p>
-          <p v-if="ppeSources.length > 0" style="margin-top:0.25rem;font-size:0.8125rem">{{ ppeSources.length }} PPE détecté(s) — cliquez sur "Créer un KYC-PPE".</p>
+        <div v-if="ppeDeclarations.length === 0" class="empty-section">
+          <p>Aucune déclaration PPE renseignée.</p>
         </div>
 
         <div v-else class="ppe-list">
-          <div v-for="ppe in dossier.kyc_ppe_list" :key="ppe.id" class="ppe-row">
+          <div v-for="ppe in ppeDeclarations" :key="ppe.id" class="ppe-row">
             <div class="ppe-row-left">
-              <div class="be-avatar">{{ (ppe.nom ?? '')[0] }}{{ (ppe.prenoms ?? '')[0] }}</div>
+              <div class="be-avatar">PPE</div>
               <div>
-                <p class="ppe-name">{{ ppe.nom }} {{ ppe.prenoms }}</p>
+                <p class="ppe-name">{{ PPE_STATUT_LABELS[ppe.statut_ppe] ?? ppe.statut_ppe }}</p>
                 <p class="ppe-meta">
-                  Source : <strong>{{ ppe.source === 'PP' ? 'Personne physique' : 'Bénéficiaire effectif' }}</strong>
-                  <span class="sep">·</span>
-                  {{ ppe.fonction_actuelle ?? '—' }}
+                  {{ ppe.fonctions ?? '—' }}
+                  <span v-if="ppe.pays_concerne" class="sep">·</span>
+                  <span v-if="ppe.pays_concerne">{{ ppe.pays_concerne }}</span>
                 </p>
               </div>
             </div>
             <div class="ppe-row-right">
-              <span v-if="ppe.resultat_presse && ppe.resultat_presse !== 'Negatif'" class="presse-chip" :class="`presse--${ppe.resultat_presse?.toLowerCase()}`">
-                Presse {{ ppe.resultat_presse }}
-              </span>
-              <span class="validation-badge" :class="`validation--${ppe.statut_validation}`">
-                {{ VALIDATION_LABELS[ppe.statut_validation ?? 'en_attente'] }}
-              </span>
-              <button class="btn-ghost btn-sm" @click="router.push({ name: 'kyc-ppe', params: { id: dossier.id, ppeId: ppe.id } })">
-                Ouvrir
-              </button>
+              <span v-if="ppe.verification_giaba" class="person-tag">GIABA ✓</span>
+              <span v-if="ppe.verification_ofac" class="person-tag">OFAC ✓</span>
+              <span v-if="ppe.verification_ue" class="person-tag">UE ✓</span>
+              <span v-if="ppe.ras" class="validation-badge validation--valide">RAS</span>
             </div>
-          </div>
-        </div>
-
-        <div v-if="pendingPPESources.length > 0" class="pending-ppe">
-          <p class="pending-label">PPE détectés sans formulaire :</p>
-          <div v-for="src in pendingPPESources" :key="src.sourceId" class="pending-row">
-            <span class="pending-name">{{ src.nom }} {{ src.prenoms }}</span>
-            <span class="pending-source">{{ src.source === 'PP' ? 'Personne physique' : 'BE' }}</span>
-            <button class="btn-ghost btn-sm" @click="openPPEForSource(src)">Créer KYC-PPE</button>
           </div>
         </div>
       </div>
@@ -863,12 +510,9 @@
             </div>
             <div class="historique-body">
               <p class="historique-transition">
-                <span v-if="h.statut_precedent" class="statut-chip statut-chip--prev">{{ h.statut_precedent }}</span>
-                <span v-if="h.statut_precedent" class="arrow">→</span>
-                <span class="statut-chip statut-chip--next">{{ h.statut_suivant }}</span>
+                <span class="statut-chip statut-chip--next">{{ h.action }}</span>
               </p>
-              <p v-if="h.commentaire" class="historique-comment">{{ h.commentaire }}</p>
-              <p class="historique-meta">{{ formatDate(h.created_at) }} · {{ h.auteur_id }}</p>
+              <p class="historique-meta">{{ formatDate(h.created_at) }}<span v-if="h.user_id"> · {{ h.user_id }}</span></p>
             </div>
           </div>
         </div>
@@ -971,7 +615,7 @@ import KycBEPanel from '@/components/kyc/KycBEPanel.vue'
 import DocumentsPanel from '@/components/kyc/DocumentsPanel.vue'
 import ScoringPanel from '@/components/kyc/ScoringPanel.vue'
 import TriggerBanner from '@/components/kyc/TriggerBanner.vue'
-import { dossiersService, type DossierOut, type CommentaireOut, type HistoriqueOut, type StatutDossier, type KycPMData, type KycPPData, TYPE_OPERATION_LABELS } from '@/services/dossiers'
+import { dossiersService, type DossierOut, type CommentaireOut, type HistoriqueOut, type StatutDossier, type KycPPEData, type TypeOperation, TYPE_OPERATION_LABELS } from '@/services/dossiers'
 import { dosService, type DosOut } from '@/services/dos'
 import { useAuthStore } from '@/stores/auth'
 
@@ -992,6 +636,15 @@ const newCommentaire = ref('')
 const commentaireSubmitting = ref(false)
 
 const OPERATION_LABELS = TYPE_OPERATION_LABELS
+
+function operationLabel(op: string): string {
+  return OPERATION_LABELS[op as TypeOperation] ?? op
+}
+
+const MODE_PAIEMENT_LABELS: Record<string, string> = {
+  especes: 'Espèces', cheque: 'Chèque', virement: 'Virement',
+  mix: 'Mixte', paiement_tiers: 'Paiement via tiers', autre: 'Autre',
+}
 
 const STATUT_LABELS: Record<string, string> = {
   brouillon:               'Brouillon',
@@ -1018,15 +671,14 @@ const visibleTabs = computed(() => {
   const tabs: { id: string; label: string }[] = []
   if (dossier.value.type_client === 'PP') {
     tabs.push({ id: 'kyc-pp', label: 'KYC Personne physique' })
-    const ppeCount = dossier.value.kyc_ppe_list?.length ?? 0
+    const ppeCount = dossier.value.kyc_pp?.ppe_declarations?.length ?? 0
     tabs.push({ id: 'kyc-ppe', label: ppeCount > 0 ? `PPE ⚠ (${ppeCount})` : 'PPE' })
   } else {
     tabs.push({ id: 'kyc-pm', label: 'KYC Personne morale' })
     tabs.push({ id: 'representant', label: 'Représentant légal' })
-    tabs.push({ id: 'dirigeants', label: 'Autres dirigeants' })
-    const beCount = dossier.value.kyc_be_list?.length ?? 0
+    const beCount = dossier.value.kyc_pm?.beneficiaires_effectifs?.length ?? 0
     tabs.push({ id: 'actionnaires-be', label: `Actionnaires / BEs (${beCount})` })
-    const ppeCount = dossier.value.kyc_ppe_list?.length ?? 0
+    const ppeCount = dossier.value.kyc_pm?.ppe_declarations?.length ?? 0
     tabs.push({ id: 'kyc-ppe', label: ppeCount > 0 ? `PPE (${ppeCount})` : 'PPE' })
   }
   if (!isAgent.value) {
@@ -1097,270 +749,24 @@ async function submitCommentaire() {
 const dosList = ref<DosOut[]>([])
 const dosLoading = ref(false)
 
-// ── PP edit ───────────────────────────────────────────────────────────────────
+// ── PPE (lecture seule) ─────────────────────────────────────────────────────────
 
-const ppEdit   = ref(false)
-const ppForm   = ref<Partial<KycPPData>>({})
-const ppMandant = ref<Record<string, string>>({})
-const ppSaving = ref(false)
-const ppError  = ref('')
-
-function startPPEdit() {
-  ppForm.value    = { ...dossier.value!.kyc_pp }
-  ppMandant.value = { ...(dossier.value!.kyc_pp?.mandant_info ?? {}) }
-  ppEdit.value    = true
-  ppError.value   = ''
+const PPE_STATUT_LABELS: Record<string, string> = {
+  Non_PPE: 'Non PPE',
+  PPE_National: 'PPE National',
+  PPE_Etranger: 'PPE Étranger',
+  Entourage_PPE: 'Entourage PPE',
 }
 
-async function savePP() {
-  if (!dossier.value) return
-  ppSaving.value = true
-  ppError.value  = ''
-  try {
-    const f = ppForm.value
-    await dossiersService.saveKycPP(dossier.value.id, 5, {
-      nom:                       f.nom,
-      prenoms:                   f.prenoms,
-      date_naissance:            f.date_naissance,
-      lieu_naissance:            f.lieu_naissance,
-      nationalite:               f.nationalite,
-      adresse_residence:         f.adresse_residence,
-      type_piece_identite:       f.type_piece_identite,
-      numero_piece:              f.numero_piece,
-      date_expiration_piece:     f.date_expiration_piece,
-      pays_emission_piece:       f.pays_emission_piece,
-      situation_professionnelle: f.situation_professionnelle,
-      revenus_annuels:           f.revenus_annuels,
-      patrimoine_estime:         f.patrimoine_estime,
-      sources_revenus:           f.sources_revenus,
-      origine_fonds:             f.origine_fonds,
-      objet_relation:            f.objet_relation,
-      statut_ppe:                f.statut_ppe,
-      est_compte_tiers:          f.est_compte_tiers,
-      mandant_info:              f.est_compte_tiers ? ppMandant.value : null,
-    })
-    dossier.value = await dossiersService.get(dossier.value.id)
-    ppEdit.value  = false
-  } catch (e: any) {
-    ppError.value = e?.response?.data?.detail ?? 'Erreur lors de la sauvegarde.'
-  } finally {
-    ppSaving.value = false
-  }
-}
+// Route du formulaire KYC correspondant au type de client
+const kycFormRoute = computed(() => (dossier.value?.type_client === 'PP' ? 'kyc-pp' : 'kyc-pm'))
 
-// ── PM Company edit ───────────────────────────────────────────────────────────
-
-const pmEdit = ref(false)
-const pmForm = ref<Partial<KycPMData>>({})
-const pmSaving = ref(false)
-const pmError = ref('')
-
-function startPMEdit() {
-  pmForm.value = { ...dossier.value!.kyc_pm }
-  pmEdit.value = true
-  pmError.value = ''
-}
-
-async function savePMCompany() {
-  if (!dossier.value) return
-  pmSaving.value = true
-  pmError.value = ''
-  try {
-    const f = pmForm.value
-    await dossiersService.saveKycPM(dossier.value.id, 1, {
-      raison_sociale:       f.raison_sociale,
-      forme_juridique:      f.forme_juridique,
-      rccm:                 f.rccm,
-      nif:                  f.nif,
-      date_creation:        f.date_creation,
-      pays_enregistrement:  f.pays_enregistrement,
-      adresse_siege:        f.adresse_siege,
-      secteur_activite:     f.secteur_activite,
-      description_activite: f.description_activite,
-      capital_social:       f.capital_social,
-      objet_relation:       f.objet_relation,
-      origine_fonds:        f.origine_fonds,
-    })
-    dossier.value = await dossiersService.get(dossier.value.id)
-    pmEdit.value = false
-  } catch (e: any) {
-    pmError.value = e?.response?.data?.detail ?? 'Erreur lors de la sauvegarde.'
-  } finally {
-    pmSaving.value = false
-  }
-}
-
-// ── Représentant légal edit ───────────────────────────────────────────────────
-
-const repEdit = ref(false)
-const repForm = ref<Partial<KycPMData>>({})
-const repSaving = ref(false)
-const repError = ref('')
-
-function startRepEdit() {
-  repForm.value = { ...dossier.value!.kyc_pm }
-  repEdit.value = true
-  repError.value = ''
-}
-
-async function saveRep() {
-  if (!dossier.value) return
-  repSaving.value = true
-  repError.value = ''
-  try {
-    const f = repForm.value
-    await dossiersService.saveKycPM(dossier.value.id, 3, {
-      representant_nom:                    f.representant_nom,
-      representant_prenoms:                f.representant_prenoms,
-      representant_fonction:               f.representant_fonction,
-      representant_nationalite:            f.representant_nationalite,
-      representant_type_piece:             f.representant_type_piece,
-      representant_numero_piece:           f.representant_numero_piece,
-      representant_date_expiration_piece:  f.representant_date_expiration_piece,
-      representant_date_naissance:         f.representant_date_naissance,
-      representant_lieu_habitation:        f.representant_lieu_habitation,
-    })
-    dossier.value = await dossiersService.get(dossier.value.id)
-    repEdit.value = false
-  } catch (e: any) {
-    repError.value = e?.response?.data?.detail ?? 'Erreur lors de la sauvegarde.'
-  } finally {
-    repSaving.value = false
-  }
-}
-
-// ── Dirigeants edit ───────────────────────────────────────────────────────────
-
-type DirigeantRow = { nom: string; prenoms: string; fonction: string; nationalite: string; date_naissance: string; lieu_habitation: string }
-
-const dirigEdit  = ref(false)
-const dirigRows  = ref<DirigeantRow[]>([])
-const dirigSaving = ref(false)
-const dirigError  = ref('')
-
-function startDirigEdit() {
-  dirigRows.value = (dossier.value!.kyc_pm?.dirigeants ?? []).map((d: any) => ({
-    nom:             d.nom ?? '',
-    prenoms:         d.prenoms ?? '',
-    fonction:        d.fonction ?? '',
-    nationalite:     d.nationalite ?? '',
-    date_naissance:  d.date_naissance ?? '',
-    lieu_habitation: d.lieu_habitation ?? '',
-  }))
-  dirigEdit.value = true
-  dirigError.value = ''
-}
-
-function addDirigeant() {
-  dirigRows.value.push({ nom: '', prenoms: '', fonction: '', nationalite: '', date_naissance: '', lieu_habitation: '' })
-}
-
-function removeDirigeant(i: number) {
-  dirigRows.value.splice(i, 1)
-}
-
-async function saveDirig() {
-  if (!dossier.value) return
-  dirigSaving.value = true
-  dirigError.value = ''
-  try {
-    await dossiersService.saveKycPM(dossier.value.id, 3, {
-      dirigeants: dirigRows.value.filter(d => d.nom.trim() || d.prenoms.trim()),
-    })
-    dossier.value = await dossiersService.get(dossier.value.id)
-    dirigEdit.value = false
-  } catch (e: any) {
-    dirigError.value = e?.response?.data?.detail ?? 'Erreur lors de la sauvegarde.'
-  } finally {
-    dirigSaving.value = false
-  }
-}
-
-// ── Actionnaires edit ─────────────────────────────────────────────────────────
-
-type ActionnaireRow = { nom: string; prenoms: string; nationalite: string; pourcentage: number; statut_ppe: boolean }
-
-const actEdit  = ref(false)
-const actRows  = ref<ActionnaireRow[]>([])
-const actSaving = ref(false)
-const actError  = ref('')
-
-function startActEdit() {
-  actRows.value = (dossier.value!.kyc_pm?.beneficiaires_effectifs ?? []).map((a: any) => ({
-    nom:         a.nom ?? '',
-    prenoms:     a.prenoms ?? '',
-    nationalite: a.nationalite ?? '',
-    pourcentage: a.pourcentage ?? 0,
-    statut_ppe:  a.statut_ppe ?? false,
-  }))
-  actEdit.value = true
-  actError.value = ''
-}
-
-function addActionnaire() {
-  actRows.value.push({ nom: '', prenoms: '', nationalite: '', pourcentage: 0, statut_ppe: false })
-}
-
-function removeActionnaire(i: number) {
-  actRows.value.splice(i, 1)
-}
-
-async function saveAct() {
-  if (!dossier.value) return
-  actSaving.value = true
-  actError.value = ''
-  try {
-    await dossiersService.saveKycPM(dossier.value.id, 4, {
-      beneficiaires_effectifs: actRows.value.filter(a => a.nom.trim() || a.prenoms.trim()),
-    })
-    dossier.value = await dossiersService.get(dossier.value.id)
-    actEdit.value = false
-  } catch (e: any) {
-    actError.value = e?.response?.data?.detail ?? 'Erreur lors de la sauvegarde.'
-  } finally {
-    actSaving.value = false
-  }
-}
-
-// ── PPE ───────────────────────────────────────────────────────────────────────
-
-const VALIDATION_LABELS: Record<string, string> = {
-  en_attente: 'En attente RC', valide: 'Validé', rejete: 'Rejeté',
-}
-
-type PPESource = { source: 'PP' | 'BE'; sourceId: string; nom: string; prenoms: string }
-
-const ppeSources = computed((): PPESource[] => {
+// Déclarations PPE rattachées au KYC (PP ou PM)
+const ppeDeclarations = computed((): KycPPEData[] => {
   if (!dossier.value) return []
-  const sources: PPESource[] = []
-  if (dossier.value.kyc_pp?.statut_ppe && dossier.value.kyc_pp.id) {
-    sources.push({ source: 'PP', sourceId: dossier.value.kyc_pp.id, nom: dossier.value.kyc_pp.nom ?? '', prenoms: dossier.value.kyc_pp.prenoms ?? '' })
-  }
-  for (const be of dossier.value.kyc_be_list ?? []) {
-    if (be.statut_ppe && be.id) {
-      sources.push({ source: 'BE', sourceId: be.id, nom: be.nom ?? '', prenoms: be.prenoms ?? '' })
-    }
-  }
-  return sources
+  if (dossier.value.type_client === 'PP') return dossier.value.kyc_pp?.ppe_declarations ?? []
+  return dossier.value.kyc_pm?.ppe_declarations ?? []
 })
-
-const pendingPPESources = computed((): PPESource[] => {
-  if (!dossier.value) return []
-  const existingSourceIds = new Set((dossier.value.kyc_ppe_list ?? []).map(p => p.source_id))
-  return ppeSources.value.filter(s => !existingSourceIds.has(s.sourceId))
-})
-
-function openPPENew() {
-  if (pendingPPESources.value.length > 0) openPPEForSource(pendingPPESources.value[0])
-}
-
-function openPPEForSource(src: PPESource) {
-  router.push({
-    name: 'kyc-ppe-new',
-    params: { id: dossier.value!.id },
-    query: { source: src.source, sourceId: src.sourceId, nom: src.nom, prenoms: src.prenoms },
-  })
-}
 
 // ── Scoring ───────────────────────────────────────────────────────────────────
 
@@ -1378,7 +784,7 @@ const analyseError = ref('')
 async function submitForAnalyse() {
   if (!dossier.value) return
   const d = dossier.value
-  const hasKyc = d.type_client === 'PP' ? !!d.kyc_pp?.nom : !!d.kyc_pm?.raison_sociale
+  const hasKyc = d.type_client === 'PP' ? !!d.kyc_pp?.nom : !!d.kyc_pm?.denomination_sociale
   if (!hasKyc) {
     analyseError.value = 'Le formulaire KYC doit être complété avant de soumettre le dossier pour analyse.'
     return
@@ -1606,6 +1012,8 @@ function formatAmount(n: number | string): string {
 
 /* ── Meta strip ── */
 .meta-strip { padding: 0.875rem 1.25rem; display: flex; gap: 2rem; flex-wrap: wrap; margin-bottom: 0; }
+.surveillance-espece-banner { display: flex; align-items: center; gap: 0.5rem; background: #fef2f2; border: 1px solid #fca5a5; color: #b91c1c; border-radius: 8px; padding: 0.7rem 1rem; font-size: 0.8125rem; font-weight: 600; margin: 1rem 0; }
+.surveillance-espece-banner svg { width: 18px; height: 18px; flex-shrink: 0; }
 .meta-item  { display: flex; flex-direction: column; gap: 0.125rem; }
 .meta-label { font-size: 0.6875rem; font-weight: 600; color: var(--color-text-secondary); text-transform: uppercase; letter-spacing: 0.04em; }
 .meta-value { font-size: 0.8125rem; color: var(--color-text-primary); font-weight: 500; }

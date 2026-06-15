@@ -129,12 +129,14 @@ const filteredDossiers = computed(() => {
 
 function clientName(d: DossierOut): string {
   if (d.kyc_pp?.nom) return `${d.kyc_pp.nom} ${d.kyc_pp.prenoms ?? ''}`.trim()
-  if (d.kyc_pm?.raison_sociale) return d.kyc_pm.raison_sociale
+  if (d.kyc_pm?.denomination_sociale) return d.kyc_pm.denomination_sociale
   return '—'
 }
 
-function formatDate(iso: string): string {
-  return new Date(iso).toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric' })
+function formatDate(iso?: string | null): string {
+  if (!iso) return '—'
+  const d = new Date(iso)
+  return isNaN(d.getTime()) ? '—' : d.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric' })
 }
 
 async function loadPage(page: number) {

@@ -141,12 +141,6 @@ const router = createRouter({
           meta: { roles: ['admin', 'responsable_conformite'] },
         },
         {
-          path: 'gel-dossiers',
-          name: 'gel-dossiers',
-          component: () => import('@/views/kyc/DossiersGelsView.vue'),
-          meta: { roles: ['admin', 'notaire_principal', 'responsable_conformite'] },
-        },
-        {
           path: 'signalement-alerte',
           name: 'signalement-alerte',
           component: () => import('@/views/alertes/SignalementAlerteView.vue'),

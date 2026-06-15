@@ -145,6 +145,12 @@
               <option value="BCEAO">BCEAO</option>
               <option value="OFAC">OFAC</option>
               <option value="UE_CSDNU">UE / CSDNU</option>
+              <optgroup label="Financement de la prolifération">
+                <option value="ONU_PROLIFERATION">ONU — Prolifération</option>
+                <option value="OFAC_WMD">OFAC — WMD</option>
+                <option value="UE_PROLIFERATION">UE — Prolifération</option>
+                <option value="CENTIF_FP">CENTIF — FP</option>
+              </optgroup>
               <option value="AUTRE">Autre</option>
             </select>
           </div>
