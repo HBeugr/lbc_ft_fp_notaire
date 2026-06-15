@@ -389,6 +389,39 @@
         </div>
       </div>
 
+      <!-- S7 — Transaction -->
+      <div v-else-if="currentStep === 6" class="card section-card">
+        <h3 class="section-title">S7 — Transaction</h3>
+        <div class="form-grid">
+          <div class="form-group">
+            <label class="form-label">Montant de la transaction</label>
+            <select v-model="transaction.montant_tranche" class="form-input">
+              <option value="">— Choisir —</option>
+              <option value="moins_15m">Montant &lt; 15M FCFA</option>
+              <option value="plus_15m">Montant &gt; 15M FCFA</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Montant exact (FCFA)</label>
+            <input v-model.number="transaction.montant_transaction" type="number" min="0" class="form-input" placeholder="Ex : 25000000" />
+          </div>
+          <div class="form-group">
+            <label class="form-label">Mode de paiement</label>
+            <select v-model="transaction.mode_paiement" class="form-input">
+              <option value="">— Choisir —</option>
+              <option value="especes">Espèces</option>
+              <option value="cheque">Chèque</option>
+              <option value="virement">Virement</option>
+              <option value="autre">Autre</option>
+            </select>
+          </div>
+        </div>
+        <div v-if="surveillanceEspece" class="espece-banner">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+          <span>Déclaration systématique de transaction en espèce à faire. Opération à surveiller.</span>
+        </div>
+      </div>
+
       <!-- Navigation -->
       <div class="step-nav">
         <button v-if="currentStep > 0" class="btn-ghost" @click="prev">← Précédent</button>
@@ -489,8 +522,19 @@ const currentStep = ref(0)
 const kycId       = ref<string | undefined>(undefined)
 
 const SECTIONS = [
-  'Identité', 'Coordonnées', 'Activité', 'Mandataire', 'PPE & Opération', 'Origine fonds',
+  'Identité', 'Coordonnées', 'Activité', 'Mandataire', 'PPE & Opération', 'Origine fonds', 'Transaction',
 ]
+
+// Étape Transaction (montant + mode de paiement) — niveau dossier
+const transaction = reactive<{
+  montant_tranche: 'moins_15m' | 'plus_15m' | ''
+  montant_transaction: number | null
+  mode_paiement: 'especes' | 'cheque' | 'virement' | 'autre' | ''
+}>({ montant_tranche: '', montant_transaction: null, mode_paiement: '' })
+const surveillanceEspece = computed(() =>
+  transaction.mode_paiement === 'especes' &&
+  (transaction.montant_tranche === 'plus_15m' || Number(transaction.montant_transaction || 0) > 15_000_000),
+)
 
 const FONCTIONS_MANDATAIRE = ['PDG', 'DG', 'DGA', 'Administrateur Général', 'Président', 'Gérant', 'Mandataire', 'Autre']
 
@@ -557,6 +601,15 @@ onMounted(async () => {
   } catch {
     // 404 → form vierge
   }
+  // Pré-remplissage de l'étape Transaction depuis le dossier
+  try {
+    const d = await dossiersService.get(dossierId)
+    if (d.montant_tranche) transaction.montant_tranche = d.montant_tranche
+    if (d.montant_transaction != null) transaction.montant_transaction = d.montant_transaction
+    if (d.mode_paiement && ['especes','cheque','virement','autre'].includes(d.mode_paiement)) {
+      transaction.mode_paiement = d.mode_paiement as 'especes' | 'cheque' | 'virement' | 'autre'
+    }
+  } catch { /* ignore */ }
   loading.value = false
   // Criblage immédiat si le dossier chargé a déjà nom + prénoms (vérif avant Suivant)
   triggerSanctionsCheck()
@@ -595,6 +648,14 @@ function buildPayload(): Partial<KycPPData> {
 async function saveSection(): Promise<void> {
   const saved = await dossiersService.upsertKycPP(dossierId, buildPayload())
   if (saved.id) kycId.value = saved.id
+  // Étape Transaction → sauvegarde au niveau dossier
+  if (currentStep.value === 6) {
+    await dossiersService.saveTransaction(dossierId, {
+      montant_tranche: transaction.montant_tranche || undefined,
+      montant_transaction: transaction.montant_transaction ?? undefined,
+      mode_paiement: transaction.mode_paiement || undefined,
+    })
+  }
 }
 
 // ── Validation ────────────────────────────────────────────────────────────────
@@ -688,6 +749,8 @@ async function finish() {
 
 /* Form */
 .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.875rem 1.25rem; }
+.espece-banner { display: flex; align-items: center; gap: 0.5rem; background: #fef2f2; color: #b91c1c; border: 1px solid #fca5a5; border-radius: 8px; padding: 0.75rem 0.875rem; font-size: 0.8125rem; font-weight: 600; margin-top: 1rem; }
+.espece-banner svg { width: 18px; height: 18px; flex-shrink: 0; }
 .form-group { display: flex; flex-direction: column; gap: 0.25rem; }
 .form-group--full { grid-column: 1 / -1; }
 .form-label { font-size: 0.75rem; font-weight: 600; color: var(--color-text-secondary); }
