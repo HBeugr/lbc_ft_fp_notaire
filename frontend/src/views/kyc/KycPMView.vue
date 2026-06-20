@@ -562,7 +562,7 @@ function triggerSanctionsCheck(): void {
     sanctionsState.value = { status: 'checking', liste: null, reason: null }
     try {
       const r = await dossiersService.checkSanctionsPreScreen(
-        form.denomination_sociale, form.nom_representant_legal || '',
+        form.denomination_sociale || '', form.nom_representant_legal || '',
       )
       sanctionsState.value = { status: r.level, liste: r.liste, reason: r.reason }
     } catch {

@@ -154,6 +154,7 @@ export interface KycPPData {
   note?: string | null
   mandataire?: MandataireData | null
   est_ppe?: boolean
+  est_compte_tiers?: boolean
   ppe_detail?: string | null
   objet_relation?: string | null
   operations_cochees?: OperationsCochees | null
@@ -191,6 +192,7 @@ export interface KycPMData {
   whatsapp?: string | null
   email?: string | null
   mandataire?: MandataireData | null
+  est_compte_tiers?: boolean
   ppe_detectee?: boolean
   ppe_detail?: string | null
   operations_cochees?: OperationsCochees | null
@@ -312,7 +314,7 @@ export interface HistoriqueOut {
 
 export const dossiersService = {
   // Dossiers CRUD
-  async list(params: { statut?: string; classification?: string; reference?: string; page?: number; page_size?: number } = {}): Promise<DossierListResponse> {
+  async list(params: { statut?: string; classification?: string; reference?: string; search?: string; page?: number; page_size?: number } = {}): Promise<DossierListResponse> {
     const { data } = await api.get<DossierOut[]>('/dossiers', { params })
     if (Array.isArray(data)) return { items: data, total: data.length }
     return data as unknown as DossierListResponse
@@ -413,6 +415,16 @@ export const dossiersService = {
     return data
   },
 
+  async uploadDocument(dossierId: string, file: File, typeDocument: string): Promise<DocumentOut> {
+    const form = new FormData()
+    form.append('file', file)
+    form.append('type_document', typeDocument)
+    const { data } = await api.post<DocumentOut>(`/dossiers/${dossierId}/documents`, form, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    })
+    return data
+  },
+
   async downloadDocument(docId: string): Promise<Blob> {
     const { data } = await api.get(`/documents/${docId}/download`, { responseType: 'blob' })
     return data as Blob
@@ -469,7 +481,7 @@ export const dossiersService = {
     prenoms: string,
     dateNaissance?: string,
     nationalite?: string,
-  ): Promise<{ level: string; score: number; liste: string | null; reason: string | null }> {
+  ): Promise<{ level: 'blocked' | 'warning' | 'clear' | 'no_lists'; score: number; liste: string | null; reason: string | null }> {
     const { data } = await api.post('/kyc/screening/pre-check', {
       nom,
       prenoms,

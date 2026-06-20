@@ -27,6 +27,7 @@ export const useAuthStore = defineStore('auth', () => {
 
   const isAuthenticated = computed(() => !!accessToken.value && !!user.value)
   const role = computed(() => user.value?.role ?? null)
+  const mustChangePassword = computed(() => !!user.value?.must_change_password)
 
   function setToken(token: string) {
     accessToken.value = token
@@ -52,6 +53,7 @@ export const useAuthStore = defineStore('auth', () => {
     accessToken,
     user,
     isAuthenticated,
+    mustChangePassword,
     role,
     bootstrapReady,
     resolveBootstrap,
@@ -60,4 +62,4 @@ export const useAuthStore = defineStore('auth', () => {
     clearAuth,
     fetchMe,
   }
-}, { persist: { pick: ['user'] } })
+}, { persist: { paths: ['user'] } })

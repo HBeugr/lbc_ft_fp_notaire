@@ -27,7 +27,7 @@ import { computed } from 'vue'
 import { getStatutGafi } from '@/data/gafi'
 
 const props = defineProps<{
-  modelValue: string | null
+  modelValue: string | null | undefined
   label?: string
   required?: boolean
   error?: string

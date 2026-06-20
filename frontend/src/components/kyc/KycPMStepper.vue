@@ -440,7 +440,6 @@ function triggerDirigeantCheck(i: number) {
         d.nom, d.prenoms,
         d.date_naissance || undefined,
         undefined,
-        d.lieu_habitation || undefined,
       )
       dirigeantScreenings.value[i].status = result.level
       dirigeantScreenings.value[i].liste  = result.liste
@@ -466,7 +465,6 @@ function triggerBECheck(i: number) {
         be.nom, be.prenoms,
         be.date_naissance || undefined,
         undefined,
-        be.lieu_habitation || undefined,
       )
       beScreenings.value[i].status = result.level
       beScreenings.value[i].liste  = result.liste

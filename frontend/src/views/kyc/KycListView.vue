@@ -87,7 +87,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { dossiersService, type DossierOut, TYPE_OPERATION_LABELS } from '@/services/dossiers'
 
@@ -100,7 +100,7 @@ const currentPage = ref(1)
 const filterStatut = ref('')
 const search = ref('')
 
-const OPERATION_LABELS = TYPE_OPERATION_LABELS
+const OPERATION_LABELS: Record<string, string> = TYPE_OPERATION_LABELS
 
 const STATUT_LABELS: Record<string, string> = {
   brouillon:               'Brouillon',
@@ -147,6 +147,7 @@ async function loadPage(page: number) {
       page,
       page_size: PAGE_SIZE,
       statut: filterStatut.value || undefined,
+      search: search.value.trim() || undefined,
     })
     dossiers.value = res.items
     total.value = res.total
@@ -154,6 +155,14 @@ async function loadPage(page: number) {
     loading.value = false
   }
 }
+
+// Recherche serveur (référence + nom client) avec debounce — couvre tous les
+// dossiers, pas seulement la page courante.
+let searchTimer: ReturnType<typeof setTimeout> | undefined
+watch(search, () => {
+  clearTimeout(searchTimer)
+  searchTimer = setTimeout(() => loadPage(1), 300)
+})
 
 onMounted(() => loadPage(1))
 </script>

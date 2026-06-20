@@ -1,5 +1,5 @@
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func
+from sqlalchemy import select, func, or_
 from sqlalchemy.orm import selectinload
 from app.models.dossier import Dossier, KycPP, KycPM, DossierHistorique, CommentaireInterne
 
@@ -16,7 +16,7 @@ def _with_kyc(q):
     )
 
 
-def _apply_dossier_filters(q, *, assigned_to=None, statut=None, classification=None, reference=None):
+def _apply_dossier_filters(q, *, assigned_to=None, statut=None, classification=None, reference=None, search=None):
     if assigned_to:
         q = q.where(Dossier.assigned_to == assigned_to)
     if statut:
@@ -25,6 +25,21 @@ def _apply_dossier_filters(q, *, assigned_to=None, statut=None, classification=N
         q = q.where(Dossier.classification == classification)
     if reference:
         q = q.where(Dossier.reference.ilike(f"%{reference}%"))
+    # Recherche libre : référence (KYC-…) OU nom du client
+    # (PP : nom/prénoms, PM : dénomination sociale). KycPP/KycPM sont en 1-à-1
+    # avec Dossier, donc l'outerjoin n'introduit pas de doublons.
+    if search:
+        like = f"%{search.strip()}%"
+        q = (
+            q.outerjoin(KycPP, KycPP.dossier_id == Dossier.id)
+            .outerjoin(KycPM, KycPM.dossier_id == Dossier.id)
+            .where(or_(
+                Dossier.reference.ilike(like),
+                KycPP.nom.ilike(like),
+                KycPP.prenoms.ilike(like),
+                KycPM.denomination_sociale.ilike(like),
+            ))
+        )
     return q
 
 
@@ -46,13 +61,14 @@ async def list_dossiers(
     statut: str | None = None,
     classification: str | None = None,
     reference: str | None = None,
+    search: str | None = None,
     limit: int = 50,
     offset: int = 0,
 ) -> list[Dossier]:
     q = _apply_dossier_filters(
         _with_kyc(select(Dossier)),
         assigned_to=assigned_to, statut=statut,
-        classification=classification, reference=reference,
+        classification=classification, reference=reference, search=search,
     )
     q = q.order_by(Dossier.created_at.desc()).limit(limit).offset(offset)
     result = await db.execute(q)
@@ -65,11 +81,12 @@ async def count_dossiers(
     statut: str | None = None,
     classification: str | None = None,
     reference: str | None = None,
+    search: str | None = None,
 ) -> int:
     q = _apply_dossier_filters(
         select(func.count(Dossier.id)),
         assigned_to=assigned_to, statut=statut,
-        classification=classification, reference=reference,
+        classification=classification, reference=reference, search=search,
     )
     result = await db.execute(q)
     return result.scalar_one()

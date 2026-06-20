@@ -251,6 +251,12 @@
         </div>
       </div>
 
+      <!-- Verrou édition : dossier assigné à un autre utilisateur → lecture seule -->
+      <div v-if="dossier && !canModify" class="readonly-banner">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="readonly-icon"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+        <span>Lecture seule — ce dossier est assigné à un autre utilisateur. Vous pouvez le consulter mais pas le modifier.</span>
+      </div>
+
       <!-- Déclaration systématique espèces (> 15M réglé en espèces) -->
       <div v-if="dossier.surveillance_espece" class="surveillance-espece-banner">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
@@ -1141,6 +1147,8 @@ function formatAmount(n: number | string): string {
 .meta-strip { padding: 0.875rem 1.25rem; display: flex; gap: 2rem; flex-wrap: wrap; margin-bottom: 0; }
 .surveillance-espece-banner { display: flex; align-items: center; gap: 0.5rem; background: #fef2f2; border: 1px solid #fca5a5; color: #b91c1c; border-radius: 8px; padding: 0.7rem 1rem; font-size: 0.8125rem; font-weight: 600; margin: 1rem 0; }
 .surveillance-espece-banner svg { width: 18px; height: 18px; flex-shrink: 0; }
+.readonly-banner { display: flex; align-items: center; gap: 0.5rem; background: #f8fafc; border: 1px solid #cbd5e1; color: #475569; border-radius: 8px; padding: 0.7rem 1rem; font-size: 0.8125rem; font-weight: 600; margin: 1rem 0; }
+.readonly-icon { width: 18px; height: 18px; flex-shrink: 0; }
 .meta-item  { display: flex; flex-direction: column; gap: 0.125rem; }
 .meta-label { font-size: 0.6875rem; font-weight: 600; color: var(--color-text-secondary); text-transform: uppercase; letter-spacing: 0.04em; }
 .meta-value { font-size: 0.8125rem; color: var(--color-text-primary); font-weight: 500; }

@@ -15,7 +15,7 @@ T2 espèces : 15 000 000 FCFA (Art. 72, Ordonnance 2023-875).
 from __future__ import annotations
 from dataclasses import dataclass, field
 
-from app.core.config import settings
+from app.core import runtime_config
 
 
 # Seuils verrouillés — NE PAS RENDRE PARAMÉTRABLES
@@ -81,7 +81,7 @@ def calculate(
 
     triggers = {
         "T1": bool(est_ppe),
-        "T2": (mode_paiement == "especes" and float(montant_transaction or 0) > settings.ESPECES_THRESHOLD_FCFA),
+        "T2": (mode_paiement == "especes" and float(montant_transaction or 0) > runtime_config.get_seuil_especes_t2()),
         "T3": bool(sur_liste_sanctions),
         "T4": bool(pays_liste_noire_gafi or pays_liste_grise_gafi),
         "T5": bool(refus_documents),
@@ -380,7 +380,7 @@ def simulate(
     especes_t2 = (mode_paiement_code == "especes" and s_mont >= 2)
     result = calculate(
         axes,
-        montant_transaction=(settings.ESPECES_THRESHOLD_FCFA + 1) if especes_t2 else 0,
+        montant_transaction=(runtime_config.get_seuil_especes_t2() + 1) if especes_t2 else 0,
         mode_paiement="especes" if especes_t2 else "",
         est_ppe=bool(is_ppe),
         pays_liste_grise_gafi=(zone_geo == "gafi"),

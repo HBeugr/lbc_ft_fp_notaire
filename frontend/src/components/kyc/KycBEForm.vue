@@ -203,7 +203,7 @@ const errors     = ref<Record<string, string>>({})
 
 // ── Sanctions screening ───────────────────────────────────────────────────────
 const sanctionsState = ref<{
-  status: 'idle' | 'checking' | 'blocked' | 'warning' | 'clear'
+  status: 'idle' | 'checking' | 'blocked' | 'warning' | 'clear' | 'no_lists'
   liste: string | null
   reason: string | null
 }>({ status: 'idle', liste: null, reason: null })

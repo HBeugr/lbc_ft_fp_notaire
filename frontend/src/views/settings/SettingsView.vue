@@ -48,14 +48,14 @@
           </div>
         </div>
 
-        <!-- Seuil Art. 74 -->
+        <!-- Seuil espèces Art. 72 (Trigger T2) -->
         <div class="threshold-row">
           <label class="field-label">
-            Seuil espèces Art. 74 (FCFA)
+            Seuil espèces Art. 72 (FCFA)
             <span class="field-hint">Trigger T2 automatique (espèces) au-dessus de ce montant</span>
           </label>
           <input
-            v-model.number="seuilArt74"
+            v-model.number="seuilEspeces"
             type="number"
             step="500000"
             min="1000000"
@@ -130,20 +130,21 @@ const saving  = ref(false)
 const saveMsg = ref('')
 const saveMsgClass = ref('')
 
-const seuilArt74 = ref(20_000_000)
+const seuilEspeces = ref(15_000_000)
 const weights = ref<Record<string, number>>({})
 
+// Axes alignés sur scoring_service.AXIS_CODES (CDC v4, Module 2 — notaire)
 const axes = [
-  { code: 'profil_client',        label: 'Profil client' },
-  { code: 'origine_geographique', label: 'Origine géographique' },
-  { code: 'type_operation',       label: "Type d'opération" },
-  { code: 'montant',              label: 'Montant' },
-  { code: 'mode_paiement',        label: 'Mode de paiement' },
-  { code: 'montage_juridique',    label: 'Montage juridique' },
-  { code: 'statut_ppe',           label: 'Statut PPE' },
-  { code: 'qualite_documentaire', label: 'Qualité documentaire' },
-  { code: 'presse_negative',      label: 'Presse négative' },
-  { code: 'secteur_activite',     label: "Secteur d'activité" },
+  { code: 'type_client',     label: 'Type de client' },
+  { code: 'pays_geographie', label: 'Pays / Géographie' },
+  { code: 'type_operation',  label: "Nature de l'opération" },
+  { code: 'montant',         label: 'Montant de la transaction' },
+  { code: 'mode_paiement',   label: 'Mode de paiement' },
+  { code: 'complexite',      label: 'Complexité juridique' },
+  { code: 'ppe',             label: 'Personne Politiquement Exposée' },
+  { code: 'coherence_doc',   label: 'Cohérence documentaire' },
+  { code: 'secteur',         label: "Secteur d'activité" },
+  { code: 'intermediaires',  label: 'Intermédiaires' },
 ]
 
 function weightClass(v: number) {
@@ -159,7 +160,7 @@ async function loadWeights() {
     axes.forEach(a => {
       weights.value[a.code] = data[a.code] ?? 1.0
     })
-    seuilArt74.value = data.seuil_art74_fcfa ?? 20_000_000
+    seuilEspeces.value = data.seuil_especes_t2_fcfa ?? 15_000_000
   } catch {
     // Defaults if endpoint unavailable
     axes.forEach(a => { weights.value[a.code] = 1.0 })
@@ -175,6 +176,7 @@ async function saveWeights() {
   try {
     await api.put('/scoring/weights', {
       weights: { ...weights.value },
+      seuil_especes_t2_fcfa: seuilEspeces.value,
     })
     saveMsg.value = 'Pondérations enregistrées avec succès.'
     saveMsgClass.value = 'msg--ok'

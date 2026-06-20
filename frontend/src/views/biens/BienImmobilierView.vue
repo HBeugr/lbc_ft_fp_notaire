@@ -156,8 +156,8 @@
               <option value="">— Choisir —</option>
               <option value="Virement">Virement</option>
               <option value="Chèque">Chèque</option>
-              <option :value="'Espèces'" :disabled="form.valeur_estimee_fcfa >= 20000000">
-                Espèces{{ form.valeur_estimee_fcfa >= 20000000 ? ' (interdit ≥ 20M)' : '' }}
+              <option :value="'Espèces'" :disabled="(form.valeur_estimee_fcfa ?? 0) >= 20000000">
+                Espèces{{ (form.valeur_estimee_fcfa ?? 0) >= 20000000 ? ' (interdit ≥ 20M)' : '' }}
               </option>
               <option value="Mixte">Mixte</option>
             </select>

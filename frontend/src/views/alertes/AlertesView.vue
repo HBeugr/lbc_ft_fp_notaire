@@ -7,23 +7,23 @@
         <p class="page-subtitle">{{ stats.ouvertes }} alerte(s) ouverte(s) · mise à jour toutes les 10s</p>
       </div>
       <div class="header-actions">
-        <select v-model="filters.niveau" class="filter-select" @change="loadAlertes">
+        <select v-model="filters.niveau" class="filter-select" @change="() => loadAlertes()">
           <option value="">Tous les niveaux</option>
           <option value="CRITIQUE">Critique</option>
           <option value="ELEVE">Élevé</option>
           <option value="MOYEN">Moyen</option>
           <option value="INFO">Info</option>
         </select>
-        <select v-model="filters.statut" class="filter-select" @change="loadAlertes">
+        <select v-model="filters.statut" class="filter-select" @change="() => loadAlertes()">
           <option value="">Tous les statuts</option>
           <option value="OUVERTE">Ouvertes</option>
           <option value="TRAITEE">Traitées</option>
         </select>
-        <select v-model="filters.type_alerte" class="filter-select" @change="loadAlertes">
+        <select v-model="filters.type_alerte" class="filter-select" @change="() => loadAlertes()">
           <option value="">Tous les types</option>
           <option v-for="t in ALERT_TYPES" :key="t.value" :value="t.value">{{ t.label }}</option>
         </select>
-        <select v-model="filters.dossier_statut" class="filter-select" @change="loadAlertes">
+        <select v-model="filters.dossier_statut" class="filter-select" @change="() => loadAlertes()">
           <option value="">Tous les dossiers</option>
           <option value="bloque">Dossiers bloqués</option>
           <option value="en_analyse">Dossiers en analyse</option>

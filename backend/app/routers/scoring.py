@@ -3,12 +3,15 @@
   GET  /api/dossiers/{id}/scoring/prefill   → valeurs d'axes pré-dérivées (auto)
   POST /api/dossiers/{id}/scoring/calculate → calcule, persiste l'évaluation + cache + audit
 """
+from datetime import datetime, timezone
+
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import select, func, update as sa_update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
-from app.core.deps import get_current_user
+from app.core.deps import get_current_user, require_admin
+from app.core import runtime_config
 from app.models.dossier import Dossier, KycActionnaire, EvaluationRisque
 from app.models.user import User
 from app.repositories import dossier_repo, audit_repo
@@ -37,6 +40,79 @@ async def simuler_scoring(
     """
     res = scoring_service.simulate(**body.model_dump())
     return SimResultOut(**res)
+
+
+# ── Pondérations & seuils configurables (Admin, FR-26) ────────────────────────
+
+from pydantic import BaseModel  # noqa: E402
+
+
+class WeightsUpdate(BaseModel):
+    weights: dict[str, float] = {}
+    seuil_especes_t2_fcfa: float | None = None
+
+
+# Version des pondérations — incrémentée à chaque PUT pour notifier les superviseurs
+# (toast frontend via GET /scoring/weights/version, store notifications).
+_weights_version: int = 0
+_weights_updated_at: str | None = None
+
+
+@sim_router.get("/weights/version")
+async def get_weights_version(
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    return {"version": _weights_version, "updated_at": _weights_updated_at}
+
+
+@sim_router.get("/weights")
+async def get_weights(
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    """Pondérations des 10 axes + seuil espèces (T2) en vigueur.
+
+    Objet plat : {<code_axe>: poids, …, seuil_especes_t2_fcfa: montant}.
+    """
+    data: dict[str, float] = dict(runtime_config.get_ponderations())
+    data["seuil_especes_t2_fcfa"] = runtime_config.get_seuil_especes_t2()
+    return data
+
+
+@sim_router.put("/weights")
+async def update_weights(
+    body: WeightsUpdate,
+    request: Request,
+    current_user: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Met à jour pondérations et/ou seuil espèces — réservé à l'Administrateur (FR-26)."""
+    if body.weights:
+        await runtime_config.set_ponderations(db, body.weights, updated_by=current_user.id)
+    if body.seuil_especes_t2_fcfa is not None:
+        if body.seuil_especes_t2_fcfa < 1_000_000:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Le seuil espèces doit être supérieur à 1 000 000 FCFA.",
+            )
+        await runtime_config.set_seuil_especes_t2(db, body.seuil_especes_t2_fcfa, updated_by=current_user.id)
+    await db.commit()
+    global _weights_version, _weights_updated_at
+    _weights_version += 1
+    _weights_updated_at = datetime.now(timezone.utc).isoformat()
+    ip = request.client.host if request.client else "unknown"
+    await audit_repo.log(
+        db,
+        action="scoring.weights_updated",
+        user_id=current_user.id,
+        user_role=current_user.role,
+        entity_type="parametres_config",
+        entity_id="scoring",
+        ip=ip,
+        detail={"weights": body.weights, "seuil_especes_t2_fcfa": body.seuil_especes_t2_fcfa},
+    )
+    data: dict[str, float] = dict(runtime_config.get_ponderations())
+    data["seuil_especes_t2_fcfa"] = runtime_config.get_seuil_especes_t2()
+    return data
 
 
 def _can_access(user: User, dossier: Dossier) -> bool:
@@ -116,6 +192,7 @@ async def calculate_scoring(
         pays_liste_grise_gafi=body.pays_liste_grise_gafi,
         refus_documents=body.refus_documents,
         be_non_identifiable=body.be_non_identifiable,
+        ponderations=runtime_config.get_ponderations(),
     )
 
     overrides_payload = [
@@ -245,6 +322,7 @@ async def recompute_cache(db: AsyncSession, dossier: Dossier, user_id: str):
         montant_transaction=float(dossier.montant_transaction or 0),
         mode_paiement=dossier.mode_paiement or "",
         est_ppe=est_ppe,
+        ponderations=runtime_config.get_ponderations(),
         **flags,
     )
     await _persist_evaluation(db, dossier, result, flags, overrides_payload, user_id)

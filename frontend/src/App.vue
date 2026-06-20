@@ -66,8 +66,13 @@ function stopProactiveRefresh() {
 watch(
   () => auth.isAuthenticated,
   (isAuth) => {
-    if (isAuth) startProactiveRefresh()
-    else stopProactiveRefresh()
+    if (isAuth) {
+      startProactiveRefresh()
+      notifications.startAlertsStream(auth.accessToken)
+    } else {
+      stopProactiveRefresh()
+      notifications.stopAlertsStream()
+    }
   },
   { immediate: true },
 )

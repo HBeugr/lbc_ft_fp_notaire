@@ -532,7 +532,7 @@ async function loadStats() {
       const resp = await dossiersService.list({ page, page_size: PAGE_SIZE })
       total = resp.total
       for (const d of resp.items) {
-        const n = (d.niveau_risque ?? '').toUpperCase()
+        const n = (d.classification ?? '').toUpperCase()
         if (n === 'FAIBLE') faible++
         else if (n === 'MOYEN') moyen++
         else if (n === 'ELEVE') eleve++

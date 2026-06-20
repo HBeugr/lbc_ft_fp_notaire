@@ -93,7 +93,7 @@ export const revisionsService = {
     return data
   },
 
-  async uploadSanctions(nom: string, typeListe: string, file: File): Promise<ListeSanctions> {
+  async uploadSanctions(nom: string, typeListe: string, file: File): Promise<ListeSanctions & { warning?: string }> {
     const form = new FormData()
     form.append('nom', nom)
     form.append('type_liste', typeListe)

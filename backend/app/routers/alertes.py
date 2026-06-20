@@ -1,12 +1,15 @@
+import asyncio
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
-from app.core.database import get_db
+from app.core.database import get_db, _get_session_factory
 from app.core.deps import get_current_user, require_rc
+from app.core import security
 from app.models.alerte import Alerte
 from app.models.user import User
-from app.repositories import alertes_repo, audit_repo, dossier_repo
+from app.repositories import alertes_repo, audit_repo, dossier_repo, user_repo
 from app.schemas.alertes import AlerteCreate, AlerteOut, AlerteTraiter, AlerteListResponse, SignalementInterneRequest
 
 router = APIRouter(prefix="/alertes", tags=["alertes"])
@@ -126,6 +129,82 @@ async def mes_signalements(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Accès réservé aux clercs.")
     items = await alertes_repo.list_by_signaleur(db, signaleur_id=current_user.id)
     return [AlerteOut.from_orm_safe(a) for a in items]
+
+
+# ── Temps réel : compteur d'alertes (badge SSE) — doit précéder /{alerte_id} ──
+
+@router.get("/mon-compteur")
+async def mon_compteur(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Compteur d'alertes non traitées pour l'utilisateur (badge — fallback du SSE)."""
+    count = await alertes_repo.count_open_for_user(db, current_user.id, current_user.is_supervisor)
+    return {"count": count}
+
+
+@router.get("/stream")
+async def alertes_stream(token: str = Query(...)):
+    """Flux SSE temps réel du compteur d'alertes (badge).
+    Auth par query param car EventSource ne supporte pas l'en-tête Authorization."""
+    try:
+        payload = security.decode_token(token)
+        user_id = payload.get("sub")
+    except Exception:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token invalide.")
+    if not user_id:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token invalide.")
+
+    async def event_gen():
+        factory = _get_session_factory()
+        # Charge le rôle une fois (is_supervisor) pour le périmètre du compteur
+        async with factory() as s:
+            user = await user_repo.get_by_id(s, user_id)
+        if user is None:
+            yield ": error\n\n"
+            return
+        is_sup = user.is_supervisor
+        last = None
+        while True:
+            try:
+                async with factory() as s:
+                    count = await alertes_repo.count_open_for_user(s, user_id, is_sup)
+                if count != last:
+                    last = count
+                    yield f"event: count\ndata: {count}\n\n"
+                else:
+                    yield ": keepalive\n\n"
+            except Exception:
+                yield ": error\n\n"
+            await asyncio.sleep(3)
+
+    return StreamingResponse(
+        event_gen(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+@router.get("/{alerte_id}/timeline")
+async def alerte_timeline(
+    alerte_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Parcours chronologique d'une alerte (créée → traitée + note)."""
+    result = await db.execute(select(Alerte).where(Alerte.id == alerte_id))
+    a = result.scalar_one_or_none()
+    if not a:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Alerte introuvable.")
+    events = [{"label": "Alerte créée", "at": a.created_at.isoformat() if a.created_at else None, "par": None}]
+    if a.traite_at:
+        events.append({
+            "label": "Traitée",
+            "at": a.traite_at.isoformat(),
+            "par": a.traite_par,
+            "note": a.resolution_note,
+        })
+    return {"alerte_id": alerte_id, "statut": a.statut, "type_alerte": a.type_alerte, "events": events}
 
 
 @router.get("/{alerte_id}", response_model=AlerteOut)

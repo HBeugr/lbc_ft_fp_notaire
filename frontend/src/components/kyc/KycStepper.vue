@@ -445,7 +445,7 @@
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { dossiersService, type KycPPData } from '@/services/dossiers'
+import { dossiersService, type KycPPData, type MandataireData } from '@/services/dossiers'
 import CountrySelect from '@/components/common/CountrySelect.vue'
 
 const props = defineProps<{
@@ -612,7 +612,6 @@ function triggerMandantCheck() {
       mandant.prenoms,
       mandant.date_naissance || undefined,
       undefined,
-      mandant.lieu_naissance || undefined,
     )
     mandantScreening.value.status = result.level
     mandantScreening.value.liste  = result.liste
@@ -688,7 +687,9 @@ function validateSection(step: number): boolean {
 function buildPayload(): KycPPData {
   const payload = { ...local }
   if (estMandataire.value && (mandant.nom || mandant.prenoms)) {
-    payload.mandataire = { ...mandant }
+    // mandataire est stocké en JSON libre côté backend ; la forme collectée ici
+    // (nom/prénoms/lien/contact…) diffère volontairement de MandataireData.
+    payload.mandataire = { ...mandant } as unknown as MandataireData
   }
   return payload
 }

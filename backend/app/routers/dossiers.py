@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.core.deps import get_current_user, require_rc, require_supervisor
 from app.core.rbac import AssignedFilter
+from app.core import runtime_config
 from app.models.user import User
 from app.repositories import dossier_repo, audit_repo, user_repo, alertes_repo
 from pydantic import BaseModel
@@ -70,6 +71,7 @@ async def list_dossiers(
     statut: str | None = Query(None),
     classification: str | None = Query(None),
     reference: str | None = Query(None),
+    search: str | None = Query(None, description="Recherche libre : référence ou nom du client"),
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200),
 ) -> DossierListOut:
@@ -77,7 +79,7 @@ async def list_dossiers(
     assigned_to = af.apply({}).get("assigned_to")
     common = dict(
         assigned_to=assigned_to, statut=statut,
-        classification=classification, reference=reference,
+        classification=classification, reference=reference, search=search,
     )
     total = await dossier_repo.count_dossiers(db, **common)
     dossiers = await dossier_repo.list_dossiers(
@@ -163,7 +165,7 @@ async def get_dossier(
     return await _serialize_dossier(db, dossier)
 
 
-_SEUIL_ESPECE = 15_000_000
+# Seuil espèces (Art. 72, T2) — désormais configurable par l'Admin (cf. runtime_config).
 
 
 @router.patch("/{dossier_id}/transaction", response_model=DossierOut)
@@ -188,7 +190,7 @@ async def update_transaction(
     if body.mode_paiement is not None:
         dossier.mode_paiement = body.mode_paiement
     montant = float(body.montant_transaction or dossier.montant_transaction or 0)
-    depasse_seuil = dossier.montant_tranche == "plus_15m" or montant > _SEUIL_ESPECE
+    depasse_seuil = dossier.montant_tranche == "plus_15m" or montant > runtime_config.get_seuil_especes_t2()
     dossier.surveillance_espece = bool(dossier.mode_paiement == "especes" and depasse_seuil)
 
     # ── Auto-trigger espèces T2 (Art. 72) — sans attendre le scoring ─────────────

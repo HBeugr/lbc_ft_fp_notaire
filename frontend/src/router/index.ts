@@ -147,6 +147,11 @@ const router = createRouter({
           meta: { roles: ['admin', 'clercs'] },
         },
         {
+          path: 'procedures',
+          name: 'procedures',
+          component: () => import('@/views/procedures/ProceduresView.vue'),
+        },
+        {
           path: 'mon-compte',
           name: 'mon-compte',
           component: () => import('@/views/account/MonCompteView.vue'),

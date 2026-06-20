@@ -25,7 +25,7 @@ class SignalementInterneRequest(BaseModel):
 
 class AlerteOut(BaseModel):
     id: str
-    dossier_id: str
+    dossier_id: str | None
     type_alerte: str
     niveau: str
     statut: str

@@ -62,6 +62,19 @@ async def list_ouvertes(db: AsyncSession, limit: int = 100) -> list[Alerte]:
     return list(result.scalars().all())
 
 
+async def count_open_for_user(db: AsyncSession, user_id: str, is_supervisor: bool) -> int:
+    """Compteur d'alertes non traitées pour le badge temps réel.
+
+    - Superviseur (admin/notaire principal/RC) : toutes les alertes ouvertes/en cours.
+    - Autres (clercs…) : alertes sur les dossiers qui leur sont assignés.
+    """
+    from app.models.dossier import Dossier
+    q = select(func.count(Alerte.id)).where(Alerte.statut.in_(("ouverte", "en_cours")))
+    if not is_supervisor:
+        q = q.join(Dossier, Dossier.id == Alerte.dossier_id).where(Dossier.assigned_to == user_id)
+    return (await db.execute(q)).scalar_one()
+
+
 async def update_statut(db: AsyncSession, alerte: Alerte, statut: str, traite_par: str, note: str | None = None) -> Alerte:
     from datetime import datetime, timezone
     alerte.statut = statut

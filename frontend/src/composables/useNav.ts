@@ -22,6 +22,7 @@ const ICONS = {
   registres: 'M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10',
   users: 'M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z',
   settings: 'M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z M15 12a3 3 0 11-6 0 3 3 0 016 0z',
+  procedures: 'M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z',
 }
 
 // Notaire roles: notaire_principal, responsable_conformite (RC), clercs (Clerc Principal),
@@ -46,6 +47,7 @@ const ROLE_ACCESS: Record<string, NotaireRole[]> = {
   audit:              ['admin', 'notaire_principal', 'responsable_conformite'],
   users:              ['admin', 'responsable_conformite'],
   settings:           ['admin', 'notaire_principal'],
+  procedures:         ['admin', 'notaire_principal', 'responsable_conformite', 'clercs', 'declarant_centif', 'autre_utilisateur'],
 }
 
 const ALL_NAV: NavItem[] = [
@@ -57,6 +59,7 @@ const ALL_NAV: NavItem[] = [
   { label: 'Opérations Suspectes', icon: ICONS.dos,        to: 'dos' },
   { label: 'Screening sanctions',  icon: ICONS.sanctions,  to: 'sanctions' },
   { label: 'Registres légaux',     icon: ICONS.registres,  to: 'registres' },
+  { label: 'Mes procédures',       icon: ICONS.procedures, to: 'procedures' },
   { label: 'Journal d\'audit',     icon: ICONS.audit,      to: 'audit-log' },
   { label: 'Utilisateurs',         icon: ICONS.users,      to: 'users' },
   { label: 'Paramètres',           icon: ICONS.settings,   to: 'settings' },
@@ -70,6 +73,7 @@ const KEY_MAP: Record<string, string> = {
   'dos':                'dos',
   'sanctions':          'sanctions',
   'registres':          'registres',
+  'procedures':         'procedures',
   'audit-log':          'audit',
   'signalement-alerte': 'signalement_alerte',
   'users':              'users',
@@ -86,11 +90,18 @@ export function useNav() {
       const allowed = ROLE_ACCESS[key]
       return allowed && auth.user && (allowed as string[]).includes(auth.user.role)
     }).map(item => {
-      if (!notif.hasPendingWeightsUpdate) return item
-      const role = auth.user?.role
-      if (item.to === 'settings' && role === 'notaire_principal') return { ...item, badge: '!' }
-      if (item.to === 'risk-matrix' && role === 'responsable_conformite') return { ...item, badge: '!' }
-      return item
+      let out = item
+      // Badge compteur d'alertes (temps réel via SSE)
+      if (item.to === 'alertes' && notif.alertCount > 0) {
+        out = { ...out, badge: String(notif.alertCount) }
+      }
+      // Badge « ! » — pondérations de scoring modifiées
+      if (notif.hasPendingWeightsUpdate) {
+        const role = auth.user?.role
+        if (item.to === 'settings' && role === 'notaire_principal') out = { ...out, badge: '!' }
+        if (item.to === 'risk-matrix' && role === 'responsable_conformite') out = { ...out, badge: '!' }
+      }
+      return out
     })
   )
 
