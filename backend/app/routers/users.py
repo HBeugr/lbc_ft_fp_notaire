@@ -38,6 +38,9 @@ async def create_user(
     existing = await user_repo.get_by_email(db, body.email)
     if existing:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email déjà utilisé.")
+    # Anti-escalade : seul un admin peut créer un compte admin.
+    if body.role == "admin" and admin.role != "admin":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Seul un administrateur peut créer un compte administrateur.")
     hashed = security.hash_password(body.password)
     new_user = await user_repo.create(
         db,
@@ -87,6 +90,9 @@ async def update_user(
     target = await user_repo.get_by_id(db, user_id)
     if not target:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Utilisateur introuvable.")
+    # Anti-escalade : seul un admin peut gérer un compte admin ou promouvoir au rôle admin.
+    if admin.role != "admin" and (target.role == "admin" or body.role == "admin"):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Seul un administrateur peut gérer un compte administrateur.")
     if user_id == admin.id and body.role is not None and body.role != "admin":
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Impossible de changer son propre rôle.")
     if user_id == admin.id and body.is_active is False:

@@ -10,7 +10,7 @@ class Settings(BaseSettings):
 
     # App
     APP_ENV: str = "development"
-    APP_HOST: str = "0.0.0.0"
+    APP_HOST: str = "0.0.0.0"  # nosec B104 — bind volontaire (conteneur derrière reverse-proxy)
     APP_PORT: int = 8000
     APP_CORS_ORIGINS: list[str] = ["http://localhost:5173"]
 

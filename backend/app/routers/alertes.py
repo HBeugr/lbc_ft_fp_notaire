@@ -42,6 +42,8 @@ async def list_alertes(
 ) -> AlerteListResponse:
     # Le frontend envoie le statut en MAJUSCULES (OUVERTE/…) ; la base stocke en minuscules.
     statut_db = statut.lower() if statut else None
+    # Cloisonnement Art.63 : un non-superviseur ne voit que les alertes de SES dossiers assignés.
+    scope_assigned = None if current_user.is_supervisor else current_user.id
     items, total = await alertes_repo.list_alertes(
         db,
         statut=statut_db,
@@ -50,6 +52,7 @@ async def list_alertes(
         dossier_id=dossier_id,
         categorie=categorie,
         dossier_statut=dossier_statut,
+        assigned_to=scope_assigned,
         limit=page_size,
         offset=(page - 1) * page_size,
     )
@@ -178,13 +181,18 @@ async def mon_compteur(
 async def alertes_stream(token: str = Query(...)):
     """Flux SSE temps réel du compteur d'alertes (badge).
     Auth par query param car EventSource ne supporte pas l'en-tête Authorization."""
+    from app.core.redis_client import is_token_revoked, is_user_globally_revoked
     try:
         payload = security.decode_token(token)
         user_id = payload.get("sub")
     except Exception:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token invalide.")
-    if not user_id:
+    # Durcissement : refuser tout token non-access (ex. refresh) ou révoqué.
+    if not user_id or payload.get("type") != "access":
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token invalide.")
+    jti = payload.get("jti")
+    if (jti and await is_token_revoked(jti)) or await is_user_globally_revoked(user_id):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Session révoquée.")
 
     async def event_gen():
         factory = _get_session_factory()
@@ -218,6 +226,7 @@ async def alertes_stream(token: str = Query(...)):
 
 @router.get("/export")
 async def export_alertes(
+    request: Request,
     format: str = Query("excel", pattern="^(excel|pdf)$"),
     statut: str | None = Query(None),
     niveau: str | None = Query(None),
@@ -234,6 +243,13 @@ async def export_alertes(
     items, _ = await alertes_repo.list_alertes(
         db, statut=statut_db, niveau=niveau, type_alerte=type_alerte,
         categorie=categorie, dossier_statut=dossier_statut, limit=10_000, offset=0,
+    )
+    # Traçabilité LBC/FT : l'export du registre des alertes est journalisé.
+    await audit_repo.log(
+        db, action="alerte.export", user_id=current_user.id, user_role=current_user.role,
+        entity_type="alerte", entity_id="export",
+        ip=request.client.host if request.client else "unknown",
+        detail={"format": format, "categorie": categorie, "lignes": len(items)},
     )
     # Références des dossiers liés (fetch groupé)
     dossier_ids = {a.dossier_id for a in items if a.dossier_id}
@@ -296,6 +312,17 @@ async def export_alertes(
     )
 
 
+async def _assert_alerte_read_access(db: AsyncSession, alerte, user: User) -> None:
+    """Cloisonnement Art.63 : un non-superviseur ne lit qu'une alerte de SES dossiers assignés."""
+    if user.is_supervisor:
+        return
+    if not alerte.dossier_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Accès refusé.")
+    dossier = await dossier_repo.get_by_id(db, alerte.dossier_id)
+    if not dossier or dossier.assigned_to != user.id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Accès refusé.")
+
+
 @router.get("/{alerte_id}/timeline")
 async def alerte_timeline(
     alerte_id: str,
@@ -307,6 +334,7 @@ async def alerte_timeline(
     a = result.scalar_one_or_none()
     if not a:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Alerte introuvable.")
+    await _assert_alerte_read_access(db, a, current_user)
     events = [{"label": "Alerte créée", "at": a.created_at.isoformat() if a.created_at else None, "par": None}]
     if a.prise_en_charge_at:
         events.append({
@@ -362,6 +390,7 @@ async def get_alerte(
     alerte = result.scalar_one_or_none()
     if not alerte:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Alerte introuvable.")
+    await _assert_alerte_read_access(db, alerte, current_user)
     return AlerteOut.from_orm_safe(alerte)
 
 

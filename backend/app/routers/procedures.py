@@ -158,6 +158,23 @@ async def create_procedure(
 
 
 # ── List (paginée + filtrable) ────────────────────────────────────────────────
+# Requêtes pré-construites en littéraux (aucune interpolation de données utilisateur :
+# le filtre passe par le paramètre lié :search). Évite tout vecteur d'injection SQL.
+_SELECT_LIST = (
+    "SELECT p.id, p.nom, p.created_by, p.created_at, p.updated_at, "
+    "(SELECT COUNT(*) FROM procedure_documents d "
+    " WHERE d.procedure_id = p.id AND d.deleted_at IS NULL) AS nb_pieces "
+    "FROM procedures p WHERE p.deleted_at IS NULL"
+)
+_ORDER_PAGE = " ORDER BY p.created_at DESC LIMIT :limit OFFSET :offset"
+_SEARCH_CLAUSE = " AND LOWER(p.nom) LIKE :search"
+
+# nosec : concaténation de littéraux uniquement (aucune donnée utilisateur ; filtre via param lié :search)
+_COUNT_SQL = text("SELECT COUNT(*) AS c FROM procedures p WHERE p.deleted_at IS NULL")
+_COUNT_SQL_SEARCH = text("SELECT COUNT(*) AS c FROM procedures p WHERE p.deleted_at IS NULL" + _SEARCH_CLAUSE)  # nosec B608
+_LIST_SQL = text(_SELECT_LIST + _ORDER_PAGE)  # nosec B608
+_LIST_SQL_SEARCH = text(_SELECT_LIST + _SEARCH_CLAUSE + _ORDER_PAGE)  # nosec B608
+
 
 @router.get("/procedures", response_model=ProcedureListResponse)
 async def list_procedures(
@@ -167,30 +184,16 @@ async def list_procedures(
     db: AsyncSession = Depends(get_db),
     actor: User = Depends(get_current_user),
 ) -> ProcedureListResponse:
-    where = "WHERE p.deleted_at IS NULL"
+    has_search = bool(search and search.strip())
     params: dict = {}
-    if search and search.strip():
-        where += " AND LOWER(p.nom) LIKE :search"
+    if has_search:
         params["search"] = f"%{search.strip().lower()}%"
 
-    total_row = await db.execute(
-        text(f"SELECT COUNT(*) AS c FROM procedures p {where}"), params
-    )
+    total_row = await db.execute(_COUNT_SQL_SEARCH if has_search else _COUNT_SQL, params)
     total = total_row.scalar() or 0
 
     params_page = {**params, "limit": page_size, "offset": (page - 1) * page_size}
-    rows = await db.execute(
-        text(f"""
-            SELECT p.id, p.nom, p.created_by, p.created_at, p.updated_at,
-                   (SELECT COUNT(*) FROM procedure_documents d
-                      WHERE d.procedure_id = p.id AND d.deleted_at IS NULL) AS nb_pieces
-            FROM procedures p
-            {where}
-            ORDER BY p.created_at DESC
-            LIMIT :limit OFFSET :offset
-        """),
-        params_page,
-    )
+    rows = await db.execute(_LIST_SQL_SEARCH if has_search else _LIST_SQL, params_page)
     items = [
         ProcedureOut(
             id=r.id,

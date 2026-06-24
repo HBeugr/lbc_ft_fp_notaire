@@ -4,7 +4,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import security as sec
 from app.core.database import get_db
-from app.core.redis_client import is_token_revoked, is_user_globally_revoked
+from app.core.redis_client import (
+    is_token_revoked,
+    is_user_globally_revoked,
+    increment_totp_attempts,
+    get_totp_attempts,
+    reset_totp_attempts,
+    TOTP_MAX_ATTEMPTS,
+)
 from app.models.user import User
 from app.repositories import user_repo
 from app.schemas.totp import (
@@ -99,9 +106,13 @@ async def verify(body: TotpVerifyRequest, token: str = Depends(_oauth2), db: Asy
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="TOTP non requis pour cette session.")
     if not user.totp_enabled or not user.totp_secret:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="2FA non configuré.")
+    if await get_totp_attempts(user.id) >= TOTP_MAX_ATTEMPTS:
+        raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="Trop de tentatives. Réessayez plus tard.")
     secret = totp_service.decrypt_secret(user.totp_secret)
     if not totp_service.verify_code(secret, body.code):
+        await increment_totp_attempts(user.id)
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Code invalide.")
+    await reset_totp_attempts(user.id)
     new_access, _ = issue_tokens(user, totp_verified=True)
     return TotpVerifyResponse(access_token=new_access)
 
@@ -115,9 +126,13 @@ async def verify_backup(body: TotpBackupVerifyRequest, token: str = Depends(_oau
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="TOTP non requis pour cette session.")
     if not user.totp_enabled:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="2FA non configuré.")
+    if await get_totp_attempts(user.id) >= TOTP_MAX_ATTEMPTS:
+        raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="Trop de tentatives. Réessayez plus tard.")
     ok, remaining_json = totp_service.consume_backup_code(user.totp_backup_codes, body.code)
     if not ok:
+        await increment_totp_attempts(user.id)
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Code de secours invalide.")
+    await reset_totp_attempts(user.id)
     await user_repo.update(db, user, totp_backup_codes=remaining_json)
     new_access, _ = issue_tokens(user, totp_verified=True)
     return TotpVerifyResponse(access_token=new_access)

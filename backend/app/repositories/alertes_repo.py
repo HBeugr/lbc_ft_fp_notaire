@@ -8,7 +8,7 @@ NOTIFICATION_TYPES: tuple[str, ...] = ()
 
 
 def _filtered_alertes_query(base, *, statut=None, niveau=None, type_alerte=None, dossier_id=None,
-                            categorie=None, dossier_statut=None):
+                            categorie=None, dossier_statut=None, assigned_to=None):
     if statut:
         base = base.where(Alerte.statut == statut)
     if niveau:
@@ -21,9 +21,14 @@ def _filtered_alertes_query(base, *, statut=None, niveau=None, type_alerte=None,
         base = base.where(Alerte.type_alerte.in_(NOTIFICATION_TYPES))
     elif categorie == "conformite" and NOTIFICATION_TYPES:
         base = base.where(Alerte.type_alerte.not_in(NOTIFICATION_TYPES))
-    if dossier_statut:
+    # Jointure Dossier unique (cloisonnement par assigné et/ou filtre statut dossier)
+    if dossier_statut or assigned_to:
         from app.models.dossier import Dossier
-        base = base.join(Dossier, Dossier.id == Alerte.dossier_id).where(Dossier.statut == dossier_statut)
+        base = base.join(Dossier, Dossier.id == Alerte.dossier_id)
+        if dossier_statut:
+            base = base.where(Dossier.statut == dossier_statut)
+        if assigned_to:
+            base = base.where(Dossier.assigned_to == assigned_to)
     return base
 
 
@@ -35,11 +40,12 @@ async def list_alertes(
     dossier_id: str | None = None,
     categorie: str | None = None,
     dossier_statut: str | None = None,
+    assigned_to: str | None = None,
     limit: int = 20,
     offset: int = 0,
 ) -> tuple[list[Alerte], int]:
     filters = dict(statut=statut, niveau=niveau, type_alerte=type_alerte, dossier_id=dossier_id,
-                   categorie=categorie, dossier_statut=dossier_statut)
+                   categorie=categorie, dossier_statut=dossier_statut, assigned_to=assigned_to)
     total = (await db.execute(
         _filtered_alertes_query(select(func.count(Alerte.id)), **filters)
     )).scalar_one()
