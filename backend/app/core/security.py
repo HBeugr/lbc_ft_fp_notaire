@@ -34,12 +34,14 @@ def create_access_token(subject: str, extra: dict[str, Any] | None = None) -> st
     return jwt.encode(payload, settings.JWT_SECRET, algorithm=settings.JWT_ALGORITHM)
 
 
-def create_refresh_token(subject: str) -> str:
+def create_refresh_token(subject: str, extra: dict[str, Any] | None = None) -> str:
     expire = datetime.now(timezone.utc) + timedelta(
         hours=settings.JWT_REFRESH_TOKEN_EXPIRE_HOURS
     )
     jti = secrets.token_urlsafe(32)
-    payload = {"sub": subject, "exp": expire, "type": "refresh", "jti": jti}
+    payload: dict[str, Any] = {"sub": subject, "exp": expire, "type": "refresh", "jti": jti}
+    if extra:
+        payload.update(extra)
     return jwt.encode(payload, settings.JWT_SECRET, algorithm=settings.JWT_ALGORITHM)
 
 

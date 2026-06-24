@@ -1,8 +1,9 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import security as sec
+from app.core.config import settings
 from app.core.database import get_db
 from app.core.redis_client import (
     is_token_revoked,
@@ -28,6 +29,18 @@ from app.services.auth_service import issue_tokens
 
 router = APIRouter(prefix="/auth/totp", tags=["totp"])
 _oauth2 = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
+
+_REFRESH_COOKIE = "refresh_token"
+
+
+def _set_refresh_cookie(response: Response, token: str) -> None:
+    """Pose le cookie refresh (mêmes attributs que /auth) après validation 2FA."""
+    is_prod = settings.APP_ENV == "production"
+    response.set_cookie(
+        key=_REFRESH_COOKIE, value=token, httponly=True,
+        secure=is_prod, samesite="strict" if is_prod else "lax",
+        max_age=settings.JWT_REFRESH_TOKEN_EXPIRE_HOURS * 3600, path="/api/auth",
+    )
 
 
 async def _get_user_from_token(token: str, db: AsyncSession, allow_pending: bool = False) -> User:
@@ -99,7 +112,7 @@ async def regenerate_backup_codes(token: str = Depends(_oauth2), db: AsyncSessio
 
 
 @router.post("/verify", response_model=TotpVerifyResponse)
-async def verify(body: TotpVerifyRequest, token: str = Depends(_oauth2), db: AsyncSession = Depends(get_db)) -> TotpVerifyResponse:
+async def verify(body: TotpVerifyRequest, response: Response, token: str = Depends(_oauth2), db: AsyncSession = Depends(get_db)) -> TotpVerifyResponse:
     user = await _get_user_from_token(token, db, allow_pending=True)
     payload = sec.decode_token(token)
     if not payload.get("totp_pending"):
@@ -113,12 +126,14 @@ async def verify(body: TotpVerifyRequest, token: str = Depends(_oauth2), db: Asy
         await increment_totp_attempts(user.id)
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Code invalide.")
     await reset_totp_attempts(user.id)
-    new_access, _ = issue_tokens(user, totp_verified=True)
+    # Refresh « propre » (sans totp_pending) + cookie rafraîchi → /refresh ultérieurs sûrs.
+    new_access, new_refresh = issue_tokens(user, totp_verified=True)
+    _set_refresh_cookie(response, new_refresh)
     return TotpVerifyResponse(access_token=new_access)
 
 
 @router.post("/verify-backup", response_model=TotpVerifyResponse)
-async def verify_backup(body: TotpBackupVerifyRequest, token: str = Depends(_oauth2), db: AsyncSession = Depends(get_db)) -> TotpVerifyResponse:
+async def verify_backup(body: TotpBackupVerifyRequest, response: Response, token: str = Depends(_oauth2), db: AsyncSession = Depends(get_db)) -> TotpVerifyResponse:
     """Récupération 2FA : vérifie un code de secours (à usage unique) en lieu et place du TOTP."""
     user = await _get_user_from_token(token, db, allow_pending=True)
     payload = sec.decode_token(token)
@@ -134,5 +149,6 @@ async def verify_backup(body: TotpBackupVerifyRequest, token: str = Depends(_oau
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Code de secours invalide.")
     await reset_totp_attempts(user.id)
     await user_repo.update(db, user, totp_backup_codes=remaining_json)
-    new_access, _ = issue_tokens(user, totp_verified=True)
+    new_access, new_refresh = issue_tokens(user, totp_verified=True)
+    _set_refresh_cookie(response, new_refresh)
     return TotpVerifyResponse(access_token=new_access)

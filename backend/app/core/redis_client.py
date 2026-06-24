@@ -53,3 +53,29 @@ async def get_login_attempts(ip: str) -> int:
 async def reset_login_attempts(ip: str) -> None:
     r = await get_redis()
     await r.delete(f"{RATE_LIMIT_PREFIX}{ip}")
+
+
+# ── Rate-limiting 2FA (par utilisateur) — anti brute-force du 2nd facteur ───────
+TOTP_RATE_PREFIX = "rate_totp:"
+TOTP_MAX_ATTEMPTS = 5
+TOTP_LOCK_SECONDS = 900  # 15 min
+
+
+async def increment_totp_attempts(user_id: str) -> int:
+    r = await get_redis()
+    key = f"{TOTP_RATE_PREFIX}{user_id}"
+    count = await r.incr(key)
+    if count == 1:
+        await r.expire(key, TOTP_LOCK_SECONDS)
+    return count
+
+
+async def get_totp_attempts(user_id: str) -> int:
+    r = await get_redis()
+    val = await r.get(f"{TOTP_RATE_PREFIX}{user_id}")
+    return int(val) if val else 0
+
+
+async def reset_totp_attempts(user_id: str) -> None:
+    r = await get_redis()
+    await r.delete(f"{TOTP_RATE_PREFIX}{user_id}")

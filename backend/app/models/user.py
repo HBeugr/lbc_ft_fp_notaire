@@ -48,4 +48,4 @@ class User(Base):
         from app.core.config import settings
         if not settings.TOTP_REQUIRED:
             return False
-        return self.role in ("notaire_principal", "responsable_conformite")
+        return self.role in ("admin", "notaire_principal", "responsable_conformite")

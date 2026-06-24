@@ -43,12 +43,15 @@ async def authenticate(db: AsyncSession, email: str, password: str, ip: str) -> 
 
 def issue_tokens(user: User, totp_verified: bool = False) -> tuple[str, str]:
     needs_totp = user.requires_2fa and user.totp_enabled
+    pending = needs_totp and not totp_verified
     extra = {
         "role": user.role,
-        "totp_pending": needs_totp and not totp_verified,
+        "totp_pending": pending,
     }
     access = security.create_access_token(user.id, extra=extra)
-    refresh = security.create_refresh_token(user.id)
+    # Le refresh porte aussi l'état 2FA → /refresh ne peut pas émettre un access « propre »
+    # tant que la 2FA n'est pas validée (corrige le contournement 2FA via /refresh).
+    refresh = security.create_refresh_token(user.id, extra={"totp_pending": pending})
     return access, refresh
 
 
@@ -77,7 +80,10 @@ async def refresh_access_token(db: AsyncSession, refresh_token: str) -> tuple[st
         ttl = settings.JWT_REFRESH_TOKEN_EXPIRE_HOURS * 3600
         await revoke_token(jti, ttl)
 
-    return issue_tokens(user, totp_verified=True)
+    # Propagation de l'état 2FA : si le refresh est totp_pending (émis avant validation TOTP),
+    # le nouvel access reste totp_pending → pas de contournement.
+    refresh_pending = bool(payload.get("totp_pending"))
+    return issue_tokens(user, totp_verified=not refresh_pending)
 
 
 async def logout(refresh_token: str) -> None:
