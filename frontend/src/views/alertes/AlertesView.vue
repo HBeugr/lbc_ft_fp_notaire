@@ -7,6 +7,15 @@
         <p class="page-subtitle">{{ stats.ouvertes }} alerte(s) ouverte(s) · mise à jour toutes les 10s</p>
       </div>
       <div class="header-actions">
+        <div class="cat-tabs">
+          <button class="cat-tab" :class="{ active: filters.categorie === 'conformite' }" @click="setCategorie('conformite')">Conformité</button>
+          <button class="cat-tab" :class="{ active: filters.categorie === 'notification' }" @click="setCategorie('notification')">Notifications</button>
+          <button class="cat-tab" :class="{ active: filters.categorie === 'historique' }" @click="setCategorie('historique')">Historique</button>
+        </div>
+        <template v-if="filters.categorie === 'historique'">
+          <button class="filter-select btn-export" @click="exportAlertes('excel')">⬇ Excel</button>
+          <button class="filter-select btn-export" @click="exportAlertes('pdf')">⬇ PDF</button>
+        </template>
         <select v-model="filters.niveau" class="filter-select" @change="() => loadAlertes()">
           <option value="">Tous les niveaux</option>
           <option value="CRITIQUE">Critique</option>
@@ -80,8 +89,8 @@
                 Dossier : <strong>{{ alerte.dossier_reference }}</strong>
               </span>
               <span class="alerte-date">{{ formatDate(alerte.created_at) }}</span>
-              <span class="alerte-statut" :class="alerte.statut === 'TRAITEE' ? 'statut-traitee' : 'statut-ouverte'">
-                {{ alerte.statut === 'TRAITEE' ? 'Traitée' : 'Ouverte' }}
+              <span class="alerte-statut" :class="statutClass(alerte.statut)">
+                {{ statutLabel(alerte.statut) }}
               </span>
             </div>
             <p class="alerte-description">{{ alerte.description }}</p>
@@ -90,18 +99,22 @@
             </p>
           </div>
 
-          <div v-if="alerte.statut === 'OUVERTE'" class="alerte-actions">
-            <button class="btn-traiter" @click="openTraiterDialog(alerte)">Traiter</button>
-            <button
-              v-if="alerte.dossier_id && alerte.dossier_statut !== 'bloque'"
-              class="btn-bloquer"
-              @click="confirmBloquer(alerte)"
-            >Bloquer dossier</button>
-            <button
-              v-if="alerte.dossier_id && alerte.dossier_statut === 'bloque'"
-              class="btn-debloquer"
-              @click="confirmDebloquer(alerte)"
-            >Débloquer dossier</button>
+          <div class="alerte-actions">
+            <template v-if="alerte.statut === 'OUVERTE' || alerte.statut === 'EN_COURS'">
+              <button v-if="alerte.statut === 'OUVERTE'" class="btn-prendre" @click="confirmPrendre(alerte)">Prendre en charge</button>
+              <button class="btn-traiter" @click="openTraiterDialog(alerte)">Traiter</button>
+              <button
+                v-if="alerte.dossier_id && alerte.dossier_statut !== 'bloque'"
+                class="btn-bloquer"
+                @click="confirmBloquer(alerte)"
+              >Bloquer dossier</button>
+              <button
+                v-if="alerte.dossier_id && alerte.dossier_statut === 'bloque'"
+                class="btn-debloquer"
+                @click="confirmDebloquer(alerte)"
+              >Débloquer dossier</button>
+            </template>
+            <button class="btn-timeline" @click="openTimeline(alerte)">Voir le parcours</button>
           </div>
         </div>
       </div>
@@ -125,12 +138,40 @@
           placeholder="Décrivez l'action menée et le résultat de votre analyse..."
           rows="4"
         ></textarea>
+        <label class="dialog-label">Action sur le dossier lié</label>
+        <select v-model="traiterDialog.actionDossier" class="dialog-textarea" style="min-height:auto">
+          <option value="AUCUNE">Aucune action</option>
+          <option value="DEMANDER_DOCUMENTS">Demander des documents complémentaires</option>
+          <option value="BLOQUER">Bloquer le dossier</option>
+          <option value="DEBLOQUER">Débloquer le dossier (→ en analyse)</option>
+          <option value="DECLENCHER_DOS">Déclencher une DOS (bloque le dossier)</option>
+        </select>
         <p v-if="traiterDialog.error" class="dialog-error">{{ traiterDialog.error }}</p>
         <div class="dialog-footer">
           <button class="btn-cancel" @click="traiterDialog.open = false">Annuler</button>
           <button class="btn-confirm" :disabled="traiterDialog.loading" @click="submitTraiter">
             {{ traiterDialog.loading ? 'Enregistrement…' : 'Confirmer traitement' }}
           </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Timeline Dialog -->
+    <div v-if="timelineDialog.open" class="dialog-overlay" @click.self="timelineDialog.open = false">
+      <div class="dialog">
+        <h3 class="dialog-title">Parcours de l'alerte</h3>
+        <p class="dialog-subtitle">{{ typeLabel(timelineDialog.data?.type_alerte ?? '') }}</p>
+        <ol class="timeline-list">
+          <li v-for="(e, i) in timelineDialog.data?.events ?? []" :key="i" class="timeline-item">
+            <span class="timeline-dot"></span>
+            <div>
+              <p class="timeline-label">{{ e.label }}</p>
+              <p class="timeline-meta">{{ e.at ? formatDate(e.at) : '—' }}<span v-if="e.note"> · {{ e.note }}</span></p>
+            </div>
+          </li>
+        </ol>
+        <div class="dialog-footer">
+          <button class="btn-cancel" @click="timelineDialog.open = false">Fermer</button>
         </div>
       </div>
     </div>
@@ -175,11 +216,23 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
-import { alertesService, type AlerteOut, type PendingWrk09Item } from '@/services/alertes'
+import { alertesService, type AlerteOut, type PendingWrk09Item, type AlerteTimeline } from '@/services/alertes'
 
 const auth = useAuthStore()
+const router = useRouter()
 const isNotairePrincipal = computed(() => auth.user?.role === 'notaire_principal')
+
+const STATUT_LABELS: Record<string, string> = {
+  OUVERTE: 'Ouverte', EN_COURS: 'En cours', TRAITEE: 'Traitée', IGNOREE: 'Ignorée',
+}
+function statutLabel(s: string): string { return STATUT_LABELS[s] ?? s }
+function statutClass(s: string): string {
+  if (s === 'TRAITEE') return 'statut-traitee'
+  if (s === 'EN_COURS') return 'statut-encours'
+  return 'statut-ouverte'
+}
 
 const alertes = ref<AlerteOut[]>([])
 const pendingWrk09 = ref<PendingWrk09Item[]>([])
@@ -189,13 +242,43 @@ const page = ref(1)
 const pageSize = 10
 const stats = ref({ ouvertes: 0 })
 
-const filters = ref({ niveau: '', statut: 'OUVERTE', type_alerte: '', dossier_statut: '' })
+const filters = ref({
+  niveau: '', statut: 'OUVERTE', type_alerte: '', dossier_statut: '',
+  categorie: 'conformite' as 'conformite' | 'notification' | 'historique',
+})
+
+function setCategorie(c: 'conformite' | 'notification' | 'historique') {
+  filters.value.categorie = c
+  // En historique, on montre tous les statuts (traitées comprises)
+  filters.value.statut = c === 'historique' ? '' : 'OUVERTE'
+  loadAlertes()
+}
+
+async function exportAlertes(format: 'excel' | 'pdf') {
+  try {
+    const blob = await alertesService.exportAlertes(format, {
+      ...(filters.value.niveau ? { niveau: filters.value.niveau } : {}),
+      ...(filters.value.type_alerte ? { type_alerte: filters.value.type_alerte } : {}),
+      ...(filters.value.dossier_statut ? { dossier_statut: filters.value.dossier_statut } : {}),
+      categorie: filters.value.categorie,
+    })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = format === 'excel' ? 'alertes.xlsx' : 'alertes.pdf'
+    a.click()
+    URL.revokeObjectURL(url)
+  } catch {
+    alert("Échec de l'export.")
+  }
+}
 const totalPages = computed(() => Math.max(1, Math.ceil(total.value / pageSize)))
 
 const traiterDialog = ref({
   open: false, alerte: null as AlerteOut | null,
-  justification: '', loading: false, error: '',
+  justification: '', actionDossier: 'AUCUNE', loading: false, error: '',
 })
+const timelineDialog = ref({ open: false, data: null as AlerteTimeline | null })
 const wrk09Dialog = ref({
   open: false, item: null as PendingWrk09Item | null,
   decision: 'AUTORISE' as 'AUTORISE' | 'REFUSE',
@@ -211,6 +294,7 @@ async function loadAlertes(silent = false) {
       ...(filters.value.statut ? { statut: filters.value.statut } : {}),
       ...(filters.value.type_alerte ? { type_alerte: filters.value.type_alerte } : {}),
       ...(filters.value.dossier_statut ? { dossier_statut: filters.value.dossier_statut } : {}),
+      ...(filters.value.categorie ? { categorie: filters.value.categorie } : {}),
     })
     alertes.value = res.items
     total.value = res.total
@@ -242,7 +326,7 @@ onUnmounted(() => clearInterval(pollInterval))
 function changePage(p: number) { page.value = p; loadAlertes() }
 
 function openTraiterDialog(alerte: AlerteOut) {
-  traiterDialog.value = { open: true, alerte, justification: '', loading: false, error: '' }
+  traiterDialog.value = { open: true, alerte, justification: '', actionDossier: 'AUCUNE', loading: false, error: '' }
 }
 
 async function submitTraiter() {
@@ -250,13 +334,36 @@ async function submitTraiter() {
   if (!d.alerte) return
   if (!d.justification.trim()) { d.error = 'La justification est obligatoire.'; return }
   d.loading = true; d.error = ''
+  const action = d.actionDossier
+  const dossierId = d.alerte.dossier_id
   try {
-    await alertesService.traiter(d.alerte.id, d.justification)
+    await alertesService.traiter(d.alerte.id, d.justification, action)
     d.open = false
+    // DECLENCHER_DOS : le dossier est bloqué côté backend ; on enchaîne sur la création de la DOS
+    if (action === 'DECLENCHER_DOS' && dossierId) {
+      router.push({ name: 'dos', query: { dossier_id: dossierId, action: 'create' } })
+      return
+    }
     await Promise.all([loadAlertes(), loadStats()])
   } catch (err: unknown) {
     d.error = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ?? 'Erreur serveur.'
   } finally { d.loading = false }
+}
+
+async function confirmPrendre(alerte: AlerteOut) {
+  try {
+    await alertesService.prendre(alerte.id)
+    await loadAlertes()
+  } catch (err: unknown) {
+    alert((err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ?? 'Erreur serveur.')
+  }
+}
+
+async function openTimeline(alerte: AlerteOut) {
+  timelineDialog.value = { open: true, data: null }
+  try {
+    timelineDialog.value.data = await alertesService.timeline(alerte.id)
+  } catch { timelineDialog.value.open = false }
 }
 
 async function confirmBloquer(alerte: AlerteOut) {
@@ -380,7 +487,12 @@ function formatDate(iso: string) {
 .alerte-date { font-size: 0.75rem; color: var(--color-text-muted); margin-left: auto; }
 .alerte-statut { font-size: 0.688rem; font-weight: 600; padding: 2px 8px; border-radius: 12px; }
 .statut-ouverte { background: #fee2e2; color: #dc2626; }
+.statut-encours { background: #fef9c3; color: #a16207; }
 .statut-traitee { background: #dcfce7; color: #16a34a; }
+.cat-tabs { display: inline-flex; border: 1px solid var(--color-border); border-radius: 8px; overflow: hidden; }
+.cat-tab { padding: 0.4rem 0.9rem; font-size: 0.8125rem; font-weight: 600; background: var(--color-bg-card); border: none; cursor: pointer; color: var(--color-text-muted); }
+.cat-tab.active { background: var(--color-sidebar-bg); color: #fff; }
+.btn-export { cursor: pointer; }
 .alerte-description { font-size: 0.813rem; color: var(--color-text-secondary); margin: 0; }
 .alerte-justification { font-size: 0.75rem; color: var(--color-text-muted); margin: 0.25rem 0 0; }
 .alerte-actions {
@@ -400,12 +512,21 @@ function formatDate(iso: string) {
 .pagination { display: flex; align-items: center; justify-content: center; gap: 1rem; padding: 0.5rem 0; }
 .page-info { font-size: 0.813rem; color: var(--color-text-secondary); }
 
-.btn-traiter, .btn-bloquer, .btn-debloquer, .btn-autoriser, .btn-refuser, .btn-cancel, .btn-confirm, .btn-page {
+.btn-traiter, .btn-bloquer, .btn-debloquer, .btn-autoriser, .btn-refuser, .btn-cancel, .btn-confirm, .btn-page, .btn-prendre, .btn-timeline {
   padding: 0.375rem 0.75rem; border-radius: 6px; font-size: 0.75rem;
   font-weight: 600; cursor: pointer; border: none; white-space: nowrap;
 }
 .btn-traiter { background: #1b2b4b; color: #fff; }
 .btn-traiter:hover { background: #243750; }
+.btn-prendre { background: #fef9c3; color: #a16207; }
+.btn-prendre:hover { background: #fef08a; }
+.btn-timeline { background: transparent; color: var(--color-text-secondary); border: 1px solid var(--color-border) !important; }
+.btn-timeline:hover { background: var(--color-bg-page); }
+.timeline-list { list-style: none; padding: 0; margin: 0.5rem 0 0; display: flex; flex-direction: column; gap: 0.75rem; }
+.timeline-item { display: flex; gap: 0.625rem; align-items: flex-start; }
+.timeline-dot { width: 10px; height: 10px; border-radius: 50%; background: #1b2b4b; margin-top: 0.25rem; flex-shrink: 0; }
+.timeline-label { font-size: 0.8125rem; font-weight: 600; margin: 0; color: var(--color-text-primary); }
+.timeline-meta { font-size: 0.7rem; color: var(--color-text-muted); margin: 0.1rem 0 0; }
 .btn-bloquer { background: #fee2e2; color: #dc2626; }
 .btn-bloquer:hover { background: #fecaca; }
 .btn-debloquer { background: #dcfce7; color: #16a34a; }

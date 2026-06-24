@@ -252,6 +252,7 @@ class KycBE(Base):
     entite_intermediaire_pct: Mapped[float | None] = mapped_column(Numeric(5, 2), nullable=True)
     pays_residence: Mapped[str | None] = mapped_column(String(100), nullable=True)
     date_naissance: Mapped[Date | None] = mapped_column(Date, nullable=True)
+    lieu_naissance: Mapped[str | None] = mapped_column(String(150), nullable=True)
     nationalite: Mapped[str | None] = mapped_column(String(100), nullable=True)
     # Lien avec le client (CDC 1.1 BE PP) + entreprise cotée (CDC 1.2 BE PM)
     lien_avec_client: Mapped[str | None] = mapped_column(String(255), nullable=True)

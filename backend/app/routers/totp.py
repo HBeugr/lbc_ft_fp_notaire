@@ -7,7 +7,15 @@ from app.core.database import get_db
 from app.core.redis_client import is_token_revoked, is_user_globally_revoked
 from app.models.user import User
 from app.repositories import user_repo
-from app.schemas.totp import TotpActivateRequest, TotpSetupResponse, TotpVerifyRequest, TotpVerifyResponse
+from app.schemas.totp import (
+    TotpActivateRequest,
+    TotpActivateResponse,
+    TotpBackupCodesResponse,
+    TotpBackupVerifyRequest,
+    TotpSetupResponse,
+    TotpVerifyRequest,
+    TotpVerifyResponse,
+)
 from app.services import totp_service
 from app.services.auth_service import issue_tokens
 
@@ -52,8 +60,8 @@ async def setup(token: str = Depends(_oauth2), db: AsyncSession = Depends(get_db
     return TotpSetupResponse(provisioning_uri=uri, qr_data=uri)
 
 
-@router.post("/activate", status_code=status.HTTP_204_NO_CONTENT)
-async def activate(body: TotpActivateRequest, token: str = Depends(_oauth2), db: AsyncSession = Depends(get_db)) -> None:
+@router.post("/activate", response_model=TotpActivateResponse)
+async def activate(body: TotpActivateRequest, token: str = Depends(_oauth2), db: AsyncSession = Depends(get_db)) -> TotpActivateResponse:
     user = await _get_user_from_token(token, db, allow_pending=False)
     if not user.requires_2fa:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="2FA non requis pour ce rôle.")
@@ -66,7 +74,21 @@ async def activate(body: TotpActivateRequest, token: str = Depends(_oauth2), db:
         await totp_service.store_pending_secret(user.id, secret)
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Code invalide.")
     encrypted = totp_service.encrypt_secret(secret)
-    await user_repo.update(db, user, totp_secret=encrypted, totp_enabled=True)
+    plain_codes, hashed_json = totp_service.generate_backup_codes()
+    await user_repo.update(db, user, totp_secret=encrypted, totp_enabled=True, totp_backup_codes=hashed_json)
+    # Affichés une seule fois — l'utilisateur doit les conserver
+    return TotpActivateResponse(backup_codes=plain_codes)
+
+
+@router.post("/backup-codes/regenerate", response_model=TotpBackupCodesResponse)
+async def regenerate_backup_codes(token: str = Depends(_oauth2), db: AsyncSession = Depends(get_db)) -> TotpBackupCodesResponse:
+    """Régénère les codes de secours (session pleinement authentifiée, 2FA déjà actif)."""
+    user = await _get_user_from_token(token, db, allow_pending=False)
+    if not user.totp_enabled:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="2FA non activé.")
+    plain_codes, hashed_json = totp_service.generate_backup_codes()
+    await user_repo.update(db, user, totp_backup_codes=hashed_json)
+    return TotpBackupCodesResponse(backup_codes=plain_codes)
 
 
 @router.post("/verify", response_model=TotpVerifyResponse)
@@ -80,5 +102,22 @@ async def verify(body: TotpVerifyRequest, token: str = Depends(_oauth2), db: Asy
     secret = totp_service.decrypt_secret(user.totp_secret)
     if not totp_service.verify_code(secret, body.code):
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Code invalide.")
+    new_access, _ = issue_tokens(user, totp_verified=True)
+    return TotpVerifyResponse(access_token=new_access)
+
+
+@router.post("/verify-backup", response_model=TotpVerifyResponse)
+async def verify_backup(body: TotpBackupVerifyRequest, token: str = Depends(_oauth2), db: AsyncSession = Depends(get_db)) -> TotpVerifyResponse:
+    """Récupération 2FA : vérifie un code de secours (à usage unique) en lieu et place du TOTP."""
+    user = await _get_user_from_token(token, db, allow_pending=True)
+    payload = sec.decode_token(token)
+    if not payload.get("totp_pending"):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="TOTP non requis pour cette session.")
+    if not user.totp_enabled:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="2FA non configuré.")
+    ok, remaining_json = totp_service.consume_backup_code(user.totp_backup_codes, body.code)
+    if not ok:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Code de secours invalide.")
+    await user_repo.update(db, user, totp_backup_codes=remaining_json)
     new_access, _ = issue_tokens(user, totp_verified=True)
     return TotpVerifyResponse(access_token=new_access)

@@ -100,7 +100,13 @@ def screen(
         if score >= seuil:
             if norm_dob and entry_dob:
                 if _dob_exact_match(norm_dob, entry_dob):
-                    niveau, ddn_detail = "match", "ddn_confirmee"
+                    # DDN exacte MAIS lieu de naissance différent → homonyme possible :
+                    # on rétrograde le match confirmé en "warning" (vérification RC) plutôt
+                    # qu'un blocage T3 automatique (parité immo).
+                    if norm_lieu and entry_lieu and not _lieu_match(norm_lieu, entry_lieu):
+                        niveau, ddn_detail = "warning", "ddn_ok_lieu_mismatch"
+                    else:
+                        niveau, ddn_detail = "match", "ddn_confirmee"
                 elif _dob_year_only_match(norm_dob, entry_dob):
                     niveau, ddn_detail = "warning", "annee_seule"
                 else:
@@ -180,6 +186,12 @@ def pre_check(
         # 2. DDN (prioritaire)
         if norm_dob and entry_dob:
             if _dob_exact_match(norm_dob, entry_dob):
+                # DDN exacte MAIS lieu de naissance différent → homonyme possible :
+                # warning (vérification RC) plutôt que blocage T3 automatique (parité immo).
+                if norm_lieu and entry_lieu and not _lieu_match(norm_lieu, entry_lieu):
+                    return {"level": "warning", "score": score, "liste": liste.nom,
+                            "type_liste": liste.type_liste,
+                            "nom_correspondant": matched_name, "reason": "dob_match_lieu_mismatch"}
                 return {"level": "blocked", "score": score, "liste": liste.nom,
                         "type_liste": liste.type_liste,
                         "nom_correspondant": matched_name, "reason": "name_and_dob_match"}

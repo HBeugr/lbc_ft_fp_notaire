@@ -10,11 +10,27 @@ export interface AlerteOut {
   description: string
   assigned_to_rc: string | null
   assigned_to_dirigeant: string | null
-  statut: 'OUVERTE' | 'TRAITEE'
+  statut: 'OUVERTE' | 'EN_COURS' | 'TRAITEE' | 'IGNOREE'
+  prise_en_charge_par: string | null
+  prise_en_charge_at: string | null
   justification_traitement: string | null
   traitee_par: string | null
   traitee_at: string | null
   created_at: string
+}
+
+export interface TimelineEvent {
+  label: string
+  at: string | null
+  par: string | null
+  note?: string | null
+}
+
+export interface AlerteTimeline {
+  alerte_id: string
+  statut: string
+  type_alerte: string
+  events: TimelineEvent[]
 }
 
 export interface AlerteListResponse {
@@ -50,6 +66,7 @@ export interface AlerteFilters {
   type_alerte?: string
   dossier_id?: string
   dossier_statut?: string
+  categorie?: 'conformite' | 'notification' | 'historique'
 }
 
 export const alertesService = {
@@ -69,9 +86,30 @@ export const alertesService = {
     return data
   },
 
-  async traiter(id: string, justification: string): Promise<AlerteOut> {
-    const { data } = await api.post<AlerteOut>(`/alertes/${id}/traiter`, { justification })
+  async traiter(id: string, justification: string, actionDossier?: string): Promise<AlerteOut> {
+    const { data } = await api.post<AlerteOut>(`/alertes/${id}/traiter`, {
+      justification,
+      action_dossier: actionDossier || null,
+    })
     return data
+  },
+
+  async prendre(id: string): Promise<AlerteOut> {
+    const { data } = await api.post<AlerteOut>(`/alertes/${id}/prendre`)
+    return data
+  },
+
+  async timeline(id: string): Promise<AlerteTimeline> {
+    const { data } = await api.get<AlerteTimeline>(`/alertes/${id}/timeline`)
+    return data
+  },
+
+  async exportAlertes(format: 'excel' | 'pdf', filters: AlerteFilters = {}): Promise<Blob> {
+    const params = Object.fromEntries(
+      Object.entries({ format, ...filters }).filter(([, v]) => v !== undefined && v !== ''),
+    )
+    const { data } = await api.get('/alertes/export', { params, responseType: 'blob' })
+    return data as Blob
   },
 
   async bloquerDossier(alerteId: string): Promise<{ status: string; dossier_id: string }> {

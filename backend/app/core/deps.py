@@ -76,6 +76,13 @@ async def require_admin(user: User = Depends(get_current_user)) -> User:
     return user
 
 
+async def require_user_manager(user: User = Depends(get_current_user)) -> User:
+    """Gestion des utilisateurs : Admin et Notaire Principal (parité immo dirigeant)."""
+    if user.role not in ("admin", "notaire_principal"):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Gestion des utilisateurs réservée à l'Admin et au Notaire Principal.")
+    return user
+
+
 async def require_supervisor(user: User = Depends(get_current_user)) -> User:
     if not user.is_supervisor:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Accès insuffisant.")

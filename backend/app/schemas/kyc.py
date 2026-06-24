@@ -20,6 +20,10 @@ class _BlankToNone(BaseModel):
 # ── JSON sub-schemas ──────────────────────────────────────────────────────────
 
 class MandataireSchema(BaseModel):
+    # extra="allow" : préserve les champs envoyés par le frontend qui ne sont pas
+    # listés ici (nom, prenoms, lieu_habitation, lieu_naissance…) — sinon ils sont
+    # supprimés au save (perte de données + criblage du représentant privé de lieu).
+    model_config = {"extra": "allow"}
     prenom_nom: str = ""
     type_piece: str = ""
     numero_piece: str = ""
@@ -116,6 +120,7 @@ class KycBECreate(BaseModel):
     entite_intermediaire_pct: float | None = Field(None, ge=0, le=100)
     pays_residence: str | None = None
     date_naissance: date | None = None
+    lieu_naissance: str | None = None
     nationalite: str | None = None
     lien_avec_client: str | None = None
     entreprise_cotee: bool = False
@@ -142,6 +147,7 @@ class KycBEUpdate(BaseModel):
     entite_intermediaire_pct: float | None = Field(None, ge=0, le=100)
     pays_residence: str | None = None
     date_naissance: date | None = None
+    lieu_naissance: str | None = None
     nationalite: str | None = None
     lien_avec_client: str | None = None
     entreprise_cotee: bool | None = None
@@ -182,6 +188,7 @@ class KycBEOut(BaseModel):
     entite_intermediaire_pct: float | None = None
     pays_residence: str | None
     date_naissance: date | None
+    lieu_naissance: str | None = None
     nationalite: str | None
     lien_avec_client: str | None = None
     entreprise_cotee: bool = False

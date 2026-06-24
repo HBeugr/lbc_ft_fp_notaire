@@ -98,6 +98,20 @@
           <p class="login-subtitle">
             Votre compte est désormais protégé par l'authentification à deux facteurs.
           </p>
+
+          <div v-if="backupCodes.length" class="backup-block">
+            <p class="backup-warn">
+              ⚠ Conservez ces <strong>codes de secours</strong> en lieu sûr. Ils permettent de vous
+              connecter si vous perdez votre appareil. Ils ne seront <strong>plus jamais affichés</strong>.
+            </p>
+            <ul class="backup-list">
+              <li v-for="c in backupCodes" :key="c" class="backup-code">{{ c }}</li>
+            </ul>
+            <button type="button" class="btn-ghost" @click="copyBackupCodes">
+              {{ copied ? '✓ Copiés' : 'Copier les codes' }}
+            </button>
+          </div>
+
           <button class="btn-primary btn-login" style="margin-top:1.5rem" @click="goToDashboard">
             Accéder au tableau de bord
           </button>
@@ -129,6 +143,8 @@ const confirmError = ref('')
 const activating = ref(false)
 const confirmInput = ref<HTMLInputElement | null>(null)
 const qrCanvas = ref<HTMLCanvasElement | null>(null)
+const backupCodes = ref<string[]>([])
+const copied = ref(false)
 
 async function renderQr() {
   if (!qrCanvas.value || !qrData.value) return
@@ -166,7 +182,8 @@ async function handleActivate() {
 
   activating.value = true
   try {
-    await api.post('/auth/totp/activate', { code: confirmCode.value })
+    const { data } = await api.post('/auth/totp/activate', { code: confirmCode.value })
+    backupCodes.value = data?.backup_codes ?? []
     step.value = 'done'
   } catch (err: any) {
     const status = err?.response?.status
@@ -183,6 +200,14 @@ async function handleActivate() {
   } finally {
     activating.value = false
   }
+}
+
+async function copyBackupCodes() {
+  try {
+    await navigator.clipboard.writeText(backupCodes.value.join('\n'))
+    copied.value = true
+    setTimeout(() => { copied.value = false }, 2000)
+  } catch { /* clipboard indisponible */ }
 }
 
 function goToDashboard() {
@@ -249,6 +274,11 @@ function goToDashboard() {
   margin: 0 auto 1.25rem;
 }
 .done-icon svg { width: 30px; height: 30px; color: var(--color-risk-low); }
+
+.backup-block { margin-top: 1.5rem; text-align: left; }
+.backup-warn { font-size: 0.75rem; color: var(--color-text-secondary); background: var(--color-risk-medium-bg, #fffbeb); border: 1px solid var(--color-risk-medium, #f59e0b); border-radius: 8px; padding: 0.625rem 0.75rem; margin: 0 0 0.75rem; line-height: 1.5; }
+.backup-list { list-style: none; padding: 0.75rem; margin: 0 0 0.75rem; background: var(--color-bg-page); border-radius: 8px; display: grid; grid-template-columns: 1fr 1fr; gap: 0.4rem 1rem; }
+.backup-code { font-family: monospace; font-size: 0.9rem; font-weight: 600; letter-spacing: 0.08em; color: var(--color-text-primary); text-align: center; }
 
 .login-form { display: flex; flex-direction: column; gap: 1.25rem; }
 .field-group { display: flex; flex-direction: column; gap: 0.375rem; }

@@ -172,7 +172,7 @@ async def rapport_audit(
     db: AsyncSession = Depends(get_db),
 ) -> Response:
     """Piste d'audit complète — 500 dernières entrées."""
-    q = select(AuditLog).order_by(AuditLog.timestamp_utc.desc()).limit(500)
+    q = select(AuditLog).order_by(AuditLog.created_at.desc()).limit(500)
     logs = list((await db.execute(q)).scalars().all())
 
     generated_at = datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M UTC")
@@ -180,11 +180,11 @@ async def rapport_audit(
 
     rows = [
         [
-            e.timestamp_utc.strftime("%d/%m/%Y %H:%M") if e.timestamp_utc else "-",
+            e.created_at.strftime("%d/%m/%Y %H:%M") if e.created_at else "-",
             (e.action or "")[:40],
             (e.user_id or "-")[:25],
             e.entity_type or "-",
-            e.ip or "-",
+            e.ip_address or "-",
         ]
         for e in logs
     ]
@@ -201,3 +201,35 @@ async def rapport_audit(
     filename = f"rapport-audit-{datetime.now(timezone.utc).strftime('%Y%m%d')}.pdf"
     return Response(content=pdf, media_type="application/pdf",
                     headers={"Content-Disposition": f'attachment; filename="{filename}"'})
+
+
+@router.get("/historique")
+async def historique_rapports(
+    actor: User = Depends(require_rc),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Historique des rapports générés (reconstruit depuis la piste d'audit).
+
+    Les PDF sont streamés à la volée (non persistés) → pas de re-téléchargement :
+    `download_url` est vide. L'historique reste traçable (type, auteur, date)."""
+    rows = (await db.execute(
+        select(AuditLog).where(AuditLog.entity_type == "rapport")
+        .order_by(AuditLog.created_at.desc()).limit(100)
+    )).scalars().all()
+    user_ids = {r.user_id for r in rows if r.user_id}
+    names: dict[str, str] = {}
+    if user_ids:
+        urows = (await db.execute(select(User).where(User.id.in_(user_ids)))).scalars().all()
+        names = {u.id: getattr(u, "full_name", None) or f"{u.first_name} {u.last_name}".strip() for u in urows}
+    items = []
+    for r in rows:
+        detail = r.detail if isinstance(r.detail, dict) else {}
+        items.append({
+            "id": r.id,
+            "type_rapport": (r.entity_id or "—").capitalize(),
+            "reference": detail.get("reference") or detail.get("dossier_reference") or "—",
+            "generated_by": names.get(r.user_id, r.user_id or "—"),
+            "created_at": r.created_at.isoformat() if r.created_at else "",
+            "download_url": "",
+        })
+    return {"items": items}

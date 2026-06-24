@@ -7,7 +7,7 @@ from app.core.database import get_db
 from app.core.deps import get_current_user, require_rc, require_supervisor
 from app.models.user import User
 from app.models.revision import RevisionKyc
-from app.repositories import revision_repo, dossier_repo, audit_repo
+from app.repositories import revision_repo, dossier_repo, audit_repo, alertes_repo
 
 router = APIRouter(prefix="/revisions", tags=["revisions"])
 
@@ -225,3 +225,79 @@ async def valider_revision(
         detail={"dossier_id": r.dossier_id, "classification_apres": r.classification_apres},
     )
     return RevisionOut.from_orm_safe(r)
+
+
+@router.post("/run-escalade")
+async def run_escalade(
+    request: Request,
+    current_user: User = Depends(require_supervisor),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Escalade automatique des révisions périodiques (calendrier J+30/60/90/120).
+
+    Idempotent (les jalons sont gardés par date_relance_1/2 et le statut) → conçu pour
+    un cron externe. Le notaire n'a pas de scheduler in-process.
+      J+30  → relance 1 + alerte
+      J+60  → relance 2 + escalade RC
+      J+90  → dossier en vigilance renforcée
+      J+120 → dossier bloqué + DOS à envisager
+    """
+    from sqlalchemy import select as _sel
+    today = date.today()
+    revs = (await db.execute(
+        _sel(RevisionKyc).where(RevisionKyc.statut.notin_(("completee", "bloquee")))
+    )).scalars().all()
+    res = {"relance_1": 0, "relance_2": 0, "vigilance": 0, "blocage": 0}
+    ip = request.client.host if request.client else "unknown"
+
+    for r in revs:
+        jours = (today - r.date_echeance).days
+        if jours < 30:
+            continue
+        dossier = await dossier_repo.get_by_id(db, r.dossier_id)
+        if not dossier:
+            continue
+        ref = dossier.reference
+        if jours >= 120 and r.statut != "bloquee":
+            r.statut = "bloquee"
+            dossier.statut, dossier.is_bloque = "bloque", True
+            db.add(dossier)
+            await alertes_repo.create(
+                db, dossier_id=r.dossier_id, type_alerte="REVISION_ECHUE", niveau="ELEVE", statut="ouverte",
+                description=f"Révision non initiée J+120 sur {ref} — dossier bloqué (Art. 49). Saisie d'une DOS à envisager.",
+            )
+            res["blocage"] += 1
+        elif jours >= 90 and r.statut not in ("vigilance_renforcee", "bloquee"):
+            r.statut = "vigilance_renforcee"
+            dossier.statut = "vigilance_renforcee"
+            db.add(dossier)
+            await alertes_repo.create(
+                db, dossier_id=r.dossier_id, type_alerte="REVISION_ECHUE", niveau="MOYEN", statut="ouverte",
+                description=f"Révision non initiée J+90 sur {ref} — passage en vigilance renforcée.",
+            )
+            res["vigilance"] += 1
+        elif jours >= 60 and not r.date_relance_2 and r.statut in ("planifiee", "en_retard"):
+            r.date_relance_2 = today
+            if r.statut == "planifiee":
+                r.statut = "en_retard"
+            await alertes_repo.create(
+                db, dossier_id=r.dossier_id, type_alerte="REVISION_ECHUE", niveau="MOYEN", statut="ouverte",
+                description=f"Révision en retard J+60 sur {ref} — escalade au Responsable Conformité.",
+            )
+            res["relance_2"] += 1
+        elif jours >= 30 and not r.date_relance_1 and r.statut in ("planifiee", "en_retard"):
+            r.date_relance_1 = today
+            if r.statut == "planifiee":
+                r.statut = "en_retard"
+            await alertes_repo.create(
+                db, dossier_id=r.dossier_id, type_alerte="REVISION_ECHUE", niveau="MOYEN", statut="ouverte",
+                description=f"Révision en retard J+30 sur {ref} — relance.",
+            )
+            res["relance_1"] += 1
+
+    await db.commit()
+    await audit_repo.log(
+        db, action="revisions.escalade", user_id=current_user.id, user_role=current_user.role,
+        entity_type="revision", entity_id="escalade", ip=ip, detail=res,
+    )
+    return res

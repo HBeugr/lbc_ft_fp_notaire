@@ -499,6 +499,7 @@ function triggerSanctionsCheck(): void {
         form.nom!, form.prenoms!,
         form.date_naissance || undefined,
         (form.nationalite as string) || undefined,
+        (form.lieu_naissance as string) || undefined,
       )
       sanctionsState.value = { status: r.level, liste: r.liste, reason: r.reason }
     } catch {

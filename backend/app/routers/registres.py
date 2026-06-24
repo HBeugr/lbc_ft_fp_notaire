@@ -105,8 +105,8 @@ def _generate_pdf(label: str, items: list[AuditLog]) -> bytes:
     for i, e in enumerate(items):
         pdf.set_fill_color(248, 250, 252) if i % 2 == 0 else pdf.set_fill_color(255, 255, 255)
         pdf.set_text_color(30, 41, 59)
-        ts = e.timestamp_utc.strftime("%d/%m/%Y %H:%M") if e.timestamp_utc else "-"
-        row = [ts, (e.action or "")[:40], e.entity_type or "-", (e.entity_id or "-")[:30], (e.user_id or "-")[:30], e.ip or "-"]
+        ts = e.created_at.strftime("%d/%m/%Y %H:%M") if e.created_at else "-"
+        row = [ts, (e.action or "")[:40], e.entity_type or "-", (e.entity_id or "-")[:30], (e.user_id or "-")[:30], e.ip_address or "-"]
         for w, v in zip(col_w, row):
             pdf.cell(w, 5, _s(str(v))[:38], fill=True)
         pdf.ln()
@@ -151,6 +151,38 @@ def _generate_pdf_dossiers(label: str, rows: list) -> bytes:
         pdf.ln()
 
     return bytes(pdf.output())
+
+
+def _generate_excel(label: str, headers: list[str], data_rows: list[list]) -> bytes:
+    """Export Excel (openpyxl) d'un registre — parité avec l'immo."""
+    import io
+    from datetime import datetime, timezone
+    import openpyxl
+    from openpyxl.styles import Font, PatternFill
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Registre"
+    ws.append([label])
+    ws.append([f"Exporté le {datetime.now(timezone.utc).strftime('%d/%m/%Y %H:%M')} UTC — "
+               "CONFIDENTIEL, usage interne (Art. 23, conservation 10 ans)"])
+    ws.append([])
+    ws.append(headers)
+    hdr_fill = PatternFill("solid", fgColor="1A2E4A")
+    for cell in ws[4]:
+        cell.font = Font(bold=True, color="FFFFFF")
+        cell.fill = hdr_fill
+    for r in data_rows:
+        ws.append([str(v) if v is not None else "" for v in r])
+    for col in ws.columns:
+        width = max((len(str(c.value)) for c in col if c.value is not None), default=10)
+        ws.column_dimensions[col[0].column_letter].width = min(width + 2, 50)
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+_XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
 
 @router.get("")
@@ -203,7 +235,7 @@ async def get_registre(
             ],
         }
 
-    q = select(AuditLog).order_by(AuditLog.timestamp_utc.desc())
+    q = select(AuditLog).order_by(AuditLog.created_at.desc())
     if reg.get("filter_actions"):
         q = q.where(AuditLog.action.in_(reg["filter_actions"]))
 
@@ -218,13 +250,13 @@ async def get_registre(
         "items": [
             {
                 "id": e.id,
-                "timestamp": e.timestamp_utc.isoformat() if e.timestamp_utc else None,
+                "timestamp": e.created_at.isoformat() if e.created_at else None,
                 "action": e.action,
                 "entity_type": e.entity_type,
                 "entity_id": e.entity_id,
                 "user_id": e.user_id,
                 "user_role": e.user_role,
-                "ip": e.ip,
+                "ip": e.ip_address,
                 "detail": e.detail,
             }
             for e in items
@@ -235,7 +267,7 @@ async def get_registre(
 @router.get("/{registre_id}/export")
 async def export_registre(
     registre_id: str,
-    format: str = Query("pdf", regex="^(pdf)$"),
+    format: str = Query("pdf", regex="^(pdf|excel)$"),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> Response:
@@ -254,12 +286,18 @@ async def export_registre(
             user_role=current_user.role, entity_type="registre", entity_id=registre_id,
             ip="internal", detail={"format": format, "count": len(rows)},
         )
-        pdf_bytes = _generate_pdf_dossiers(reg["label"], rows)
-        filename = f"registre-{registre_id}-{datetime.now(timezone.utc).strftime('%Y%m%d')}.pdf"
-        return Response(content=pdf_bytes, media_type="application/pdf",
-                        headers={"Content-Disposition": f'attachment; filename="{filename}"'})
+        base = f"registre-{registre_id}-{datetime.now(timezone.utc).strftime('%Y%m%d')}"
+        if format == "excel":
+            headers = ["Reference", "Client", "Operation", "Score", "Classif.", "Trigger", "Statut"]
+            drows = [[d.reference, d.type_client, d.type_operation,
+                      d.score_base if d.score_base is not None else "",
+                      d.classification, d.trigger_actif, d.statut] for d in rows]
+            return Response(content=_generate_excel(reg["label"], headers, drows), media_type=_XLSX_MIME,
+                            headers={"Content-Disposition": f'attachment; filename="{base}.xlsx"'})
+        return Response(content=_generate_pdf_dossiers(reg["label"], rows), media_type="application/pdf",
+                        headers={"Content-Disposition": f'attachment; filename="{base}.pdf"'})
 
-    q = select(AuditLog).order_by(AuditLog.timestamp_utc.desc()).limit(1000)
+    q = select(AuditLog).order_by(AuditLog.created_at.desc()).limit(1000)
     if reg.get("filter_actions"):
         q = q.where(AuditLog.action.in_(reg["filter_actions"]))
     result = await db.execute(q)
@@ -276,7 +314,12 @@ async def export_registre(
         detail={"format": format, "count": len(items)},
     )
 
-    pdf_bytes = _generate_pdf(reg["label"], items)
-    filename = f"registre-{registre_id}-{datetime.now(timezone.utc).strftime('%Y%m%d')}.pdf"
-    return Response(content=pdf_bytes, media_type="application/pdf",
-                    headers={"Content-Disposition": f'attachment; filename="{filename}"'})
+    base = f"registre-{registre_id}-{datetime.now(timezone.utc).strftime('%Y%m%d')}"
+    if format == "excel":
+        headers = ["Date/Heure", "Action", "Entite", "ID Entite", "Utilisateur", "IP"]
+        drows = [[e.created_at.strftime("%d/%m/%Y %H:%M") if e.created_at else "",
+                  e.action, e.entity_type, e.entity_id, e.user_id, e.ip_address] for e in items]
+        return Response(content=_generate_excel(reg["label"], headers, drows), media_type=_XLSX_MIME,
+                        headers={"Content-Disposition": f'attachment; filename="{base}.xlsx"'})
+    return Response(content=_generate_pdf(reg["label"], items), media_type="application/pdf",
+                    headers={"Content-Disposition": f'attachment; filename="{base}.pdf"'})

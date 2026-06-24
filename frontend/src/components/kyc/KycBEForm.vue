@@ -37,6 +37,10 @@
               <label class="form-label">Date de naissance</label>
               <input v-model="form.date_naissance" type="date" class="form-input" @blur="triggerSanctionsCheck" />
             </div>
+            <div class="form-group">
+              <label class="form-label">Lieu de naissance</label>
+              <input v-model="form.lieu_naissance" type="text" class="form-input" placeholder="Ville, Pays" @blur="triggerSanctionsCheck" />
+            </div>
             <CountrySelect v-model="form.nationalite" label="Nationalité" @blur="triggerSanctionsCheck" />
             <CountrySelect v-model="form.pays_residence" label="Pays de résidence" />
             <div class="form-group">
@@ -220,6 +224,7 @@ function triggerSanctionsCheck() {
       form.value.prenoms!,
       form.value.date_naissance || undefined,
       (form.value.nationalite as string) || undefined,
+      (form.value.lieu_naissance as string) || undefined,
     )
     sanctionsState.value.status = result.level
     sanctionsState.value.liste  = result.liste
@@ -239,6 +244,7 @@ const form = ref<Partial<KycBEData> & { nom?: string; prenoms?: string }>({
   nom: '',
   prenoms: '',
   date_naissance: null,
+  lieu_naissance: null,
   nationalite: null,
   pays_residence: null,
   cni_passeport: null,
@@ -281,6 +287,7 @@ function buildBEPayload(): KycBEData {
     entite_intermediaire_pct: f.entite_intermediaire_pct ?? null,
     pays_residence: f.pays_residence ?? null,
     date_naissance: f.date_naissance ?? null,
+    lieu_naissance: f.lieu_naissance ?? null,
     nationalite: f.nationalite ?? null,
     lien_avec_client: f.lien_avec_client ?? null,
     entreprise_cotee: f.entreprise_cotee ?? false,

@@ -17,6 +17,7 @@ from app.models.user import User
 from app.models.dossier import Dossier
 from app.models.alerte import Alerte
 from app.models.revision import RevisionKyc
+from app.models.dos import DeclarationSuspicion
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 
@@ -67,10 +68,33 @@ async def dashboard_stats(
             ).where(scope).order_by(Dossier.created_at.desc()).limit(8)
         )).all()
 
+        # Métriques KPI (alignées sur immo) : KYC en analyse, DOS ouvertes,
+        # dossiers risque élevé, total dossiers depuis le 1ᵉʳ janvier.
+        annee_debut = datetime(now.year, 1, 1, tzinfo=timezone.utc)
+        dossiers_annee = (await db.execute(
+            select(func.count()).select_from(Dossier).where(
+                and_(scope, Dossier.created_at >= annee_debut)
+            )
+        )).scalar_one()
+        risque_eleve = (await db.execute(
+            select(func.count()).select_from(Dossier).where(
+                and_(scope, Dossier.classification == "ELEVE")
+            )
+        )).scalar_one()
+        dos_ouvertes = (await db.execute(
+            select(func.count()).select_from(DeclarationSuspicion).where(
+                DeclarationSuspicion.statut == "brouillon"
+            )
+        )).scalar_one()
+
         return {
             "role": current_user.role,
             "scope": "assigne",
             "mes_dossiers_by_statut": mes_dossiers,
+            "kyc_en_analyse": mes_dossiers.get("en_analyse", 0),
+            "dos_ouvertes": dos_ouvertes,
+            "dossiers_risque_eleve": risque_eleve,
+            "dossiers_annee": dossiers_annee,
             "alertes_ouvertes": alertes_ouvertes,
             "recent_dossiers": _recent_payload(recent),
         }
@@ -105,6 +129,17 @@ async def dashboard_stats(
     wrk09_en_attente = (await db.execute(
         select(func.count()).select_from(Dossier).where(
             and_(Dossier.trigger_actif == "T1", Dossier.statut == "en_analyse")
+        )
+    )).scalar_one()
+
+    # Métriques KPI (alignées sur immo) : DOS ouvertes + total dossiers depuis le 1ᵉʳ janvier.
+    annee_debut = datetime(now.year, 1, 1, tzinfo=timezone.utc)
+    dossiers_annee = (await db.execute(
+        select(func.count()).select_from(Dossier).where(Dossier.created_at >= annee_debut)
+    )).scalar_one()
+    dos_ouvertes = (await db.execute(
+        select(func.count()).select_from(DeclarationSuspicion).where(
+            DeclarationSuspicion.statut == "brouillon"
         )
     )).scalar_one()
 
@@ -158,6 +193,10 @@ async def dashboard_stats(
         "scope": "global",
         "dossiers_by_statut": dossiers_by_statut,
         "risque_distribution": risque_distribution,
+        "kyc_en_analyse": dossiers_by_statut.get("en_analyse", 0),
+        "dos_ouvertes": dos_ouvertes,
+        "dossiers_risque_eleve": risque_distribution.get("ELEVE", 0),
+        "dossiers_annee": dossiers_annee,
         "alertes_ouvertes": alertes_ouvertes,
         "revisions_dues_30j": revisions_dues_30j,
         "wrk09_en_attente": wrk09_en_attente,

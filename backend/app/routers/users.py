@@ -3,7 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core import security
-from app.core.deps import get_current_user, require_admin
+from app.core.deps import get_current_user, require_admin, require_user_manager
 from app.models.user import User
 from app.repositories import user_repo, audit_repo
 from app.schemas.users import UserCreate, UserListOut, UserOut, UserUpdate
@@ -32,7 +32,7 @@ async def list_users(
 async def create_user(
     body: UserCreate,
     request: Request,
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_user_manager),
     db: AsyncSession = Depends(get_db),
 ) -> UserOut:
     existing = await user_repo.get_by_email(db, body.email)
@@ -81,7 +81,7 @@ async def update_user(
     user_id: str,
     body: UserUpdate,
     request: Request,
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_user_manager),
     db: AsyncSession = Depends(get_db),
 ) -> UserOut:
     target = await user_repo.get_by_id(db, user_id)
@@ -111,7 +111,7 @@ async def update_user(
 async def deactivate_user(
     user_id: str,
     request: Request,
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_user_manager),
     db: AsyncSession = Depends(get_db),
 ) -> None:
     if user_id == admin.id:

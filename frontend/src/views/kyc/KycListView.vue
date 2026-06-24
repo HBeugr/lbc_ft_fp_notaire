@@ -12,11 +12,23 @@
       </button>
     </div>
 
+    <!-- Onglets Tous / Mes dossiers (superviseur uniquement) -->
+    <div v-if="auth.isSupervisor" class="tabs-nav">
+      <button class="tabs-nav-item" :class="{ 'tabs-nav-item--active': !mine }" @click="setMine(false)">Tous les dossiers</button>
+      <button class="tabs-nav-item" :class="{ 'tabs-nav-item--active': mine }" @click="setMine(true)">Mes dossiers</button>
+    </div>
+
     <!-- Filter bar -->
     <div class="filter-bar">
       <select v-model="filterStatut" class="filter-select" @change="loadPage(1)">
         <option value="">Tous les statuts</option>
         <option v-for="(label, val) in STATUT_LABELS" :key="val" :value="val">{{ label }}</option>
+      </select>
+      <select v-model="filterClassification" class="filter-select" @change="loadPage(1)">
+        <option value="">Tous les risques</option>
+        <option value="FAIBLE">Faible</option>
+        <option value="MOYEN">Moyen</option>
+        <option value="ELEVE">Élevé</option>
       </select>
       <input v-model="search" type="search" class="filter-search" placeholder="Référence, client…" />
     </div>
@@ -33,6 +45,7 @@
             <th>Opération</th>
             <th>Statut</th>
             <th>Risque</th>
+            <th>Assignation</th>
             <th>Créé le</th>
             <th class="th-actions">Accès</th>
           </tr>
@@ -59,13 +72,17 @@
               </span>
               <span v-else class="td-muted">—</span>
             </td>
+            <td>
+              <span v-if="d.assigned_to" class="assign-chip">{{ d.assigned_to_name || '—' }}</span>
+              <span v-else class="td-muted">Non assigné</span>
+            </td>
             <td class="td-date">{{ formatDate(d.created_at) }}</td>
             <td class="td-actions">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="row-arrow"><polyline points="9 18 15 12 9 6"/></svg>
             </td>
           </tr>
           <tr v-if="filteredDossiers.length === 0">
-            <td colspan="8" class="empty-row">
+            <td colspan="9" class="empty-row">
               <div class="empty-state">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
                 <p>Aucun dossier KYC</p>
@@ -89,16 +106,25 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
+import { useAuthStore } from '@/stores/auth'
 import { dossiersService, type DossierOut, TYPE_OPERATION_LABELS } from '@/services/dossiers'
 
 const router = useRouter()
+const auth = useAuthStore()
 const PAGE_SIZE = 10
 const dossiers = ref<DossierOut[]>([])
 const total = ref(0)
 const loading = ref(true)
 const currentPage = ref(1)
 const filterStatut = ref('')
+const filterClassification = ref('')
+const mine = ref(false)
 const search = ref('')
+
+function setMine(v: boolean) {
+  mine.value = v
+  loadPage(1)
+}
 
 const OPERATION_LABELS: Record<string, string> = TYPE_OPERATION_LABELS
 
@@ -147,6 +173,8 @@ async function loadPage(page: number) {
       page,
       page_size: PAGE_SIZE,
       statut: filterStatut.value || undefined,
+      classification: filterClassification.value || undefined,
+      mine: mine.value || undefined,
       search: search.value.trim() || undefined,
     })
     dossiers.value = res.items
@@ -173,6 +201,11 @@ onMounted(() => loadPage(1))
 .page-title { font-size: 1.375rem; font-weight: 700; color: var(--color-text-primary); margin: 0 0 0.25rem; }
 .page-subtitle { font-size: 0.875rem; color: var(--color-text-secondary); margin: 0; }
 .btn-icon { width: 14px; height: 14px; margin-right: 0.375rem; vertical-align: middle; }
+
+.tabs-nav { display: flex; gap: 0.25rem; margin-bottom: 1rem; border-bottom: 1px solid var(--color-border); }
+.tabs-nav-item { padding: 0.5rem 0.875rem; background: none; border: none; border-bottom: 2px solid transparent; cursor: pointer; font-size: 0.8125rem; font-weight: 600; color: var(--color-text-secondary); }
+.tabs-nav-item--active { color: var(--color-sidebar-bg); border-bottom-color: var(--color-sidebar-bg); }
+.assign-chip { font-size: 0.7rem; font-weight: 600; color: var(--color-text-secondary); background: var(--color-bg-page); border: 1px solid var(--color-border); border-radius: 5px; padding: 1px 7px; }
 
 .filter-bar { display: flex; gap: 0.75rem; margin-bottom: 1rem; }
 .filter-select, .filter-search {

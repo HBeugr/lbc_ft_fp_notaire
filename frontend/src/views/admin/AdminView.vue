@@ -142,6 +142,15 @@
             <label class="block text-xs font-medium text-gray-700 mb-1">Nouveau mot de passe</label>
             <input v-model="resetForm.new_password" type="password" required minlength="8" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1a2e4a]/30 focus:border-[#1a2e4a]" />
           </div>
+          <div class="text-center">
+            <button type="button" @click="generateTempPassword" :disabled="submitting" class="text-xs text-[#1a2e4a] underline hover:no-underline disabled:opacity-50">
+              ou générer un mot de passe temporaire
+            </button>
+          </div>
+          <div v-if="tempPassword" class="bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+            <p class="text-xs text-amber-800 mb-1">Mot de passe temporaire (affiché une seule fois). L'utilisateur devra le changer à la première connexion.</p>
+            <code class="block text-sm font-semibold text-gray-900 break-all select-all">{{ tempPassword }}</code>
+          </div>
           <div v-if="modalError" class="bg-red-50 border border-red-200 text-red-700 text-sm px-3 py-2 rounded-lg">{{ modalError }}</div>
           <div class="flex justify-end gap-3 pt-2">
             <button type="button" @click="showResetModal = false" class="px-4 py-2 text-sm text-gray-600 hover:text-gray-900">Annuler</button>
@@ -193,6 +202,7 @@ const form = reactive({
 })
 
 const resetForm = reactive({ new_password: '' })
+const tempPassword = ref('')
 
 function roleLabel(r: string) {
   const map: Record<string, string> = {
@@ -248,8 +258,27 @@ function openEdit(u: UserItem) {
 function openResetPassword(u: UserItem) {
   selectedUser.value = u
   resetForm.new_password = ''
+  tempPassword.value = ''
   showResetModal.value = true
   modalError.value = ''
+}
+
+async function generateTempPassword() {
+  if (!selectedUser.value) return
+  submitting.value = true
+  modalError.value = ''
+  try {
+    const { data } = await axios.post(
+      `/api/admin/users/${selectedUser.value.id}/reset-password/temporary`,
+      null,
+      { headers: authHeaders() },
+    )
+    tempPassword.value = data.temporary_password
+  } catch (e: any) {
+    modalError.value = e.response?.data?.detail ?? 'Erreur lors de la génération.'
+  } finally {
+    submitting.value = false
+  }
 }
 
 async function submitCreate() {

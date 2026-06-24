@@ -155,17 +155,19 @@ async def cribler(
                 )
             )
             best = next(r for r in raw_results if r["statut"] == "match")
-            await alertes_repo.create(
-                db,
-                dossier_id=dossier.id,
-                type_alerte="T3_SANCTIONS",
-                niveau="ELEVE",
-                statut="ouverte",
-                description=(
-                    f"Correspondance sanctions : « {body.nom} » ≈ « {best['nom_correspondant']} » "
-                    f"(score {best['score']}%) — liste {best['liste']}. Trigger T3, blocage Art. 89."
-                ),
-            )
+            # Anti-doublon : ne pas réempiler si une alerte T3 active existe déjà sur le dossier.
+            if not await alertes_repo.exists_active(db, dossier_id=dossier.id, type_alerte="T3_SANCTIONS"):
+                await alertes_repo.create(
+                    db,
+                    dossier_id=dossier.id,
+                    type_alerte="T3_SANCTIONS",
+                    niveau="ELEVE",
+                    statut="ouverte",
+                    description=(
+                        f"Correspondance sanctions : « {body.nom} » ≈ « {best['nom_correspondant']} » "
+                        f"(score {best['score']}%) — liste {best['liste']}. Trigger T3, blocage Art. 89."
+                    ),
+                )
             await db.commit()
 
     return CriblageResponse(
@@ -199,3 +201,48 @@ async def deactivate_sanctions(
         detail={"nom": liste.nom},
     )
     return {"status": "ok"}
+
+
+@router.post("/check-freshness")
+async def check_freshness(
+    request: Request,
+    current_user: User = Depends(require_supervisor),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Contrôle de fraîcheur des listes actives : génère une alerte SANCTIONS_PERIMEES
+    si au moins une liste dépasse le seuil (> 95 j). Destiné à un cron externe
+    (le notaire n'a pas de scheduler in-process)."""
+    from sqlalchemy import select as _sel, func as _func
+    from app.models.sanction import ListeSanctions
+    from app.models.alerte import Alerte
+    now = datetime.now(timezone.utc)
+    threshold = sanctions_service.SANCTIONS_THRESHOLD_DAYS
+    listes = (await db.execute(_sel(ListeSanctions).where(ListeSanctions.is_active.is_(True)))).scalars().all()
+
+    def _age_days(activated) -> int:
+        if not activated:
+            return 0
+        if activated.tzinfo is None:  # MySQL renvoie un datetime naïf
+            activated = activated.replace(tzinfo=timezone.utc)
+        return (now - activated).days
+
+    stale = [l for l in listes if _age_days(l.activated_at) > threshold]
+    if not stale:
+        return {"stale": 0, "alerte_creee": False}
+    # Anti-doublon : une seule alerte SANCTIONS_PERIMEES active à la fois.
+    actives = (await db.execute(_sel(_func.count(Alerte.id)).where(
+        Alerte.type_alerte == "SANCTIONS_PERIMEES", Alerte.statut.in_(("ouverte", "en_cours"))
+    ))).scalar_one()
+    creee = False
+    if not actives:
+        noms = ", ".join(l.nom for l in stale[:5])
+        await alertes_repo.create(
+            db, dossier_id=None, type_alerte="SANCTIONS_PERIMEES", niveau="ELEVE", statut="ouverte",
+            description=f"{len(stale)} liste(s) de sanctions périmée(s) (> {threshold} j) : {noms}. Mise à jour requise.",
+        )
+        creee = True
+        await audit_repo.log(
+            db, action="sanctions.perimees_alerte", user_id=current_user.id, user_role=current_user.role,
+            entity_type="liste_sanctions", entity_id="freshness", ip=_ip(request), detail={"stale": len(stale)},
+        )
+    return {"stale": len(stale), "alerte_creee": creee}

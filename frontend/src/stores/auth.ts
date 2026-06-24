@@ -29,6 +29,10 @@ export const useAuthStore = defineStore('auth', () => {
   const role = computed(() => user.value?.role ?? null)
   const mustChangePassword = computed(() => !!user.value?.must_change_password)
 
+  const isSupervisor = computed(() =>
+    ['admin', 'notaire_principal', 'responsable_conformite'].includes(user.value?.role ?? '')
+  )
+
   function setToken(token: string) {
     accessToken.value = token
     axios.defaults.headers.common['Authorization'] = `Bearer ${token}`
@@ -55,6 +59,7 @@ export const useAuthStore = defineStore('auth', () => {
     isAuthenticated,
     mustChangePassword,
     role,
+    isSupervisor,
     bootstrapReady,
     resolveBootstrap,
     setToken,

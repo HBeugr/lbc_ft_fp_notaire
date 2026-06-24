@@ -100,36 +100,6 @@
         </div>
       </div>
 
-      <!-- Rapport mandats actifs -->
-      <div class="rapport-card">
-        <div class="rapport-icon rapport-icon--purple">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/>
-            <polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/>
-          </svg>
-        </div>
-        <div class="rapport-body">
-          <h3 class="rapport-title">Rapport mandats actifs</h3>
-          <p class="rapport-desc">Liste des mandats (Type B) en cours avec fréquence de révision et prochaine échéance.</p>
-          <div class="rapport-form">
-            <div class="field-group">
-              <label class="field-label">Département</label>
-              <select v-model="forms.mandats.department_id" class="field-input">
-                <option value="">Tous les départements</option>
-                <option value="agence">Agence</option>
-                <option value="promotion">Promotion</option>
-              </select>
-            </div>
-          </div>
-          <button class="btn-generate" :disabled="generating === 'mandats'" @click="generate('mandats')">
-            <svg v-if="generating !== 'mandats'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="btn-icon">
-              <path d="M12 5v14M5 12l7 7 7-7"/>
-            </svg>
-            <span v-else class="spinner" />
-            Générer PDF
-          </button>
-        </div>
-      </div>
     </div>
 
     <!-- Historique des rapports générés -->
@@ -186,7 +156,6 @@ const forms = ref({
   conformite: { date_debut: '', date_fin: '' },
   client: { dossier_reference: '' },
   audit: { date_debut: '', date_fin: '' },
-  mandats: { department_id: '' },
 })
 
 async function generate(type: string) {

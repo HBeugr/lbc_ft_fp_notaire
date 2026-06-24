@@ -1,5 +1,5 @@
 import uuid
-from sqlalchemy import String, Boolean, Enum as SAEnum, DateTime, func
+from sqlalchemy import String, Boolean, Enum as SAEnum, DateTime, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
 from app.core.database import Base
 
@@ -27,6 +27,8 @@ class User(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     totp_secret: Mapped[str | None] = mapped_column(String(255), nullable=True)
     totp_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # Codes de secours 2FA (JSON de hachages bcrypt, usage unique)
+    totp_backup_codes: Mapped[str | None] = mapped_column(Text, nullable=True)
     must_change_password: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     created_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[DateTime] = mapped_column(

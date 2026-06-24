@@ -1,5 +1,7 @@
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, field_validator
 from typing import Literal
+
+from app.core.password_policy import validate_password_strength
 
 
 UserRole = Literal[
@@ -17,8 +19,13 @@ class UserCreate(BaseModel):
     first_name: str = Field(..., min_length=1, max_length=100)
     last_name: str = Field(..., min_length=1, max_length=100)
     role: UserRole
-    password: str = Field(..., min_length=8)
+    password: str = Field(..., min_length=12)
     must_change_password: bool = True
+
+    @field_validator("password")
+    @classmethod
+    def _strong(cls, v: str) -> str:
+        return validate_password_strength(v)
 
 
 class UserUpdate(BaseModel):

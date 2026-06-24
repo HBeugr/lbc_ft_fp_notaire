@@ -23,6 +23,7 @@ from app.routers import rapports as rapports_router
 from app.routers import admin as admin_router
 from app.routers import dashboard as dashboard_router
 from app.routers import procedures as procedures_router
+from app.routers import autorisations as autorisations_router
 
 
 def _ensure_minio_bucket() -> None:
@@ -161,6 +162,7 @@ app.include_router(rapports_router.router, prefix="/api")
 app.include_router(admin_router.router, prefix="/api")
 app.include_router(dashboard_router.router, prefix="/api")
 app.include_router(procedures_router.router, prefix="/api")
+app.include_router(autorisations_router.router, prefix="/api")
 
 
 @app.get("/health", tags=["system"])

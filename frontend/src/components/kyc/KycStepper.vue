@@ -534,6 +534,7 @@ function triggerSanctionsCheck() {
       local.prenoms!,
       local.date_naissance || undefined,
       (local.nationalite as string) || undefined,
+      (local.lieu_naissance as string) || undefined,
     )
     sanctionsState.value.status = result.level
     sanctionsState.value.liste  = result.liste
@@ -612,6 +613,7 @@ function triggerMandantCheck() {
       mandant.prenoms,
       mandant.date_naissance || undefined,
       undefined,
+      mandant.lieu_naissance || undefined,
     )
     mandantScreening.value.status = result.level
     mandantScreening.value.liste  = result.liste

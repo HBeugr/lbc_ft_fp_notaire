@@ -1,9 +1,14 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
-from app.models.alerte import Alerte
+from app.models.alerte import Alerte, AutorisationDirigeant
+
+# Types d'alertes « notification » (vs « conformité »). Notaire n'en génère pas
+# actuellement — tuple vide → catégorie 'conformite' = toutes les alertes.
+NOTIFICATION_TYPES: tuple[str, ...] = ()
 
 
-def _filtered_alertes_query(base, *, statut=None, niveau=None, type_alerte=None, dossier_id=None):
+def _filtered_alertes_query(base, *, statut=None, niveau=None, type_alerte=None, dossier_id=None,
+                            categorie=None, dossier_statut=None):
     if statut:
         base = base.where(Alerte.statut == statut)
     if niveau:
@@ -12,6 +17,13 @@ def _filtered_alertes_query(base, *, statut=None, niveau=None, type_alerte=None,
         base = base.where(Alerte.type_alerte == type_alerte)
     if dossier_id:
         base = base.where(Alerte.dossier_id == dossier_id)
+    if categorie == "notification" and NOTIFICATION_TYPES:
+        base = base.where(Alerte.type_alerte.in_(NOTIFICATION_TYPES))
+    elif categorie == "conformite" and NOTIFICATION_TYPES:
+        base = base.where(Alerte.type_alerte.not_in(NOTIFICATION_TYPES))
+    if dossier_statut:
+        from app.models.dossier import Dossier
+        base = base.join(Dossier, Dossier.id == Alerte.dossier_id).where(Dossier.statut == dossier_statut)
     return base
 
 
@@ -21,10 +33,13 @@ async def list_alertes(
     niveau: str | None = None,
     type_alerte: str | None = None,
     dossier_id: str | None = None,
+    categorie: str | None = None,
+    dossier_statut: str | None = None,
     limit: int = 20,
     offset: int = 0,
 ) -> tuple[list[Alerte], int]:
-    filters = dict(statut=statut, niveau=niveau, type_alerte=type_alerte, dossier_id=dossier_id)
+    filters = dict(statut=statut, niveau=niveau, type_alerte=type_alerte, dossier_id=dossier_id,
+                   categorie=categorie, dossier_statut=dossier_statut)
     total = (await db.execute(
         _filtered_alertes_query(select(func.count(Alerte.id)), **filters)
     )).scalar_one()
@@ -62,6 +77,19 @@ async def list_ouvertes(db: AsyncSession, limit: int = 100) -> list[Alerte]:
     return list(result.scalars().all())
 
 
+async def count_non_traitees_critiques(db: AsyncSession, dossier_id: str | None) -> int:
+    """Nb d'alertes ÉLEVÉ non traitées (ouverte/en_cours) sur le dossier.
+    Garde-fou de validation : on ne valide pas un dossier avec une alerte critique ouverte."""
+    if not dossier_id:
+        return 0
+    q = select(func.count(Alerte.id)).where(
+        Alerte.dossier_id == dossier_id,
+        Alerte.niveau == "ELEVE",
+        Alerte.statut.in_(("ouverte", "en_cours")),
+    )
+    return (await db.execute(q)).scalar_one()
+
+
 async def count_open_for_user(db: AsyncSession, user_id: str, is_supervisor: bool) -> int:
     """Compteur d'alertes non traitées pour le badge temps réel.
 
@@ -84,3 +112,95 @@ async def update_statut(db: AsyncSession, alerte: Alerte, statut: str, traite_pa
     await db.commit()
     await db.refresh(alerte)
     return alerte
+
+
+_STATUTS_ACTIFS = ("ouverte", "en_cours")
+
+
+async def exists_active(db: AsyncSession, *, dossier_id: str | None, type_alerte: str) -> bool:
+    """True si une alerte active (ouverte/en_cours) du même type existe déjà sur le dossier.
+
+    Anti-doublon : le criblage sanctions et certains contrôles (RCCM…) sont rejoués à
+    chaque sauvegarde du dossier ; sans ce garde-fou, chaque ré-enregistrement empile
+    une alerte identique."""
+    if not dossier_id:
+        return False
+    result = await db.execute(
+        select(func.count(Alerte.id)).where(
+            Alerte.dossier_id == dossier_id,
+            Alerte.type_alerte == type_alerte,
+            Alerte.statut.in_(_STATUTS_ACTIFS),
+        )
+    )
+    return (result.scalar_one() or 0) > 0
+
+
+async def resoudre_actives_par_type(
+    db: AsyncSession,
+    *,
+    dossier_id: str | None,
+    type_alerte: str,
+    traite_par: str | None = None,
+    note: str | None = None,
+) -> int:
+    """Passe en 'traitee' les alertes actives du même type sur le dossier (consolidation
+    au traitement — referme les doublons en conservant une trace traitée). Ne committe
+    pas : l'appelant gère la transaction. Retourne le nombre d'alertes consolidées."""
+    from datetime import datetime, timezone
+    if not dossier_id:
+        return 0
+    result = await db.execute(
+        select(Alerte).where(
+            Alerte.dossier_id == dossier_id,
+            Alerte.type_alerte == type_alerte,
+            Alerte.statut.in_(_STATUTS_ACTIFS),
+        )
+    )
+    n = 0
+    for a in result.scalars().all():
+        a.statut = "traitee"
+        a.traite_par = traite_par
+        a.traite_at = datetime.now(timezone.utc)
+        a.resolution_note = a.resolution_note or note or "Doublon consolidé automatiquement."
+        n += 1
+    return n
+
+
+# ── WRK-09 (autorisations Notaire Principal sur dossiers T1/PPE) ────────────────
+
+async def get_pending_wrk09(db: AsyncSession):
+    """Dossiers avec Trigger T1 actif, non clôturés/bloqués, sans décision WRK-09 enregistrée.
+
+    Retourne des objets Dossier (l'appelant sérialise)."""
+    from app.models.dossier import Dossier
+    sub = select(AutorisationDirigeant.dossier_id)
+    q = (
+        select(Dossier)
+        .where(
+            Dossier.trigger_actif == "T1",
+            Dossier.statut.notin_(("cloture", "archive", "bloque")),
+            Dossier.id.notin_(sub),
+        )
+        .order_by(Dossier.created_at.desc())
+    )
+    return list((await db.execute(q)).scalars().all())
+
+
+async def has_autorisation(db: AsyncSession, dossier_id: str) -> bool:
+    r = await db.execute(
+        select(func.count(AutorisationDirigeant.id)).where(AutorisationDirigeant.dossier_id == dossier_id)
+    )
+    return (r.scalar_one() or 0) > 0
+
+
+async def create_autorisation(
+    db: AsyncSession, *, dossier_id: str, dirigeant_id: str, decision: str, justification: str | None
+) -> AutorisationDirigeant:
+    autorisation = AutorisationDirigeant(
+        dossier_id=dossier_id, dirigeant_id=dirigeant_id,
+        decision=decision, justification=justification,
+    )
+    db.add(autorisation)
+    await db.commit()
+    await db.refresh(autorisation)
+    return autorisation

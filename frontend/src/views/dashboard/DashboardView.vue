@@ -6,7 +6,6 @@
         <h1 class="page-title">Tableau de bord</h1>
         <p class="page-subtitle">
           Bonjour, {{ auth.user?.first_name }} · {{ roleLabel }}
-          <span v-if="!['admin','notaire_principal','responsable_conformite'].includes(auth.user?.role ?? '')" class="dept-tag">{{ deptLabel }}</span>
         </p>
       </div>
       <span class="today-date">{{ todayFormatted }}</span>
@@ -14,7 +13,13 @@
 
     <!-- KPI cards -->
     <div class="kpi-grid">
-      <div v-for="kpi in kpis" :key="kpi.label" class="kpi-card">
+      <div
+        v-for="kpi in kpis"
+        :key="kpi.label"
+        class="kpi-card"
+        :class="{ 'kpi-card--clickable': !!kpi.link }"
+        @click="kpi.link && router.push(kpi.link)"
+      >
         <div class="kpi-icon" :style="{ background: kpi.iconBg }">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <path :d="kpi.icon" />
@@ -24,14 +29,12 @@
           <p class="kpi-value">{{ kpi.value }}</p>
           <p class="kpi-label">{{ kpi.label }}</p>
         </div>
-        <div v-if="kpi.delta !== undefined" class="kpi-delta" :class="kpi.deltaClass">
-          {{ kpi.delta }}
-        </div>
+        <svg v-if="kpi.link" class="kpi-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
       </div>
     </div>
 
     <!-- Supervisor section: risk distribution -->
-    <div v-if="['admin','notaire_principal','responsable_conformite'].includes(auth.user?.role ?? '')" class="section-grid">
+    <div v-if="auth.isSupervisor" class="section-grid">
       <!-- Risk breakdown -->
       <div class="card">
         <h2 class="card-title">Répartition par niveau de risque</h2>
@@ -91,7 +94,7 @@
     </div>
 
     <!-- Charts grid (supervisor only) -->
-    <div v-if="['admin','notaire_principal','responsable_conformite'].includes(auth.user?.role ?? '') && stats" class="charts-grid">
+    <div v-if="auth.isSupervisor && stats" class="charts-grid">
       <div class="card chart-card">
         <h2 class="card-title">Statuts dossiers</h2>
         <apexchart type="donut" :options="donutOptions" :series="donutSeries" height="260" />
@@ -107,10 +110,10 @@
     </div>
 
     <!-- Operational section: recent files -->
-    <div class="card" :class="{ 'mt-section': ['admin','notaire_principal','responsable_conformite'].includes(auth.user?.role ?? '') }">
+    <div class="card" :class="{ 'mt-section': auth.isSupervisor }">
       <div class="card-header-row">
         <h2 class="card-title" style="margin:0">
-          {{ ['admin','notaire_principal','responsable_conformite'].includes(auth.user?.role ?? '') ? 'Dossiers récents' : 'Mes dossiers récents' }}
+          {{ auth.isSupervisor ? 'Dossiers récents' : 'Mes dossiers récents' }}
         </h2>
         <RouterLink :to="{ name: 'kyc-list' }" class="card-link">Voir tous →</RouterLink>
       </div>
@@ -169,7 +172,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRouter, type RouteLocationRaw } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import api from '@/services/api'
 import { ROLE_LABELS } from '@/utils/roles'
@@ -177,18 +180,8 @@ import { ROLE_LABELS } from '@/utils/roles'
 const auth = useAuthStore()
 const router = useRouter()
 
-const DEPT_LABELS: Record<string, string> = {
-  AGENCE:     'Agence',
-  PROMOTION:  'Promotion',
-  TRANSVERSAL:'Transversal',
-}
-
 const roleLabel = computed(() =>
   auth.user ? (ROLE_LABELS[auth.user.role] ?? auth.user.role) : ''
-)
-
-const deptLabel = computed(() =>
-  ''
 )
 
 const canCreateDossier = computed(() =>
@@ -218,6 +211,10 @@ interface DashboardStats {
   dossiers_by_statut?: Record<string, number>
   mes_dossiers_by_statut?: Record<string, number>
   risque_distribution?: Record<string, number>
+  kyc_en_analyse?: number
+  dos_ouvertes?: number
+  dossiers_risque_eleve?: number
+  dossiers_annee?: number
   alertes_ouvertes?: number
   revisions_dues_30j?: number
   wrk09_en_attente?: number
@@ -258,54 +255,47 @@ onMounted(async () => {
   }
 })
 
-function totalDossiers(): string {
-  if (!stats.value) return '—'
-  const s = stats.value.dossiers_by_statut ?? stats.value.mes_dossiers_by_statut ?? {}
-  const total = Object.values(s).reduce((a, b) => a + b, 0)
-  return String(total)
+const ICON_KYC   = 'M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z'
+const ICON_RISK  = 'M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z'
+const ICON_DOS = 'M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z M14 2v6h6 M12 18v-6 M9 15h6'
+const ICON_YEAR = 'M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z'
+
+interface Kpi {
+  label: string
+  value: string
+  icon: string
+  iconBg: string
+  link?: RouteLocationRaw
 }
 
-const ICON_KYC   = 'M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z'
-const ICON_ALERT = 'M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9'
-const ICON_RISK  = 'M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z'
-const ICON_REV   = 'M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z'
-const ICON_WRK09 = 'M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4'
-
-const kpis = computed(() => {
+const kpis = computed<Kpi[]>(() => {
   const s = stats.value
-  const base = [
+  return [
     {
-      label: 'Dossiers en cours',
-      value: totalDossiers(),
-      icon: ICON_KYC, iconBg: '#dbeafe', delta: undefined, deltaClass: '',
+      label: 'KYC en analyse',
+      value: s ? String(s.kyc_en_analyse ?? 0) : '—',
+      icon: ICON_KYC, iconBg: '#dbeafe',
+      link: { name: 'kyc-list', query: { statut: 'en_analyse' } },
     },
     {
-      label: 'Alertes actives',
-      value: s ? String(s.alertes_ouvertes ?? 0) : '—',
-      icon: ICON_ALERT, iconBg: '#fef3c7', delta: undefined, deltaClass: '',
+      label: 'DOS ouvertes',
+      value: s ? String(s.dos_ouvertes ?? 0) : '—',
+      icon: ICON_DOS, iconBg: '#fef3c7',
+      link: { name: 'dos' },
+    },
+    {
+      label: 'Dossiers à risque élevé',
+      value: s ? String(s.dossiers_risque_eleve ?? 0) : '—',
+      icon: ICON_RISK, iconBg: '#fee2e2',
+      link: { name: 'kyc-list', query: { risque: 'ELEVE' } },
+    },
+    {
+      label: 'Dossiers depuis le 1ᵉʳ janvier',
+      value: s ? String(s.dossiers_annee ?? 0) : '—',
+      icon: ICON_YEAR, iconBg: '#ede9fe',
+      link: { name: 'kyc-list' },
     },
   ]
-  if (['admin','notaire_principal','responsable_conformite'].includes(auth.user?.role ?? '')) {
-    const risque = s?.risque_distribution ?? {}
-    base.push(
-      {
-        label: 'Dossiers risque élevé',
-        value: s ? String(risque['ELEVE'] ?? 0) : '—',
-        icon: ICON_RISK, iconBg: '#fee2e2', delta: undefined, deltaClass: '',
-      },
-      {
-        label: 'Révisions dues (retard + 30j)',
-        value: s ? String(s.revisions_dues_30j ?? 0) : '—',
-        icon: ICON_REV, iconBg: '#ede9fe', delta: undefined, deltaClass: '',
-      },
-      {
-        label: 'WRK09 en attente',
-        value: s ? String(s.wrk09_en_attente ?? 0) : '—',
-        icon: ICON_WRK09, iconBg: '#fce7f3', delta: undefined, deltaClass: '',
-      },
-    )
-  }
-  return base
 })
 
 const risqueFaible = computed(() => stats.value?.risque_distribution?.['FAIBLE'] ?? 0)
@@ -410,15 +400,6 @@ const areaOptions = computed(() => ({
   gap: 0.5rem;
 }
 
-.dept-tag {
-  background: var(--color-bg-page);
-  border: 1px solid var(--color-border);
-  border-radius: 5px;
-  padding: 1px 7px;
-  font-size: 0.75rem;
-  color: var(--color-text-secondary);
-}
-
 .today-date {
   font-size: 0.8125rem;
   color: var(--color-text-muted);
@@ -443,6 +424,10 @@ const areaOptions = computed(() => ({
   align-items: center;
   gap: 1rem;
 }
+
+.kpi-card--clickable { cursor: pointer; transition: box-shadow 0.15s, transform 0.1s; }
+.kpi-card--clickable:hover { box-shadow: 0 4px 14px rgba(0,0,0,0.08); transform: translateY(-1px); }
+.kpi-chevron { width: 16px; height: 16px; color: var(--color-text-muted); flex-shrink: 0; }
 
 .kpi-icon {
   width: 42px;

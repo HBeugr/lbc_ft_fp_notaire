@@ -68,14 +68,16 @@ async def _check_sanctions_on_save(
                 force_par_trigger=True, statut="bloque",
             )
         )
-        await alertes_repo.create(
-            db, dossier_id=dossier.id, type_alerte=type_alerte,
-            niveau="ELEVE", statut="ouverte",
-            description=(
-                f"Correspondance sanctions confirmée (score {result['score']}%) — "
-                f"liste {result['liste']}. Trigger T3, blocage Art. 89.{motif_prolif}"
-            ),
-        )
+        # Anti-doublon : le criblage est rejoué à chaque sauvegarde du dossier.
+        if not await alertes_repo.exists_active(db, dossier_id=dossier.id, type_alerte=type_alerte):
+            await alertes_repo.create(
+                db, dossier_id=dossier.id, type_alerte=type_alerte,
+                niveau="ELEVE", statut="ouverte",
+                description=(
+                    f"Correspondance sanctions confirmée (score {result['score']}%) — "
+                    f"liste {result['liste']}. Trigger T3, blocage Art. 89.{motif_prolif}"
+                ),
+            )
         await audit_repo.log(
             db, action="sanctions.t3_active", user_id=current_user.id,
             user_role=current_user.role, entity_type="dossier", entity_id=dossier.id,
@@ -86,14 +88,16 @@ async def _check_sanctions_on_save(
 
     if level == "warning":
         try:
-            await alertes_repo.create(
-                db, dossier_id=dossier.id, type_alerte=type_alerte,
-                niveau="MOYEN", statut="ouverte",
-                description=(
-                    f"Correspondance partielle sanctions (score {result['score']}%) — "
-                    f"liste {result['liste']}. Date de naissance non confirmée — vérification RC requise.{motif_prolif}"
-                ),
-            )
+            # Anti-doublon : ne pas réempiler à chaque sauvegarde si une alerte active du même type existe.
+            if not await alertes_repo.exists_active(db, dossier_id=dossier.id, type_alerte=type_alerte):
+                await alertes_repo.create(
+                    db, dossier_id=dossier.id, type_alerte=type_alerte,
+                    niveau="MOYEN", statut="ouverte",
+                    description=(
+                        f"Correspondance partielle sanctions (score {result['score']}%) — "
+                        f"liste {result['liste']}. Date de naissance non confirmée — vérification RC requise.{motif_prolif}"
+                    ),
+                )
             if dossier.statut == "brouillon":
                 await db.execute(
                     sa_update(Dossier).where(Dossier.id == dossier.id).values(statut="en_analyse")
@@ -204,7 +208,8 @@ async def add_be_pp(
     ip = request.client.host if request.client else "unknown"
     await _check_sanctions_on_save(
         db, current_user=current_user, ip=ip, dossier=dossier,
-        nom=body.raison_sociale_nom, date_naissance=body.date_naissance, nationalite=body.nationalite,
+        nom=body.raison_sociale_nom, date_naissance=body.date_naissance,
+        lieu_naissance=body.lieu_naissance, nationalite=body.nationalite,
     )
     return KycBEOut.model_validate(be)
 
@@ -307,7 +312,9 @@ async def upsert_kyc_pm(
     if emission:
         data["date_expiration_rccm"] = emission + _timedelta(days=90)
         jours = (_date.today() - emission).days
-        if jours > 90:
+        if jours > 90 and not await alertes_repo.exists_active(
+            db, dossier_id=dossier_id, type_alerte="RCCM_EXPIRE"
+        ):
             await alertes_repo.create(
                 db, dossier_id=dossier_id, type_alerte="RCCM_EXPIRE",
                 niveau="ELEVE" if jours > 120 else "MOYEN", statut="ouverte",
@@ -329,11 +336,27 @@ async def upsert_kyc_pm(
         ip=ip,
         detail={"classification": result.classification, "score": result.score},
     )
-    # Criblage formel sanctions sur la dénomination sociale + représentant légal — CDC §2.2
-    nom_pm = " ".join(filter(None, [data.get("denomination_sociale"), data.get("nom_representant_legal")])).strip()
-    await _check_sanctions_on_save(
-        db, current_user=current_user, ip=ip, dossier=dossier, nom=nom_pm,
-    )
+    # Criblage formel sanctions — CDC §2.2. On crible séparément :
+    #   1) la personne morale (dénomination sociale) — entité, sans date/lieu ;
+    #   2) le représentant légal (personne physique) sur les 4 champs
+    #      (nom+prénoms, date et lieu de naissance + nationalité), lus depuis le JSON
+    #      `mandataire`. Criblage séparé = meilleur matching qu'une chaîne fusionnée.
+    if data.get("denomination_sociale"):
+        await _check_sanctions_on_save(
+            db, current_user=current_user, ip=ip, dossier=dossier,
+            nom=data["denomination_sociale"],
+        )
+    mand = data.get("mandataire") or {}
+    rep_nom = (data.get("nom_representant_legal")
+               or f"{mand.get('nom', '')} {mand.get('prenoms', '')}".strip())
+    if rep_nom and len(rep_nom) >= 3:
+        await _check_sanctions_on_save(
+            db, current_user=current_user, ip=ip, dossier=dossier,
+            nom=rep_nom,
+            date_naissance=mand.get("date_naissance") or None,
+            lieu_naissance=mand.get("lieu_naissance") or None,
+            nationalite=mand.get("nationalite") or None,
+        )
     be_result = await db.execute(select(KycBE).where(KycBE.kyc_pm_id == kyc.id))
     act_result = await db.execute(select(KycActionnaire).where(KycActionnaire.kyc_pm_id == kyc.id).order_by(KycActionnaire.ordre))
     ppe_result = await db.execute(select(KycPPE).where(KycPPE.kyc_pm_id == kyc.id))
@@ -364,7 +387,8 @@ async def add_be_pm(
     ip = request.client.host if request.client else "unknown"
     await _check_sanctions_on_save(
         db, current_user=current_user, ip=ip, dossier=dossier,
-        nom=body.raison_sociale_nom, date_naissance=body.date_naissance, nationalite=body.nationalite,
+        nom=body.raison_sociale_nom, date_naissance=body.date_naissance,
+        lieu_naissance=body.lieu_naissance, nationalite=body.nationalite,
     )
     return KycBEOut.model_validate(be)
 

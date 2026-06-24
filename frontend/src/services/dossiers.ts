@@ -75,6 +75,7 @@ export interface KycBEData {
   entite_intermediaire_pct?: number | null
   pays_residence: string | null
   date_naissance: string | null
+  lieu_naissance?: string | null
   nationalite: string | null
   lien_avec_client?: string | null
   entreprise_cotee?: boolean
@@ -314,7 +315,7 @@ export interface HistoriqueOut {
 
 export const dossiersService = {
   // Dossiers CRUD
-  async list(params: { statut?: string; classification?: string; reference?: string; search?: string; page?: number; page_size?: number } = {}): Promise<DossierListResponse> {
+  async list(params: { statut?: string; classification?: string; reference?: string; search?: string; mine?: boolean; page?: number; page_size?: number } = {}): Promise<DossierListResponse> {
     const { data } = await api.get<DossierOut[]>('/dossiers', { params })
     if (Array.isArray(data)) return { items: data, total: data.length }
     return data as unknown as DossierListResponse
@@ -451,8 +452,18 @@ export const dossiersService = {
     return data
   },
 
-  async getHistorique(_dossierId: string): Promise<HistoriqueOut[]> {
-    return []
+  async getHistorique(dossierId: string): Promise<HistoriqueOut[]> {
+    const { data } = await api.get<HistoriqueOut[]>(`/dossiers/${dossierId}/historique`)
+    return data
+  },
+
+  // Alertes liées à un dossier (pour la fiche KYC)
+  async getAlertes(dossierId: string): Promise<Array<{
+    id: string; type_alerte: string; niveau: string; statut: string;
+    description: string; resolution_note: string | null; created_at: string | null
+  }>> {
+    const { data } = await api.get(`/dossiers/${dossierId}/alertes`)
+    return data
   },
 
   // Statut transition
@@ -481,11 +492,13 @@ export const dossiersService = {
     prenoms: string,
     dateNaissance?: string,
     nationalite?: string,
+    lieuNaissance?: string,
   ): Promise<{ level: 'blocked' | 'warning' | 'clear' | 'no_lists'; score: number; liste: string | null; reason: string | null }> {
     const { data } = await api.post('/kyc/screening/pre-check', {
       nom,
       prenoms,
       date_naissance: dateNaissance || null,
+      lieu_naissance: lieuNaissance || null,
       nationalite: nationalite || null,
     })
     return data

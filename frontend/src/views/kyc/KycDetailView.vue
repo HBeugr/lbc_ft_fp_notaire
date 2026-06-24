@@ -150,8 +150,49 @@
         description="Bénéficiaire effectif (≥ 25%) non identifiable — vigilance renforcée, poursuite conditionnée à son identification."
       />
 
+      <!-- Triggers actifs sur le dossier (plusieurs possibles) -->
+      <div v-if="triggersActifs.length" class="triggers-actifs-row">
+        <span class="triggers-actifs-label">
+          <svg class="triggers-actifs-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/></svg>
+          Triggers actifs
+        </span>
+        <span
+          v-for="t in triggersActifs"
+          :key="t"
+          class="trigger-chip"
+          :class="{ 'trigger-chip--ppe': t === 'T1' }"
+          :title="t === 'T1' ? 'PPE — autorisation Notaire Principal obligatoire (WRK-09)' : 'Trigger réglementaire actif sur ce dossier'"
+        >{{ t }}{{ t === 'T1' ? ' · PPE' : '' }}</span>
+      </div>
+
+      <!-- Alertes liées au dossier -->
+      <div v-if="dossierAlertes.length" class="card alertes-liees-card">
+        <button class="alertes-liees-header alertes-liees-toggle" @click="alertesCollapsed = !alertesCollapsed">
+          <span class="alertes-toggle-left">
+            <svg class="alertes-chevron" :class="{ 'alertes-chevron--open': !alertesCollapsed }" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
+            <h3 class="section-title" style="margin:0">Alertes liées ({{ dossierAlertes.length }})</h3>
+          </span>
+          <span v-if="alertesOuvertesCritiques > 0" class="alertes-warn-badge">
+            ⚠ {{ alertesOuvertesCritiques }} alerte(s) ÉLEVÉ non traitée(s) — validation bloquée
+          </span>
+        </button>
+        <template v-if="!alertesCollapsed">
+          <ul class="alertes-liees-list">
+            <li v-for="a in dossierAlertes" :key="a.id" class="alerte-liee-item">
+              <span class="alerte-liee-niveau" :class="`niv-${a.niveau.toLowerCase()}`">{{ a.niveau }}</span>
+              <span class="alerte-liee-type">{{ a.type_alerte }}</span>
+              <span class="alerte-liee-statut" :class="`st-${a.statut.toLowerCase()}`">
+                {{ a.statut === 'traitee' ? 'Traitée' : (a.statut === 'en_cours' ? 'En cours' : (a.statut === 'ignoree' ? 'Ignorée' : 'Ouverte')) }}
+              </span>
+              <span class="alerte-liee-desc">{{ a.description }}</span>
+            </li>
+          </ul>
+          <p class="alertes-liees-hint">Le traitement des alertes se fait dans le module <strong>Alertes</strong>.</p>
+        </template>
+      </div>
+
       <!-- Panneau de transitions -->
-      <div v-if="availableTransitions.length || isRC" class="transition-bar">
+      <div v-if="(availableTransitions.length || isRC) && canModify" class="transition-bar">
         <span class="transition-bar-label">Actions :</span>
         <button
           v-for="t in availableTransitions"
@@ -775,10 +816,44 @@ const visibleTabs = computed(() => {
   return tabs
 })
 
+// ── Alertes liées + triggers actifs ─────────────────────────────────────────────
+const dossierAlertes = ref<Array<{ id: string; type_alerte: string; niveau: string; statut: string; description: string; resolution_note: string | null; created_at: string | null }>>([])
+const alertesCollapsed = ref(true)
+
+// PPE détecté sur le dossier (PP, représentant PM, ou déclarations KYC-PPE)
+const isPPE = computed(() => {
+  const d = dossier.value as any
+  if (!d) return false
+  return !!(d.kyc_pp?.est_ppe || d.kyc_pm?.ppe_detectee || d.kyc_pm?.representant_statut_ppe
+    || d.kyc_pp?.ppe_declarations?.length || d.kyc_pm?.ppe_declarations?.length)
+})
+
+// Liste de tous les triggers actifs (T1 ajouté si PPE, + ceux issus des alertes)
+const triggersActifs = computed<string[]>(() => {
+  const set = new Set<string>()
+  if (dossier.value?.trigger_actif) set.add(dossier.value.trigger_actif)
+  for (const a of dossierAlertes.value) {
+    const m = a.type_alerte.match(/^TRIGGER_(T\d)$/)
+    if (m) set.add(m[1])
+  }
+  if (isPPE.value) set.add('T1')
+  return Array.from(set).sort()
+})
+
+const alertesOuvertesCritiques = computed(() =>
+  dossierAlertes.value.filter(a => !['traitee', 'ignoree'].includes(a.statut) && a.niveau === 'ELEVE').length
+)
+
+async function loadDossierAlertes() {
+  if (!dossier.value) return
+  try { dossierAlertes.value = await dossiersService.getAlertes(dossier.value.id) } catch { /* ignore */ }
+}
+
 onMounted(async () => {
   try {
     dossier.value = await dossiersService.get(route.params.id as string)
     activeSection.value = dossier.value.type_client === 'PP' ? 'kyc-pp' : 'kyc-pm'
+    await loadDossierAlertes()
   } catch {
     error.value = 'Dossier introuvable.'
   } finally {
@@ -894,7 +969,8 @@ async function submitForAnalyse() {
 
 const CLERCS_ROLES     = ['clercs']
 const CONFORMITE_ROLES = ['responsable_conformite', 'notaire_principal', 'admin']
-const ALL_ROLES        = [...CLERCS_ROLES, ...CONFORMITE_ROLES]
+// Clôture / archivage (WRK-04, back: _CLOTURE) : Notaire Principal + Admin uniquement (séparation Art. 12).
+const CLOTURE_ROLES    = ['notaire_principal', 'admin']
 // Seuls admin et notaire_principal peuvent assigner un dossier
 const ASSIGNER_ROLES   = ['admin', 'notaire_principal']
 
@@ -1020,24 +1096,12 @@ const TRANSITIONS_CONFIG: Record<string, TransitionDef[]> = {
     { to: 'bloque',  label: 'Bloquer',  color: 'danger',  roles: CONFORMITE_ROLES },
   ],
   valide: [
-    { to: 'actif',   label: 'Mettre en actif', color: 'success', roles: ALL_ROLES },
-    { to: 'bloque',  label: 'Bloquer',          color: 'danger',  roles: CONFORMITE_ROLES },
-  ],
-  actif: [
-    { to: 'actif_sous_surveillance', label: 'Mettre sous surveillance', color: 'warning', roles: CONFORMITE_ROLES },
-    { to: 'resilie',                 label: 'Résilier',                  color: 'danger',  roles: CONFORMITE_ROLES },
-    { to: 'cloture',                 label: 'Clôturer',                  color: 'neutral', roles: CONFORMITE_ROLES },
-  ],
-  actif_sous_surveillance: [
-    { to: 'actif',   label: 'Retour à actif',  color: 'success', roles: CONFORMITE_ROLES },
-    { to: 'bloque',  label: 'Bloquer',          color: 'danger',  roles: CONFORMITE_ROLES },
-    { to: 'resilie', label: 'Résilier',          color: 'danger',  roles: CONFORMITE_ROLES },
-    { to: 'cloture', label: 'Clôturer',          color: 'neutral', roles: CONFORMITE_ROLES },
+    { to: 'traite',  label: 'Marquer traité', color: 'success', roles: CONFORMITE_ROLES },
+    { to: 'bloque',  label: 'Bloquer',         color: 'danger',  roles: CONFORMITE_ROLES },
   ],
   bloque:  [{ to: 'en_analyse', label: 'Réouvrir pour analyse', color: 'success', roles: CONFORMITE_ROLES }],
-  traite:  [{ to: 'cloture',  label: 'Clôturer',  color: 'neutral', roles: CONFORMITE_ROLES }],
-  resilie: [{ to: 'cloture',  label: 'Clôturer',  color: 'neutral', roles: CONFORMITE_ROLES }],
-  cloture: [{ to: 'archive',  label: 'Archiver',   color: 'neutral', roles: CONFORMITE_ROLES }],
+  traite:  [{ to: 'cloture',  label: 'Clôturer',  color: 'neutral', roles: CLOTURE_ROLES }],
+  cloture: [{ to: 'archive',  label: 'Archiver',   color: 'neutral', roles: CLOTURE_ROLES }],
 }
 
 const availableTransitions = computed((): TransitionDef[] => {
@@ -1080,6 +1144,7 @@ async function confirmTriggerManuel() {
   try {
     await dossiersService.triggerManuel(dossier.value.id, triggerModal.value.trigger, triggerModal.value.commentaire.trim())
     dossier.value = await dossiersService.get(dossier.value.id)
+    await loadDossierAlertes()
     triggerModal.value.open = false
   } catch (e: any) {
     triggerModal.value.error = e?.response?.data?.detail ?? 'Erreur lors du déclenchement.'
@@ -1096,6 +1161,7 @@ async function confirmTransition() {
     dossier.value = await dossiersService.transition(
       dossier.value.id, transitionModal.value.to, transitionModal.value.commentaire.trim(),
     )
+    await loadDossierAlertes()
     transitionModal.value.open = false
   } catch (e: any) {
     transitionModal.value.error = e?.response?.data?.detail ?? 'Erreur lors de la transition.'
@@ -1149,6 +1215,32 @@ function formatAmount(n: number | string): string {
 .surveillance-espece-banner svg { width: 18px; height: 18px; flex-shrink: 0; }
 .readonly-banner { display: flex; align-items: center; gap: 0.5rem; background: #f8fafc; border: 1px solid #cbd5e1; color: #475569; border-radius: 8px; padding: 0.7rem 1rem; font-size: 0.8125rem; font-weight: 600; margin: 1rem 0; }
 .readonly-icon { width: 18px; height: 18px; flex-shrink: 0; }
+
+/* ── Triggers actifs ── */
+.triggers-actifs-row { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 1rem; padding: 0.55rem 0.85rem; background: var(--color-bg-card); border: 1px solid var(--color-border); border-left: 3px solid var(--color-risk-high); border-radius: 10px; }
+.triggers-actifs-label { display: inline-flex; align-items: center; gap: 0.4rem; font-size: 0.78rem; font-weight: 600; color: var(--color-text-secondary); }
+.triggers-actifs-icon { width: 15px; height: 15px; color: var(--color-risk-high); flex-shrink: 0; }
+.trigger-chip { font-size: 0.72rem; font-weight: 700; padding: 4px 11px; border-radius: 99px; background: var(--color-risk-high-bg); color: var(--color-risk-high); letter-spacing: 0.03em; }
+.trigger-chip--ppe { background: #fee2e2; color: #b91c1c; }
+
+/* ── Alertes liées ── */
+.alertes-liees-card { margin-bottom: 1rem; }
+.alertes-liees-header { display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap; margin-bottom: 0.75rem; }
+.alertes-liees-toggle { width: 100%; background: none; border: none; cursor: pointer; padding: 0; text-align: left; }
+.alertes-toggle-left { display: inline-flex; align-items: center; gap: 0.5rem; }
+.alertes-chevron { width: 16px; height: 16px; color: var(--color-text-secondary); transition: transform 0.15s; flex-shrink: 0; }
+.alertes-chevron--open { transform: rotate(90deg); }
+.alertes-warn-badge { font-size: 0.75rem; font-weight: 700; color: #b91c1c; background: #fee2e2; padding: 0.25rem 0.6rem; border-radius: 6px; }
+.alertes-liees-list { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 0.4rem; }
+.alerte-liee-item { display: flex; align-items: center; gap: 0.5rem; font-size: 0.8125rem; flex-wrap: wrap; }
+.alerte-liee-niveau { font-weight: 700; font-size: 0.7rem; padding: 1px 6px; border-radius: 4px; }
+.niv-critique { background: #fee2e2; color: #dc2626; } .niv-eleve { background: #ffedd5; color: #c2410c; }
+.niv-moyen { background: #fef3c7; color: #92400e; } .niv-faible { background: #dbeafe; color: #1e40af; }
+.alerte-liee-type { font-weight: 600; }
+.alerte-liee-statut { font-size: 0.7rem; font-weight: 700; padding: 1px 6px; border-radius: 999px; }
+.st-ouverte { background: #fee2e2; color: #dc2626; } .st-en_cours { background: #fef3c7; color: #92400e; } .st-traitee { background: #d1fae5; color: #065f46; } .st-ignoree { background: #e2e8f0; color: #475569; }
+.alerte-liee-desc { color: var(--color-text-muted); flex: 1 1 100%; }
+.alertes-liees-hint { font-size: 0.7rem; color: var(--color-text-muted); margin: 0.5rem 0 0; }
 .meta-item  { display: flex; flex-direction: column; gap: 0.125rem; }
 .meta-label { font-size: 0.6875rem; font-weight: 600; color: var(--color-text-secondary); text-transform: uppercase; letter-spacing: 0.04em; }
 .meta-value { font-size: 0.8125rem; color: var(--color-text-primary); font-weight: 500; }

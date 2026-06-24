@@ -10,12 +10,14 @@
         </div>
         <h1 class="login-title">Vérification 2FA</h1>
         <p class="login-subtitle">
-          Saisissez le code affiché dans votre application d'authentification
+          {{ useBackup
+            ? 'Saisissez l\'un de vos codes de secours à usage unique'
+            : 'Saisissez le code affiché dans votre application d\'authentification' }}
         </p>
       </div>
 
       <form class="login-form" @submit.prevent="handleSubmit" novalidate>
-        <div class="field-group">
+        <div v-if="!useBackup" class="field-group">
           <label for="code" class="field-label">Code à 6 chiffres</label>
           <input
             id="code"
@@ -34,9 +36,30 @@
           <p v-if="error" class="field-error">{{ error }}</p>
         </div>
 
-        <button type="submit" class="btn-primary btn-login" :disabled="loading || code.length !== 6">
+        <div v-else class="field-group">
+          <label for="backup-code" class="field-label">Code de secours</label>
+          <input
+            id="backup-code"
+            ref="backupInput"
+            v-model="backupCode"
+            type="text"
+            maxlength="40"
+            class="field-input"
+            :class="{ 'field-input--error': error }"
+            placeholder="xxxxxxxxxx"
+            autocomplete="one-time-code"
+            :disabled="loading"
+          />
+          <p v-if="error" class="field-error">{{ error }}</p>
+        </div>
+
+        <button type="submit" class="btn-primary btn-login" :disabled="loading || (useBackup ? backupCode.trim().length < 6 : code.length !== 6)">
           <span v-if="loading" class="spinner" aria-hidden="true" />
           <span>{{ loading ? 'Vérification…' : 'Confirmer' }}</span>
+        </button>
+
+        <button type="button" class="btn-ghost" @click="toggleBackup">
+          {{ useBackup ? 'Utiliser le code de l\'application' : 'Utiliser un code de secours' }}
         </button>
 
         <button type="button" class="btn-ghost" @click="handleCancel">
@@ -52,7 +75,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import api from '@/services/api'
@@ -61,13 +84,24 @@ const router = useRouter()
 const authStore = useAuthStore()
 
 const code = ref('')
+const backupCode = ref('')
+const useBackup = ref(false)
 const error = ref('')
 const loading = ref(false)
 const codeInput = ref<HTMLInputElement | null>(null)
+const backupInput = ref<HTMLInputElement | null>(null)
 
 onMounted(() => {
   codeInput.value?.focus()
 })
+
+function toggleBackup() {
+  useBackup.value = !useBackup.value
+  error.value = ''
+  code.value = ''
+  backupCode.value = ''
+  nextTick(() => (useBackup.value ? backupInput.value : codeInput.value)?.focus())
+}
 
 async function handleSubmit() {
   error.value = ''
@@ -77,13 +111,17 @@ async function handleSubmit() {
   }
   loading.value = true
   try {
-    const { data } = await api.post('/auth/totp/verify', { code: code.value })
+    const { data } = useBackup.value
+      ? await api.post('/auth/totp/verify-backup', { code: backupCode.value })
+      : await api.post('/auth/totp/verify', { code: code.value })
     authStore.setToken(data.access_token)
     router.push({ name: 'dashboard' })
   } catch (err: any) {
     const status = err?.response?.status
     if (status === 422 || status === 400) {
-      error.value = 'Code incorrect. Vérifiez votre application et réessayez.'
+      error.value = useBackup.value
+        ? 'Code de secours invalide. Réessayez ou utilisez votre application.'
+        : 'Code incorrect. Vérifiez votre application et réessayez.'
     } else if (status === 401) {
       authStore.clearAuth()
       router.push({ name: 'login' })
@@ -91,7 +129,8 @@ async function handleSubmit() {
       error.value = 'Erreur de vérification. Réessayez.'
     }
     code.value = ''
-    codeInput.value?.focus()
+    backupCode.value = ''
+    nextTick(() => (useBackup.value ? backupInput.value : codeInput.value)?.focus())
   } finally {
     loading.value = false
   }

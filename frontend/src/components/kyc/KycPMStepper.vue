@@ -164,6 +164,10 @@
           <input v-model="representant.date_naissance" type="date" class="form-input" />
         </div>
         <div class="form-group">
+          <label class="form-label">Lieu de naissance</label>
+          <input v-model="representant.lieu_naissance" type="text" class="form-input" placeholder="Ville, Pays" />
+        </div>
+        <div class="form-group">
           <label class="form-label">Lieu d'habitation</label>
           <input v-model="representant.lieu_habitation" type="text" class="form-input" placeholder="Ville, Pays" />
         </div>
@@ -203,7 +207,8 @@
           <div class="form-group"><label class="form-label">Fonction</label><input v-model="d.fonction" type="text" class="form-input" /></div>
           <CountrySelect v-model="d.nationalite" label="Nationalité" />
           <div class="form-group"><label class="form-label">Date de naissance</label><input v-model="d.date_naissance" type="date" class="form-input" @blur="triggerDirigeantCheck(i)" /></div>
-          <div class="form-group"><label class="form-label">Lieu d'habitation</label><input v-model="d.lieu_habitation" type="text" class="form-input" placeholder="Ville, Pays" @blur="triggerDirigeantCheck(i)" /></div>
+          <div class="form-group"><label class="form-label">Lieu de naissance</label><input v-model="d.lieu_naissance" type="text" class="form-input" placeholder="Ville, Pays" @blur="triggerDirigeantCheck(i)" /></div>
+          <div class="form-group"><label class="form-label">Lieu d'habitation</label><input v-model="d.lieu_habitation" type="text" class="form-input" placeholder="Ville, Pays" /></div>
         </div>
         <div v-if="dirigeantScreenings[i]?.status === 'checking'" class="screening-badge screening-badge--checking">Criblage en cours…</div>
         <div v-else-if="dirigeantScreenings[i]?.status === 'blocked'" class="screening-badge screening-badge--blocked">⛔ Présent sur liste {{ dirigeantScreenings[i].liste }} — dossier bloqué</div>
@@ -231,7 +236,8 @@
           <div class="form-group"><label class="form-label">Prénoms</label><input v-model="be.prenoms" type="text" class="form-input" @blur="triggerBECheck(i)" /></div>
           <CountrySelect v-model="be.nationalite" label="Nationalité" />
           <div class="form-group"><label class="form-label">Date naissance</label><input v-model="be.date_naissance" type="date" class="form-input" @blur="triggerBECheck(i)" /></div>
-          <div class="form-group"><label class="form-label">Lieu d'habitation</label><input v-model="be.lieu_habitation" type="text" class="form-input" placeholder="Ville, Pays" @blur="triggerBECheck(i)" /></div>
+          <div class="form-group"><label class="form-label">Lieu de naissance</label><input v-model="be.lieu_naissance" type="text" class="form-input" placeholder="Ville, Pays" @blur="triggerBECheck(i)" /></div>
+          <div class="form-group"><label class="form-label">Lieu d'habitation</label><input v-model="be.lieu_habitation" type="text" class="form-input" placeholder="Ville, Pays" /></div>
           <div class="form-group"><label class="form-label">% détention</label><input v-model.number="be.pourcentage" type="number" min="0" max="100" class="form-input" /></div>
           <div class="form-group" style="align-self:end">
             <label class="checkbox-row">
@@ -358,8 +364,8 @@ const saveStatus  = ref<'idle' | 'saving' | 'saved' | 'error'>('idle')
 const saving      = ref(false)
 const errors      = ref<Record<string, string>>({})
 
-type Dirigeant = { nom: string; prenoms: string; fonction: string; nationalite: string; date_naissance: string; lieu_habitation: string }
-type BE = { nom: string; prenoms: string; nationalite: string; date_naissance: string; lieu_habitation: string; pourcentage: number | null; statut_ppe: boolean }
+type Dirigeant = { nom: string; prenoms: string; fonction: string; nationalite: string; date_naissance: string; lieu_naissance: string; lieu_habitation: string }
+type BE = { nom: string; prenoms: string; nationalite: string; date_naissance: string; lieu_naissance: string; lieu_habitation: string; pourcentage: number | null; statut_ppe: boolean }
 
 // Étape Transaction (montant + mode de paiement) — niveau dossier
 const transaction = ref<{
@@ -395,7 +401,7 @@ const form = ref<Partial<KycPMData>>({
 })
 
 // Représentant légal (sérialisé en JSON `mandataire` + `nom_representant_legal`)
-const representant = ref({ nom: '', prenoms: '', fonction: '', nationalite: '', type_piece: '', numero_piece: '', date_expiration_piece: '', date_naissance: '', lieu_habitation: '' })
+const representant = ref({ nom: '', prenoms: '', fonction: '', nationalite: '', type_piece: '', numero_piece: '', date_expiration_piece: '', date_naissance: '', lieu_naissance: '', lieu_habitation: '' })
 
 const dirigeants   = ref<Dirigeant[]>([])
 const beneficiaires = ref<BE[]>([])
@@ -415,7 +421,13 @@ watch(
     sfcState.value = { status: 'checking', liste: null }
     _sfcTimer = setTimeout(async () => {
       try {
-        const r = await api.post('/kyc/screening/pre-check', { nom, prenoms })
+        const rep = representant.value
+        const r = await api.post('/kyc/screening/pre-check', {
+          nom, prenoms,
+          date_naissance: rep.date_naissance || null,
+          lieu_naissance: rep.lieu_naissance || null,
+          nationalite: rep.nationalite || null,
+        })
         sfcState.value = { status: r.data.level, liste: r.data.liste }
       } catch {
         sfcState.value = { status: 'idle', liste: null }
@@ -439,7 +451,8 @@ function triggerDirigeantCheck(i: number) {
       const result = await dossiersService.checkSanctionsPreScreen(
         d.nom, d.prenoms,
         d.date_naissance || undefined,
-        undefined,
+        d.nationalite || undefined,
+        d.lieu_naissance || undefined,
       )
       dirigeantScreenings.value[i].status = result.level
       dirigeantScreenings.value[i].liste  = result.liste
@@ -464,7 +477,8 @@ function triggerBECheck(i: number) {
       const result = await dossiersService.checkSanctionsPreScreen(
         be.nom, be.prenoms,
         be.date_naissance || undefined,
-        undefined,
+        be.nationalite || undefined,
+        be.lieu_naissance || undefined,
       )
       beScreenings.value[i].status = result.level
       beScreenings.value[i].liste  = result.liste
@@ -501,6 +515,7 @@ onMounted(async () => {
       representant.value.type_piece = m.type_piece ?? ''
       representant.value.numero_piece = m.numero_piece ?? ''
       representant.value.date_naissance = m.date_naissance ?? ''
+      representant.value.lieu_naissance = m.lieu_naissance ?? ''
       representant.value.lieu_habitation = m.lieu_habitation ?? ''
     }
   }
@@ -655,6 +670,7 @@ async function persistActionnaires() {
           pourcentage: pct,
           pays_residence: b.nationalite || null,
           date_naissance: b.date_naissance || null,
+          lieu_naissance: b.lieu_naissance || null,
           nationalite: b.nationalite || null,
         })
       }
@@ -681,7 +697,7 @@ async function finish() {
 // ── Dynamic lists ─────────────────────────────────────────────────────────────
 
 function addDirigeant() {
-  dirigeants.value.push({ nom: '', prenoms: '', fonction: '', nationalite: '', date_naissance: '', lieu_habitation: '' })
+  dirigeants.value.push({ nom: '', prenoms: '', fonction: '', nationalite: '', date_naissance: '', lieu_naissance: '', lieu_habitation: '' })
   dirigeantScreenings.value.push({ status: 'idle', liste: null })
 }
 function removeDirigeant(i: number) {
@@ -690,7 +706,7 @@ function removeDirigeant(i: number) {
 }
 
 function addBE() {
-  beneficiaires.value.push({ nom: '', prenoms: '', nationalite: '', date_naissance: '', lieu_habitation: '', pourcentage: null, statut_ppe: false })
+  beneficiaires.value.push({ nom: '', prenoms: '', nationalite: '', date_naissance: '', lieu_naissance: '', lieu_habitation: '', pourcentage: null, statut_ppe: false })
   beScreenings.value.push({ status: 'idle', liste: null })
 }
 function removeBE(i: number) {
