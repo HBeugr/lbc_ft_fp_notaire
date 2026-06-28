@@ -154,7 +154,7 @@ const applicableDocs = computed((): ReqDoc[] => {
   const d = props.dossier
   const isPM = d.type_client === 'PM'
   const hasPPE = d.trigger_actif === 'T1'
-  const hasCompteTiers = !!(d.kyc_pp?.est_compte_tiers || d.kyc_pm?.est_compte_tiers)
+  const hasCompteTiers = !!(d.kyc_pp?.mandataire || d.kyc_pm?.mandataire)
   const list: ReqDoc[] = []
 
   list.push({ key: 'piece_identite',         label: "Pièce d'identité en cours de validité",  conditionLabel: 'Toujours',                              obligatoire: true })

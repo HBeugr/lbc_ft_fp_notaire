@@ -34,17 +34,15 @@
             <p class="be-name">{{ be.raison_sociale_nom }}</p>
             <p class="be-meta">
               {{ be.nationalite ?? '—' }}
+              <span v-if="be.pays_residence" class="sep">·</span>
+              <span v-if="be.pays_residence">{{ be.pays_residence }}</span>
               <span class="sep">·</span>
               <span class="pct-badge">{{ be.pourcentage ?? 0 }}%</span>
               <span v-if="(be.pourcentage ?? 0) >= 25" class="be25-tag">≥ 25%</span>
-              <span v-if="be.entreprise_cotee" class="controle-badge">Cotée</span>
             </p>
           </div>
         </div>
         <div class="be-card-right">
-          <span class="validation-badge" :class="`validation--${be.statut_validation}`">
-            {{ VALIDATION_LABELS[be.statut_validation ?? 'en_attente'] }}
-          </span>
           <button class="icon-btn" @click="openForm(be)" title="Modifier">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
           </button>
@@ -95,12 +93,6 @@ import { dossiersService, type KycBEData } from '@/services/dossiers'
 const props = defineProps<{ dossierId: string; clientType?: 'PP' | 'PM' }>()
 
 const MAX_BE = 10
-
-const VALIDATION_LABELS: Record<string, string> = {
-  en_attente: 'En attente',
-  valide:     'Validé',
-  rejete:     'Rejeté',
-}
 
 const loading   = ref(true)
 const beList    = ref<KycBEData[]>([])

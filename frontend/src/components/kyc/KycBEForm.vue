@@ -9,132 +9,36 @@
           </button>
         </div>
 
-        <!-- Step tabs -->
-        <div class="tabs">
-          <button
-            v-for="(t, i) in TABS"
-            :key="i"
-            class="tab"
-            :class="{ 'tab--active': activeTab === i }"
-            @click="activeTab = i"
-          >{{ t }}</button>
-        </div>
-
         <div class="modal-body">
-          <!-- Tab 1 — Identification -->
-          <div v-if="activeTab === 0" class="form-grid">
+          <div class="form-grid">
             <div class="form-group">
               <label class="form-label">Nom <span class="req">*</span></label>
               <input v-model="form.nom" type="text" class="form-input" @blur="triggerSanctionsCheck" />
               <p v-if="errors.nom" class="form-error">{{ errors.nom }}</p>
             </div>
             <div class="form-group">
-              <label class="form-label">Prénoms <span class="req">*</span></label>
+              <label class="form-label">Prénoms</label>
               <input v-model="form.prenoms" type="text" class="form-input" @blur="triggerSanctionsCheck" />
-              <p v-if="errors.prenoms" class="form-error">{{ errors.prenoms }}</p>
             </div>
-            <div class="form-group">
-              <label class="form-label">Date de naissance</label>
-              <input v-model="form.date_naissance" type="date" class="form-input" @blur="triggerSanctionsCheck" />
-            </div>
-            <div class="form-group">
-              <label class="form-label">Lieu de naissance</label>
-              <input v-model="form.lieu_naissance" type="text" class="form-input" placeholder="Ville, Pays" @blur="triggerSanctionsCheck" />
-            </div>
-            <CountrySelect v-model="form.nationalite" label="Nationalité" @blur="triggerSanctionsCheck" />
-            <CountrySelect v-model="form.pays_residence" label="Pays de résidence" />
             <div class="form-group">
               <label class="form-label">N° pièce (CNI / passeport)</label>
               <input v-model="form.cni_passeport" type="text" class="form-input" />
             </div>
             <div class="form-group">
-              <label class="form-label">Lien avec le client</label>
-              <input v-model="form.lien_avec_client" type="text" class="form-input" placeholder="Ex : actionnaire, dirigeant, parent…" />
-            </div>
-            <div class="form-group" style="align-self:end">
-              <label class="checkbox-row">
-                <input v-model="form.entreprise_cotee" type="checkbox" class="checkbox" />
-                <span class="form-label" style="margin:0">Entreprise cotée en bourse</span>
-              </label>
-            </div>
-          </div>
-
-          <!-- Tab 2 — Détention & registre BE -->
-          <div v-else-if="activeTab === 1" class="form-grid">
-            <div class="form-group">
-              <label class="form-label">% de détention du capital <span class="req">*</span></label>
+              <label class="form-label">% de participation <span class="req">*</span></label>
               <input v-model.number="form.pourcentage" type="number" min="0" max="100" step="0.01" class="form-input" placeholder="≥ 25 %" />
               <p v-if="errors.pourcentage" class="form-error">{{ errors.pourcentage }}</p>
             </div>
             <div class="form-group">
-              <label class="form-label">% de droits de vote</label>
-              <input v-model.number="form.pourcentage_droits_vote" type="number" min="0" max="100" step="0.01" class="form-input" />
+              <label class="form-label">Date de naissance</label>
+              <input v-model="form.date_naissance" type="date" class="form-input" @blur="triggerSanctionsCheck" />
             </div>
-            <div class="form-group">
-              <label class="form-label">Entité intermédiaire (contrôle indirect)</label>
-              <input v-model="form.entite_intermediaire_nom" type="text" class="form-input" placeholder="Nom de l'entité interposée" />
-            </div>
-            <div class="form-group">
-              <label class="form-label">% via l'entité intermédiaire</label>
-              <input v-model.number="form.entite_intermediaire_pct" type="number" min="0" max="100" step="0.01" class="form-input" />
-            </div>
-            <div class="divider form-group--full" />
-            <div class="form-group">
-              <label class="form-label">Registre officiel BE (greffe) — demande</label>
-              <select v-model="form.registre_be_demande" class="form-select">
-                <option :value="null">— Sélectionner —</option>
-                <option value="oui">Oui</option>
-                <option value="non">Non</option>
-                <option value="en_cours">En cours</option>
-              </select>
-            </div>
-            <div class="form-group">
-              <label class="form-label">Résultat registre BE</label>
-              <select v-model="form.registre_be_resultat" class="form-select">
-                <option :value="null">— Sélectionner —</option>
-                <option value="conforme">Conforme</option>
-                <option value="divergence">Divergence</option>
-                <option value="non_trouve">Non trouvé</option>
-              </select>
-            </div>
-            <div class="form-group form-group--full">
-              <label class="form-label">Note registre BE</label>
-              <textarea v-model="form.registre_be_note" class="form-textarea" rows="2" placeholder="Observations sur le registre officiel des BE" />
-            </div>
-          </div>
-
-          <!-- Tab 3 — Filtrage SFC & validation -->
-          <div v-else-if="activeTab === 2" class="form-grid">
-            <div class="form-group">
-              <label class="form-label">Résultat filtrage SFC</label>
-              <select v-model="form.filtrage_sfc_resultat" class="form-select">
-                <option :value="null">— Sélectionner —</option>
-                <option value="aucune">Aucune correspondance</option>
-                <option value="faux_positif">Faux positif</option>
-                <option value="correspondance">Correspondance</option>
-              </select>
-            </div>
-            <div class="form-group form-group--full">
-              <label class="form-label">Justification du filtrage SFC</label>
-              <textarea v-model="form.filtrage_sfc_justification" class="form-textarea" rows="2" placeholder="Listes consultées, analyse, décision…" />
-            </div>
-            <div class="divider form-group--full" />
-            <div class="form-group">
-              <label class="form-label">Statut de validation (RC)</label>
-              <select v-model="form.statut_validation" class="form-select">
-                <option value="en_attente">En attente</option>
-                <option value="valide">Validé</option>
-                <option value="rejete">Rejeté</option>
-              </select>
-            </div>
-            <div class="form-group form-group--full">
-              <label class="form-label">Commentaire de validation</label>
-              <textarea v-model="form.commentaire_validation" class="form-textarea" rows="2" />
-            </div>
+            <CountrySelect v-model="form.nationalite" label="Nationalité" @blur="triggerSanctionsCheck" />
+            <CountrySelect v-model="form.pays_residence" label="Pays de résidence" />
           </div>
         </div>
 
-        <!-- Sanctions bannières -->
+        <!-- Sanctions screening -->
         <div v-if="sanctionsState.status === 'blocked'" class="sanctions-banner sanctions-banner--blocked" role="alert">
           <span class="sanctions-banner__icon">⛔</span>
           <div>
@@ -150,10 +54,6 @@
               Correspondance détectée sur liste {{ sanctionsState.liste }}.
               Renseignez la date de naissance pour confirmer ou lever l'alerte.
             </p>
-            <button class="btn-submit-review" :disabled="submittingReview" @click="submitForReview">
-              <span v-if="submittingReview" class="spin btn-icon" style="display:inline-block;width:12px;height:12px;border:2px solid #fff;border-top-color:transparent;border-radius:50%" />
-              {{ submittingReview ? 'Soumission…' : 'Soumettre pour vérification compliance' }}
-            </button>
           </div>
         </div>
         <div v-else-if="sanctionsState.status === 'clear' && sanctionsState.reason === 'dob_mismatch'" class="sanctions-banner sanctions-banner--clear" role="status">
@@ -181,7 +81,6 @@
 
 <script setup lang="ts">
 import { ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
 import { dossiersService, type KycBEData } from '@/services/dossiers'
 import CountrySelect from '@/components/common/CountrySelect.vue'
 
@@ -196,14 +95,41 @@ const emit = defineEmits<{
   saved: [data: KycBEData]
 }>()
 
-const TABS = ['Identification', 'Détention & registre', 'Filtrage & validation']
-
-const router = useRouter()
-const activeTab  = ref(0)
-const saving     = ref(false)
-const submittingReview = ref(false)
+const saving = ref(false)
 const serverError = ref('')
-const errors     = ref<Record<string, string>>({})
+const errors = ref<Record<string, string>>({})
+
+// Champs d'aide nom/prenoms fusionnés en `raison_sociale_nom` au save.
+const form = ref<{
+  nom: string
+  prenoms: string
+  cni_passeport: string | null
+  pourcentage: number | null
+  date_naissance: string | null
+  nationalite: string | null
+  pays_residence: string | null
+}>({
+  nom: '',
+  prenoms: '',
+  cni_passeport: null,
+  pourcentage: null,
+  date_naissance: null,
+  nationalite: null,
+  pays_residence: null,
+})
+
+watch(() => props.be, (val) => {
+  if (val) {
+    const parts = (val.raison_sociale_nom ?? '').trim().split(' ')
+    form.value.nom = parts[0] ?? ''
+    form.value.prenoms = parts.slice(1).join(' ')
+    form.value.cni_passeport = val.cni_passeport ?? null
+    form.value.pourcentage = val.pourcentage ?? null
+    form.value.date_naissance = val.date_naissance ?? null
+    form.value.nationalite = val.nationalite ?? null
+    form.value.pays_residence = val.pays_residence ?? null
+  }
+}, { immediate: true })
 
 // ── Sanctions screening ───────────────────────────────────────────────────────
 const sanctionsState = ref<{
@@ -215,132 +141,50 @@ const sanctionsState = ref<{
 let _sanctionsTimer: ReturnType<typeof setTimeout> | null = null
 
 function triggerSanctionsCheck() {
-  if (!form.value.nom?.trim() || !form.value.prenoms?.trim()) return
+  if (!form.value.nom?.trim()) return
   if (_sanctionsTimer) clearTimeout(_sanctionsTimer)
   _sanctionsTimer = setTimeout(async () => {
     sanctionsState.value.status = 'checking'
     const result = await dossiersService.checkSanctionsPreScreen(
-      form.value.nom!,
-      form.value.prenoms!,
+      form.value.nom,
+      form.value.prenoms || form.value.nom,
       form.value.date_naissance || undefined,
-      (form.value.nationalite as string) || undefined,
-      (form.value.lieu_naissance as string) || undefined,
+      form.value.nationalite || undefined,
     )
     sanctionsState.value.status = result.level
-    sanctionsState.value.liste  = result.liste
+    sanctionsState.value.liste = result.liste
     sanctionsState.value.reason = result.reason
   }, 500)
 }
 
-watch([() => form.value.nom, () => form.value.prenoms], ([n, p]) => {
-  if (!n?.trim() || !p?.trim()) {
-    sanctionsState.value = { status: 'idle', liste: null, reason: null }
-  }
+watch(() => form.value.nom, (n) => {
+  if (!n?.trim()) sanctionsState.value = { status: 'idle', liste: null, reason: null }
 })
-
-// Aligné sur le schéma backend (KycBECreate). `nom`/`prenoms` sont des champs
-// d'aide fusionnés en `raison_sociale_nom` au save.
-const form = ref<Partial<KycBEData> & { nom?: string; prenoms?: string }>({
-  nom: '',
-  prenoms: '',
-  date_naissance: null,
-  lieu_naissance: null,
-  nationalite: null,
-  pays_residence: null,
-  cni_passeport: null,
-  lien_avec_client: null,
-  entreprise_cotee: false,
-  pourcentage: null,
-  pourcentage_droits_vote: null,
-  entite_intermediaire_nom: null,
-  entite_intermediaire_pct: null,
-  registre_be_demande: null,
-  registre_be_resultat: null,
-  registre_be_note: null,
-  filtrage_sfc_resultat: null,
-  filtrage_sfc_justification: null,
-  statut_validation: 'en_attente',
-  commentaire_validation: null,
-})
-
-watch(() => props.be, (val) => {
-  if (val) {
-    Object.assign(form.value, val)
-    // `raison_sociale_nom` (backend) → champs d'aide nom/prenoms
-    if (val.raison_sociale_nom && !form.value.nom) {
-      const parts = val.raison_sociale_nom.trim().split(' ')
-      form.value.nom = parts[0] ?? ''
-      form.value.prenoms = parts.slice(1).join(' ')
-    }
-  }
-}, { immediate: true })
 
 function buildBEPayload(): KycBEData {
   const f = form.value
-  const raison = `${f.nom ?? ''} ${f.prenoms ?? ''}`.trim()
   return {
-    raison_sociale_nom: raison,
-    cni_passeport: f.cni_passeport ?? null,
+    raison_sociale_nom: `${f.nom ?? ''} ${f.prenoms ?? ''}`.trim(),
+    cni_passeport: f.cni_passeport || null,
     pourcentage: f.pourcentage ?? null,
-    pourcentage_droits_vote: f.pourcentage_droits_vote ?? null,
-    entite_intermediaire_nom: f.entite_intermediaire_nom ?? null,
-    entite_intermediaire_pct: f.entite_intermediaire_pct ?? null,
-    pays_residence: f.pays_residence ?? null,
-    date_naissance: f.date_naissance ?? null,
-    lieu_naissance: f.lieu_naissance ?? null,
-    nationalite: f.nationalite ?? null,
-    lien_avec_client: f.lien_avec_client ?? null,
-    entreprise_cotee: f.entreprise_cotee ?? false,
-    registre_be_demande: f.registre_be_demande ?? null,
-    registre_be_resultat: f.registre_be_resultat ?? null,
-    registre_be_note: f.registre_be_note ?? null,
-    filtrage_sfc_resultat: f.filtrage_sfc_resultat ?? null,
-    filtrage_sfc_justification: f.filtrage_sfc_justification ?? null,
-    statut_validation: f.statut_validation ?? 'en_attente',
-    commentaire_validation: f.commentaire_validation ?? null,
+    pays_residence: f.pays_residence || null,
+    date_naissance: f.date_naissance || null,
+    nationalite: f.nationalite || null,
   }
 }
 
 function validate(): boolean {
   errors.value = {}
   if (!form.value.nom?.trim()) errors.value.nom = 'Champ requis.'
-  if (!form.value.prenoms?.trim()) errors.value.prenoms = 'Champ requis.'
   const pct = Number(form.value.pourcentage)
-  if (pct < 0 || pct > 100) errors.value.pourcentage = 'Pourcentage entre 0 et 100.'
+  if (form.value.pourcentage != null && (pct < 0 || pct > 100)) {
+    errors.value.pourcentage = 'Pourcentage entre 0 et 100.'
+  }
   return Object.keys(errors.value).length === 0
 }
 
-async function submitForReview() {
-  if (!validate()) {
-    activeTab.value = Object.keys(errors.value).some(k => ['nom', 'prenoms'].includes(k)) ? 0 : 1
-    return
-  }
-  submittingReview.value = true
-  serverError.value = ''
-  try {
-    // Le save déclenche le criblage côté backend → transition automatique vers en_analyse.
-    const ct = props.clientType ?? 'PP'
-    if (props.be?.id) {
-      await dossiersService.updateKycBE(props.dossierId, props.be.id, buildBEPayload(), ct)
-    } else {
-      await dossiersService.createKycBE(props.dossierId, buildBEPayload(), ct)
-    }
-    router.push({ name: 'kyc-detail', params: { id: props.dossierId } })
-  } catch (err: unknown) {
-    const e = err as { response?: { data?: { detail?: { message?: string } | string } } }
-    const detail = e?.response?.data?.detail
-    serverError.value = (typeof detail === 'object' && detail !== null ? detail.message : detail as string)
-      ?? 'Erreur lors de la soumission pour vérification.'
-  } finally {
-    submittingReview.value = false
-  }
-}
-
 async function handleSave() {
-  if (!validate()) {
-    activeTab.value = Object.keys(errors.value).some(k => ['nom', 'prenoms'].includes(k)) ? 0 : 1
-    return
-  }
+  if (!validate()) return
   saving.value = true
   serverError.value = ''
   try {
@@ -351,7 +195,7 @@ async function handleSave() {
     emit('saved', result)
   } catch (err: unknown) {
     const e = err as { response?: { data?: { detail?: string } } }
-    serverError.value = e?.response?.data?.detail ?? 'Erreur lors de l\'enregistrement.'
+    serverError.value = e?.response?.data?.detail ?? "Erreur lors de l'enregistrement."
   } finally {
     saving.value = false
   }
@@ -367,42 +211,24 @@ async function handleSave() {
   background: var(--color-bg-card); border-radius: 12px; box-shadow: 0 20px 60px rgba(0,0,0,0.2);
   width: 100%; max-width: 600px; max-height: 90vh; display: flex; flex-direction: column; overflow: hidden;
 }
-.modal-header { display: flex; align-items: center; justify-content: space-between; padding: 1.25rem 1.5rem 0; }
+.modal-header { display: flex; align-items: center; justify-content: space-between; padding: 1.25rem 1.5rem 0.5rem; }
 .modal-title  { font-size: 1rem; font-weight: 700; color: var(--color-text-primary); margin: 0; }
 .modal-close  { background: none; border: none; cursor: pointer; padding: 0.25rem; color: var(--color-text-muted); }
 .modal-close svg { width: 18px; height: 18px; }
 
-.tabs { display: flex; gap: 0; border-bottom: 1px solid var(--color-border); margin: 1rem 1.5rem 0; }
-.tab { padding: 0.5rem 1rem; font-size: 0.8125rem; font-weight: 500; color: var(--color-text-secondary); background: none; border: none; border-bottom: 2px solid transparent; cursor: pointer; }
-.tab--active { color: var(--color-sidebar-bg); border-bottom-color: var(--color-sidebar-bg); font-weight: 700; }
-
-.modal-body { padding: 1.25rem 1.5rem; overflow-y: auto; flex: 1; }
+.modal-body { padding: 1rem 1.5rem; overflow-y: auto; flex: 1; }
 .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem 1rem; }
 .form-group { display: flex; flex-direction: column; gap: 0.25rem; }
-.form-group--full { grid-column: 1 / -1; }
 .form-label { font-size: 0.75rem; font-weight: 600; color: var(--color-text-secondary); }
 .req { color: var(--color-status-bloque); }
-.form-input, .form-select, .form-textarea {
+.form-input {
   padding: 0.5rem 0.75rem; border: 1px solid var(--color-border); border-radius: 8px;
   font-size: 0.8125rem; color: var(--color-text-primary); background: var(--color-bg-card); outline: none;
 }
-.form-input:focus, .form-select:focus, .form-textarea:focus {
+.form-input:focus {
   border-color: var(--color-sidebar-bg); box-shadow: 0 0 0 3px rgba(201,162,39,0.12);
 }
-.form-textarea { resize: vertical; }
 .form-error { font-size: 0.75rem; color: var(--color-status-bloque); margin: 0; }
-.checkbox-row { display: flex; align-items: center; gap: 0.5rem; cursor: pointer; }
-.checkbox { width: 15px; height: 15px; accent-color: var(--color-sidebar-bg); cursor: pointer; }
-.info-text { font-size: 0.8125rem; color: var(--color-text-secondary); margin: 0; }
-
-.ppe-banner {
-  display: flex; gap: 0.75rem; align-items: flex-start;
-  background: var(--color-status-bloque-bg); color: var(--color-status-bloque);
-  border-radius: 8px; padding: 0.75rem 1rem; font-size: 0.8125rem;
-}
-.ppe-banner svg { width: 18px; height: 18px; flex-shrink: 0; margin-top: 1px; }
-.ppe-banner strong { font-weight: 700; display: block; margin-bottom: 0.25rem; }
-.ppe-banner p { margin: 0; font-size: 0.75rem; }
 
 .sanctions-banner {
   display: flex; align-items: flex-start; gap: 0.625rem;
@@ -411,25 +237,14 @@ async function handleSave() {
 .sanctions-banner__icon { font-size: 1.1rem; flex-shrink: 0; }
 .sanctions-banner__title { font-weight: 700; font-size: 0.8125rem; margin: 0 0 0.2rem; }
 .sanctions-banner__msg { font-size: 0.75rem; margin: 0; }
-
 .sanctions-banner--blocked { background: #fef2f2; border: 1px solid #fca5a5; }
 .sanctions-banner--blocked .sanctions-banner__title { color: #991b1b; }
 .sanctions-banner--blocked .sanctions-banner__msg { color: #b91c1c; }
-
 .sanctions-banner--warning { background: #fffbeb; border: 1px solid #fcd34d; }
 .sanctions-banner--warning .sanctions-banner__title { color: #92400e; }
 .sanctions-banner--warning .sanctions-banner__msg { color: #b45309; }
-
 .sanctions-banner--clear { background: #f0fdf4; border: 1px solid #86efac; }
 .sanctions-banner--clear .sanctions-banner__msg { color: #15803d; font-weight: 600; }
-
-.btn-submit-review {
-  margin-top: 0.5rem; display: inline-flex; align-items: center; gap: 0.375rem;
-  padding: 0.35rem 0.75rem; background: #b45309; color: #fff;
-  border: none; border-radius: 6px; font-size: 0.75rem; font-weight: 600;
-  cursor: pointer; transition: opacity 0.15s;
-}
-.btn-submit-review:disabled { opacity: 0.6; cursor: not-allowed; }
 
 .modal-error { margin: 0 1.5rem; padding: 0.5rem 0.75rem; background: var(--color-status-bloque-bg); color: var(--color-status-bloque); border-radius: 7px; font-size: 0.8125rem; }
 

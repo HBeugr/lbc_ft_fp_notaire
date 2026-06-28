@@ -271,6 +271,18 @@ async def add_ppe_pp(
     return KycPPEOut.model_validate(ppe)
 
 
+@router.delete("/{dossier_id}/kyc/pp/ppe/{ppe_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_ppe_pp(
+    dossier_id: str,
+    ppe_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    await _get_dossier_or_404(db, dossier_id, current_user)
+    await db.execute(sa_delete(KycPPE).where(KycPPE.id == ppe_id))
+    await db.commit()
+
+
 # ── KYC PM ────────────────────────────────────────────────────────────────────
 
 @router.get("/{dossier_id}/kyc/pm", response_model=KycPMOut)
@@ -464,3 +476,15 @@ async def add_ppe_pm(
     await db.commit()
     await db.refresh(ppe)
     return KycPPEOut.model_validate(ppe)
+
+
+@router.delete("/{dossier_id}/kyc/pm/ppe/{ppe_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_ppe_pm(
+    dossier_id: str,
+    ppe_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    await _get_dossier_or_404(db, dossier_id, current_user)
+    await db.execute(sa_delete(KycPPE).where(KycPPE.id == ppe_id))
+    await db.commit()

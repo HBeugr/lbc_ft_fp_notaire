@@ -403,6 +403,27 @@ export const dossiersService = {
     return api.delete(`/dossiers/${dossierId}/kyc/${seg}/be/${beId}`)
   },
 
+  // KYC PPE — API unifiée selon le contexte client (PP ou PM)
+  async createKycPPE(dossierId: string, payload: Partial<KycPPEData>, clientType: 'PP' | 'PM' = 'PP'): Promise<KycPPEData> {
+    const seg = clientType === 'PM' ? 'pm' : 'pp'
+    const { data } = await api.post<KycPPEData>(`/dossiers/${dossierId}/kyc/${seg}/ppe`, payload)
+    return data
+  },
+  async listKycPPE(dossierId: string, clientType: 'PP' | 'PM' = 'PP'): Promise<KycPPEData[]> {
+    try {
+      const kyc = clientType === 'PM'
+        ? await api.get<KycPMData>(`/dossiers/${dossierId}/kyc/pm`).then(r => r.data)
+        : await api.get<KycPPData>(`/dossiers/${dossierId}/kyc/pp`).then(r => r.data)
+      return (kyc.ppe_declarations ?? []) as KycPPEData[]
+    } catch {
+      return []
+    }
+  },
+  deleteKycPPE(dossierId: string, ppeId: string, clientType: 'PP' | 'PM' = 'PP') {
+    const seg = clientType === 'PM' ? 'pm' : 'pp'
+    return api.delete(`/dossiers/${dossierId}/kyc/${seg}/ppe/${ppeId}`)
+  },
+
   // Scoring / Matrice de risque
   getScoringPrefill: (dossierId: string) =>
     api.get<ScoringPrefill>(`/dossiers/${dossierId}/scoring/prefill`).then(r => r.data),
