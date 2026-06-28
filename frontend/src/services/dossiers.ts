@@ -419,6 +419,11 @@ export const dossiersService = {
       return []
     }
   },
+  async updateKycPPE(dossierId: string, ppeId: string, payload: Partial<KycPPEData>, clientType: 'PP' | 'PM' = 'PP'): Promise<KycPPEData> {
+    const seg = clientType === 'PM' ? 'pm' : 'pp'
+    const { data } = await api.patch<KycPPEData>(`/dossiers/${dossierId}/kyc/${seg}/ppe/${ppeId}`, payload)
+    return data
+  },
   deleteKycPPE(dossierId: string, ppeId: string, clientType: 'PP' | 'PM' = 'PP') {
     const seg = clientType === 'PM' ? 'pm' : 'pp'
     return api.delete(`/dossiers/${dossierId}/kyc/${seg}/ppe/${ppeId}`)

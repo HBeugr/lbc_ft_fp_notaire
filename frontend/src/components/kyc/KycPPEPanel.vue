@@ -33,9 +33,14 @@
             </p>
           </div>
         </div>
-        <button class="icon-btn icon-btn--danger" @click="ppeToDelete = ppe" title="Supprimer">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>
-        </button>
+        <div class="card-actions">
+          <button class="icon-btn" @click="openForm(ppe)" title="Modifier">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+          </button>
+          <button class="icon-btn icon-btn--danger" @click="ppeToDelete = ppe" title="Supprimer">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>
+          </button>
+        </div>
       </div>
     </div>
 
@@ -44,7 +49,7 @@
       <div v-if="showForm" class="modal-backdrop" @click.self="showForm = false">
         <div class="modal">
           <div class="modal-header">
-            <h2 class="modal-title">Ajouter une déclaration PPE</h2>
+            <h2 class="modal-title">{{ editingId ? 'Modifier' : 'Ajouter' }} une déclaration PPE</h2>
             <button class="modal-close" @click="showForm = false">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
             </button>
@@ -80,7 +85,7 @@
           <div class="modal-footer">
             <button class="btn-ghost" @click="showForm = false">Annuler</button>
             <button class="btn-primary" :disabled="saving" @click="save">
-              {{ saving ? 'Enregistrement…' : 'Ajouter' }}
+              {{ saving ? 'Enregistrement…' : (editingId ? 'Mettre à jour' : 'Ajouter') }}
             </button>
           </div>
         </div>
@@ -120,6 +125,7 @@ const STATUT_LABELS: Record<string, string> = {
 const loading = ref(true)
 const ppeList = ref<KycPPEData[]>([])
 const showForm = ref(false)
+const editingId = ref<string | null>(null)
 const saving = ref(false)
 const serverError = ref('')
 const ppeToDelete = ref<KycPPEData | null>(null)
@@ -150,8 +156,14 @@ async function refresh() {
   }
 }
 
-function openForm() {
-  form.value = blankForm()
+function openForm(ppe?: KycPPEData) {
+  if (ppe) {
+    editingId.value = ppe.id ?? null
+    form.value = { ...ppe }
+  } else {
+    editingId.value = null
+    form.value = blankForm()
+  }
   serverError.value = ''
   showForm.value = true
 }
@@ -160,8 +172,15 @@ async function save() {
   saving.value = true
   serverError.value = ''
   try {
-    const created = await dossiersService.createKycPPE(props.dossierId, form.value, props.clientType ?? 'PP')
-    ppeList.value.push(created)
+    const ct = props.clientType ?? 'PP'
+    if (editingId.value) {
+      const updated = await dossiersService.updateKycPPE(props.dossierId, editingId.value, form.value, ct)
+      const idx = ppeList.value.findIndex(p => p.id === editingId.value)
+      if (idx >= 0) ppeList.value[idx] = updated
+    } else {
+      const created = await dossiersService.createKycPPE(props.dossierId, form.value, ct)
+      ppeList.value.push(created)
+    }
     showForm.value = false
   } catch (err: unknown) {
     const e = err as { response?: { data?: { detail?: string } } }
@@ -211,6 +230,7 @@ async function doDelete() {
 .statut--PPE_Etranger { color: var(--color-status-bloque); background: var(--color-status-bloque-bg); }
 .statut--Entourage_PPE { color: var(--color-status-en-analyse); background: var(--color-status-en-analyse-bg); }
 
+.card-actions { display: flex; align-items: center; gap: 0.25rem; }
 .icon-btn { background: none; border: none; cursor: pointer; padding: 0.25rem; color: var(--color-text-muted); border-radius: 5px; }
 .icon-btn:hover { background: var(--color-bg-card); }
 .icon-btn svg { width: 15px; height: 15px; }

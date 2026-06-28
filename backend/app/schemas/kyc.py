@@ -178,6 +178,23 @@ class KycPPECreate(BaseModel):
     commentaire_validation: str | None = None
 
 
+class KycPPEUpdate(BaseModel):
+    """Mise à jour partielle d'une déclaration PPE (tous champs optionnels)."""
+    statut_ppe: Literal["Non_PPE", "PPE_National", "PPE_Etranger", "Entourage_PPE"] | None = None
+    fonctions: str | None = None
+    pays_concerne: str | None = None
+    verification_giaba: bool | None = None
+    verification_ofac: bool | None = None
+    verification_ue: bool | None = None
+    ras: bool | None = None
+    resultat_presse: Literal["Negatif", "Positif", "Ambigu"] | None = None
+    details_presse: str | None = None
+    niveau_exposition: Literal["Faible", "Moyen", "Eleve"] | None = None
+    mesures_proposees: str | None = None
+    statut_validation: Literal["en_attente", "valide", "rejete"] | None = None
+    commentaire_validation: str | None = None
+
+
 class KycBEOut(BaseModel):
     id: str
     raison_sociale_nom: str

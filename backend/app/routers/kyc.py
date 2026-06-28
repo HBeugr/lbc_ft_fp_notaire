@@ -12,7 +12,7 @@ from app.schemas.kyc import (
     KycPMUpsert, KycPMOut,
     KycBECreate, KycBEUpdate, KycBEOut,
     KycActCreate, KycActOut,
-    KycPPECreate, KycPPEOut,
+    KycPPECreate, KycPPEOut, KycPPEUpdate,
 )
 from app.routers.scoring import recompute_cache
 from app.services import sanctions_service
@@ -283,6 +283,30 @@ async def delete_ppe_pp(
     await db.commit()
 
 
+async def _update_ppe(db: AsyncSession, ppe_id: str, body: KycPPEUpdate) -> KycPPE:
+    result = await db.execute(select(KycPPE).where(KycPPE.id == ppe_id))
+    ppe = result.scalar_one_or_none()
+    if not ppe:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Déclaration PPE introuvable.")
+    for k, v in body.model_dump(exclude_unset=True).items():
+        setattr(ppe, k, v)
+    await db.commit()
+    await db.refresh(ppe)
+    return ppe
+
+
+@router.patch("/{dossier_id}/kyc/pp/ppe/{ppe_id}", response_model=KycPPEOut)
+async def update_ppe_pp(
+    dossier_id: str,
+    ppe_id: str,
+    body: KycPPEUpdate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> KycPPEOut:
+    await _get_dossier_or_404(db, dossier_id, current_user)
+    return KycPPEOut.model_validate(await _update_ppe(db, ppe_id, body))
+
+
 # ── KYC PM ────────────────────────────────────────────────────────────────────
 
 @router.get("/{dossier_id}/kyc/pm", response_model=KycPMOut)
@@ -488,3 +512,15 @@ async def delete_ppe_pm(
     await _get_dossier_or_404(db, dossier_id, current_user)
     await db.execute(sa_delete(KycPPE).where(KycPPE.id == ppe_id))
     await db.commit()
+
+
+@router.patch("/{dossier_id}/kyc/pm/ppe/{ppe_id}", response_model=KycPPEOut)
+async def update_ppe_pm(
+    dossier_id: str,
+    ppe_id: str,
+    body: KycPPEUpdate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> KycPPEOut:
+    await _get_dossier_or_404(db, dossier_id, current_user)
+    return KycPPEOut.model_validate(await _update_ppe(db, ppe_id, body))
