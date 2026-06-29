@@ -375,12 +375,7 @@
               </div>
             </template>
 
-            <!-- Bénéficiaires effectifs & déclarations PPE (ajout direct depuis la fiche) -->
-            <div class="be-separator">
-              <h4 class="subsection-title">Bénéficiaires effectifs — KYC-BE</h4>
-            </div>
-            <KycBEPanel :dossier-id="dossier.id" client-type="PP" />
-
+            <!-- Déclaration PPE (CDC : la fiche PP ne comporte pas de table BE) -->
             <div class="be-separator">
               <h4 class="subsection-title">Personnes Politiquement Exposées (PPE)</h4>
             </div>

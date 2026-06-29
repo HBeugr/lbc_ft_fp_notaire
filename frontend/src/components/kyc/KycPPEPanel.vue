@@ -79,6 +79,48 @@
                 <label class="check-row"><input v-model="form.verification_ue" type="checkbox" class="checkbox" /> Vérification UE / CSNU</label>
                 <label class="check-row"><input v-model="form.ras" type="checkbox" class="checkbox" /> RAS (rien à signaler)</label>
               </div>
+
+              <!-- Vigilance renforcée (Art. 29) -->
+              <div class="form-group form-group--full section-divider">Vigilance renforcée (Art. 29)</div>
+              <div class="form-group form-group--full">
+                <label class="form-label">Résultat presse négative</label>
+                <select v-model="form.resultat_presse" class="form-input">
+                  <option :value="null">— Non renseigné —</option>
+                  <option value="Negatif">Négatif (rien trouvé)</option>
+                  <option value="Positif">Positif (élément défavorable)</option>
+                  <option value="Ambigu">Ambigu</option>
+                </select>
+              </div>
+              <div v-if="form.resultat_presse && form.resultat_presse !== 'Negatif'" class="form-group form-group--full">
+                <label class="form-label">Détails presse négative</label>
+                <textarea v-model="form.details_presse" class="form-input" rows="2" placeholder="Sources, dates, nature des éléments défavorables…" />
+              </div>
+              <div class="form-group form-group--full">
+                <label class="form-label">Niveau d'exposition</label>
+                <select v-model="form.niveau_exposition" class="form-input">
+                  <option :value="null">— Non renseigné —</option>
+                  <option value="Faible">Faible</option>
+                  <option value="Moyen">Moyen</option>
+                  <option value="Eleve">Élevé</option>
+                </select>
+              </div>
+              <div class="form-group form-group--full">
+                <label class="form-label">Mesures de vigilance renforcée proposées</label>
+                <textarea v-model="form.mesures_proposees" class="form-input" rows="2" placeholder="Ex : approbation Notaire Principal, justificatifs d'origine des fonds renforcés, suivi périodique…" />
+              </div>
+              <div class="form-group form-group--full section-divider">Validation (Responsable Conformité)</div>
+              <div class="form-group form-group--full">
+                <label class="form-label">Statut de validation</label>
+                <select v-model="form.statut_validation" class="form-input">
+                  <option value="en_attente">En attente</option>
+                  <option value="valide">Validé</option>
+                  <option value="rejete">Rejeté</option>
+                </select>
+              </div>
+              <div class="form-group form-group--full">
+                <label class="form-label">Commentaire de validation</label>
+                <textarea v-model="form.commentaire_validation" class="form-input" rows="2" />
+              </div>
             </div>
           </div>
           <div v-if="serverError" class="modal-error">{{ serverError }}</div>
@@ -142,6 +184,12 @@ function blankForm(): Partial<KycPPEData> {
     verification_ofac: false,
     verification_ue: false,
     ras: false,
+    resultat_presse: null,
+    details_presse: null,
+    niveau_exposition: null,
+    mesures_proposees: null,
+    statut_validation: 'en_attente',
+    commentaire_validation: null,
   }
 }
 
@@ -246,6 +294,7 @@ async function doDelete() {
 .form-grid { display: grid; grid-template-columns: 1fr; gap: 0.75rem; }
 .form-group { display: flex; flex-direction: column; gap: 0.25rem; }
 .form-group--full { grid-column: 1 / -1; }
+.section-divider { font-size: 0.75rem; font-weight: 700; color: var(--color-sidebar-bg); text-transform: uppercase; letter-spacing: 0.04em; border-bottom: 1px solid var(--color-border); padding-bottom: 0.25rem; margin-top: 0.5rem; }
 .form-label { font-size: 0.75rem; font-weight: 600; color: var(--color-text-secondary); }
 .req { color: var(--color-status-bloque); }
 .form-input { padding: 0.5rem 0.75rem; border: 1px solid var(--color-border); border-radius: 8px; font-size: 0.8125rem; color: var(--color-text-primary); background: var(--color-bg-card); outline: none; }
