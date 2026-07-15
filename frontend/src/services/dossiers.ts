@@ -492,9 +492,11 @@ export const dossiersService = {
     return data
   },
 
-  // Statut transition
+  // Statut transition — le backend attend des query params (new_statut, commentaire), pas un body.
   async transition(id: string, statut: StatutDossier, commentaire?: string): Promise<DossierOut> {
-    const { data } = await api.patch<DossierOut>(`/dossiers/${id}/statut`, { statut, commentaire })
+    const { data } = await api.patch<DossierOut>(`/dossiers/${id}/statut`, null, {
+      params: { new_statut: statut, commentaire: commentaire || undefined },
+    })
     return data
   },
 

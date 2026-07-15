@@ -783,18 +783,18 @@
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
               </div>
               <div>
-                <p class="dos-ref">{{ dos.reference }}</p>
+                <p class="dos-ref">{{ dos.reference_interne }}</p>
                 <p class="dos-meta">
                   Créée le {{ formatDate(dos.created_at) }}
-                  <span v-if="dos.finalized_at"> · Finalisée le {{ formatDate(dos.finalized_at) }}</span>
+                  <span v-if="dos.date_transmission_centif"> · Transmise le {{ formatDate(dos.date_transmission_centif) }}</span>
                 </p>
               </div>
             </div>
             <div class="dos-row-right">
-              <span class="dos-statut" :class="`dos-statut--${dos.statut}`">
-                {{ dos.statut === 'finalisee' ? 'Finalisée' : 'Brouillon' }}
+              <span class="dos-statut" :class="dosStatutCategory(dos.statut)">
+                {{ dosStatutLabel(dos.statut) }}
               </span>
-              <button class="btn-ghost btn-sm" @click="router.push({ name: 'dos', query: { dosId: dos.id } })">
+              <button class="btn-ghost btn-sm" @click="router.push({ name: 'dos-detail', params: { id: dos.id } })">
                 Ouvrir
               </button>
             </div>
@@ -821,7 +821,13 @@ import DocumentsPanel from '@/components/kyc/DocumentsPanel.vue'
 import ScoringPanel from '@/components/kyc/ScoringPanel.vue'
 import TriggerBanner from '@/components/kyc/TriggerBanner.vue'
 import { dossiersService, type DossierOut, type CommentaireOut, type HistoriqueOut, type StatutDossier, type KycPPData, type KycPMData, type TypeOperation, TYPE_OPERATION_LABELS } from '@/services/dossiers'
-import { dosService, type DosOut } from '@/services/dos'
+import { dosService, dosStatutLabel, type DosOut } from '@/services/dos'
+
+// Catégorie visuelle du statut DOS (verrouillée = engagée dans le circuit CENTIF).
+const DOS_LOCKED = ['en_validation', 'validee_rc', 'soumis', 'transmise', 'classee', 'accuse_recu']
+function dosStatutCategory(statut: string): string {
+  return `dos-statut--${DOS_LOCKED.includes(statut) ? 'finalisee' : 'brouillon'}`
+}
 import { useAuthStore } from '@/stores/auth'
 
 const route  = useRoute()
@@ -964,7 +970,7 @@ watch(activeSection, async (section) => {
   if (section === 'dos') {
     dosLoading.value = true
     try {
-      const r = await dosService.list(id)
+      const r = await dosService.listForDossier(id)
       dosList.value = r.items
     } finally {
       dosLoading.value = false
@@ -1038,7 +1044,9 @@ const ASSIGNER_ROLES   = ['admin', 'notaire_principal']
 const isAgent    = computed(() => CLERCS_ROLES.includes(auth.user?.role ?? ''))
 const isRC       = computed(() => CONFORMITE_ROLES.includes(auth.user?.role ?? ''))
 const canAssign  = computed(() => ASSIGNER_ROLES.includes(auth.user?.role ?? ''))
-const canCreateDos = computed(() => !!auth.user)
+// Accès DOS (Art. 63) — aligné sur le backend require_dos_access.
+const DOS_ROLES = ['admin', 'notaire_principal', 'responsable_conformite', 'declarant_centif']
+const canCreateDos = computed(() => DOS_ROLES.includes(auth.user?.role ?? ''))
 // Édition : superviseur (RC/notaire principal/admin) ou assigné courant (aligné backend is_supervisor)
 const canModify = computed(() =>
   isRC.value || (!!dossier.value?.assigned_to && dossier.value.assigned_to === auth.user?.id),

@@ -1,9 +1,10 @@
 import api from './api'
 
+// ── Modèle backend notaire (CENTIF) — aligné sur app/schemas/dos.py ───────────
 export interface DosAddendumOut {
   id: string
   dos_id: string
-  auteur_id: string
+  user_id: string
   contenu: string
   created_at: string
 }
@@ -11,23 +12,41 @@ export interface DosAddendumOut {
 export interface DosOut {
   id: string
   dossier_id: string
-  reference: string
-  section_1_organisme: Record<string, string> | null
-  section_2_reference_auto: string | null
-  section_3_objet: string | null
-  section_4_identite_declarant: Record<string, string> | null
-  section_5_contexte_operation: string | null
-  section_6_montant_estime: number | null
-  section_7_intervenants: Record<string, unknown> | null
-  section_8_analyse_soupcon: string | null
-  section_9_motifs: string[] | null
-  section_10_informations_complementaires: string | null
-  statut: 'brouillon' | 'finalisee'
-  created_by: string
-  finalized_by: string | null
-  finalized_at: string | null
-  minio_path: string | null
+  reference_interne: string
+  statut: string
+  statut_operation: string | null
+  date_detection: string | null
+  organisme_libelle: string | null
+  organisme_adresse: string | null
+  organisme_email: string | null
+  organisme_telephone: string | null
+  type_soupcon_bc: boolean
+  type_soupcon_ft: boolean
+  type_soupcon_prolif: boolean
+  motifs: Record<string, unknown> | null
+  statut_operations: Record<string, unknown> | null
+  detail_transactions: unknown
+  indices_blanchiment: string | null
+  identification: Record<string, unknown> | null
+  relations_affaires: Record<string, unknown> | null
+  supports: Record<string, unknown> | null
+  autres_informations: string | null
+  decision: string | null
+  motif_classement: string | null
+  initie_par: string
+  valide_par: string | null
+  valide_par_rc: string | null
+  valide_rc_at: string | null
+  valide_par_dg: string | null
+  valide_dg_at: string | null
+  date_transmission_centif: string | null
+  transmis_par: string | null
+  soumis_at: string | null
+  accuse_recu_at: string | null
+  accuse_recu_ref: string | null
+  accuse_alerte_j15_envoyee: boolean
   created_at: string
+  updated_at: string
   addendums: DosAddendumOut[]
 }
 
@@ -36,65 +55,28 @@ export interface DosListResponse {
   total: number
 }
 
-export interface DosSectionUpdate {
-  section_3_objet?: string
-  section_4_identite_declarant?: Record<string, string>
-  section_5_contexte_operation?: string
-  section_6_montant_estime?: number
-  section_7_intervenants?: Record<string, unknown>
-  section_8_analyse_soupcon?: string
-  section_9_motifs?: string[]
-  section_10_informations_complementaires?: string
-}
-
-export const MOTIFS_SUSPICION = [
-  "Opération sans justification économique apparente",
-  "Refus de fournir des documents justificatifs",
-  "Utilisation de faux documents",
-  "Opération avec pays ou territoire non coopératif",
-  "Montage juridique complexe sans raison légitime",
-  "Client n'agissant pas pour son propre compte",
-  "Transactions en espèces inhabituelles",
-  "Opération impliquant une personne politiquement exposée (PPE)",
-  "Transactions fractionnées (structuring)",
-  "Changements soudains de comportement financier",
-  "Opération ne correspondant pas au profil client",
-  "Source de fonds inexpliquée ou invérifiable",
-  "Opération en rapport avec une activité illicite suspectée",
-  "Toute autre circonstance laissant soupçonner un blanchiment",
-]
-
 export const dosService = {
+  // Création — le backend attend { dossier_id } sur POST /dos et génère la référence.
   async create(dossierId: string): Promise<DosOut> {
-    const { data } = await api.post<DosOut>(`/dossiers/${dossierId}/dos`)
+    const { data } = await api.post<DosOut>('/dos', { dossier_id: dossierId })
     return data
   },
 
-  async list(dossierId: string): Promise<DosListResponse> {
-    const { data } = await api.get<DosListResponse>(`/dossiers/${dossierId}/dos`)
-    return data
+  // Liste globale — GET /dos renvoie un tableau (paramètres statut / limit / offset).
+  async listAll(params?: { statut?: string; limit?: number; offset?: number }): Promise<DosListResponse> {
+    const { data } = await api.get<DosOut[]>('/dos', { params })
+    return { items: data, total: data.length }
   },
 
-  async listAll(params?: { page?: number; page_size?: number; reference?: string; statut?: string }): Promise<DosListResponse> {
-    const { data } = await api.get<DosListResponse | DosOut[]>('/dos', { params })
-    if (Array.isArray(data)) {
-      return { items: data, total: data.length }
-    }
-    return data
+  // Le backend n'expose pas de liste par dossier : on filtre côté client (1 DOS max par dossier).
+  async listForDossier(dossierId: string): Promise<DosListResponse> {
+    const { data } = await api.get<DosOut[]>('/dos', { params: { limit: 200 } })
+    const items = data.filter(d => d.dossier_id === dossierId)
+    return { items, total: items.length }
   },
 
   async get(dosId: string): Promise<DosOut> {
     const { data } = await api.get<DosOut>(`/dos/${dosId}`)
-    return data
-  },
-
-  async updateSections(dosId: string, update: DosSectionUpdate): Promise<DosOut> {
-    const { data } = await api.patch<DosOut>(`/dos/${dosId}/sections`, update)
-    return data
-  },
-
-  async finaliser(dosId: string): Promise<DosOut> {
-    const { data } = await api.post<DosOut>(`/dos/${dosId}/finaliser`)
     return data
   },
 
@@ -104,39 +86,51 @@ export const dosService = {
   },
 
   async addAddendum(dosId: string, contenu: string): Promise<DosAddendumOut> {
-    const { data } = await api.post<DosAddendumOut>(`/dos/${dosId}/addendum`, { contenu })
+    const { data } = await api.post<DosAddendumOut>(`/dos/${dosId}/addendums`, { contenu })
     return data
   },
 
-  // --- Workflow CENTIF (backend notaire) : soumettre → valider (RC) → transmettre (DG) / classer → accusé ---
-  async soumettre(dosId: string): Promise<unknown> {
-    const { data } = await api.post(`/dos/${dosId}/soumettre`)
+  // --- Workflow CENTIF : soumettre → valider (RC) → transmettre (DG) / classer → accusé ---
+  async soumettre(dosId: string): Promise<DosOut> {
+    const { data } = await api.post<DosOut>(`/dos/${dosId}/soumettre`)
     return data
   },
 
-  // Validation conformité — Responsable Conformité (1re validation, Art. 100)
-  async valider(dosId: string): Promise<unknown> {
-    const { data } = await api.post(`/dos/${dosId}/valider`)
+  async valider(dosId: string): Promise<DosOut> {
+    const { data } = await api.post<DosOut>(`/dos/${dosId}/valider`)
     return data
   },
 
-  // Autorisation finale + transmission CENTIF — Notaire Principal (DG, distinct du RC)
-  async transmettre(dosId: string): Promise<unknown> {
-    const { data } = await api.post(`/dos/${dosId}/transmettre`)
+  async transmettre(dosId: string): Promise<DosOut> {
+    const { data } = await api.post<DosOut>(`/dos/${dosId}/transmettre`)
     return data
   },
 
-  // Classement sans suite, motivé
-  async classer(dosId: string, motif: string): Promise<unknown> {
-    const { data } = await api.post(`/dos/${dosId}/classer`, { motif })
+  async classer(dosId: string, motif: string): Promise<DosOut> {
+    const { data } = await api.post<DosOut>(`/dos/${dosId}/classer`, { motif })
     return data
   },
 
-  // Accusé de réception CENTIF
-  async accuseRecu(dosId: string, referenceCentif: string): Promise<unknown> {
-    const { data } = await api.patch(`/dos/${dosId}/accuse-recu`, null, {
+  async accuseRecu(dosId: string, referenceCentif: string): Promise<DosOut> {
+    const { data } = await api.patch<DosOut>(`/dos/${dosId}/accuse-recu`, null, {
       params: { reference_centif: referenceCentif },
     })
     return data
   },
+}
+
+// Libellés de statut CENTIF (partagés par la liste et le formulaire).
+export const DOS_STATUT_LABELS: Record<string, string> = {
+  brouillon: 'Brouillon',
+  en_cours: 'En cours',
+  en_validation: 'En validation',
+  soumis: 'Soumise',
+  validee_rc: 'Validée conformité',
+  transmise: 'Transmise CENTIF',
+  classee: 'Classée sans suite',
+  accuse_recu: 'Accusé reçu',
+}
+
+export function dosStatutLabel(statut: string): string {
+  return DOS_STATUT_LABELS[statut] ?? statut
 }

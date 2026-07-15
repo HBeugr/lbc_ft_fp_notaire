@@ -120,7 +120,7 @@ const router = createRouter({
           path: 'utilisateurs',
           name: 'users',
           component: () => import('@/views/users/UsersView.vue'),
-          meta: { roles: ['admin', 'responsable_conformite'] },
+          meta: { roles: ['admin', 'notaire_principal', 'responsable_conformite'] },
         },
         {
           path: 'parametres',

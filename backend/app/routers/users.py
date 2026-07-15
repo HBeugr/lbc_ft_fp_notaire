@@ -3,7 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core import security
-from app.core.deps import get_current_user, require_admin, require_user_manager
+from app.core.deps import get_current_user, require_rc, require_user_manager
 from app.models.user import User
 from app.repositories import user_repo, audit_repo
 from app.schemas.users import UserCreate, UserListOut, UserOut, UserUpdate
@@ -18,7 +18,9 @@ async def get_me(current_user: User = Depends(get_current_user)) -> UserOut:
 
 @router.get("", response_model=UserListOut)
 async def list_users(
-    _: User = Depends(require_admin),
+    # Consultation : admin, Notaire Principal (gestionnaires) + RC en lecture seule.
+    # La création/modification/désactivation reste réservée à require_user_manager.
+    _: User = Depends(require_rc),
     db: AsyncSession = Depends(get_db),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),

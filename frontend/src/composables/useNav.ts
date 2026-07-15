@@ -45,7 +45,7 @@ const ROLE_ACCESS: Record<string, NotaireRole[]> = {
   sanctions:          ['admin', 'notaire_principal', 'responsable_conformite', 'declarant_centif'],
   registres:          ['admin', 'notaire_principal', 'responsable_conformite'],
   audit:              ['admin', 'notaire_principal', 'responsable_conformite'],
-  users:              ['admin', 'responsable_conformite'],
+  users:              ['admin', 'notaire_principal', 'responsable_conformite'],
   settings:           ['admin', 'notaire_principal'],
   procedures:         ['admin', 'notaire_principal', 'responsable_conformite', 'clercs', 'declarant_centif', 'autre_utilisateur'],
 }

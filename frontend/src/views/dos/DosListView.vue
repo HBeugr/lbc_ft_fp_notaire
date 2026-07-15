@@ -56,29 +56,8 @@
       </div>
     </Teleport>
 
-    <!-- ── STEPPER VIEW ───────────────────────────────────────────────────── -->
-    <template v-if="showStepper && activeDos">
-      <div class="stepper-header">
-        <button class="btn-back" @click="closeStepper">
-          ← Retour à la liste
-        </button>
-        <div class="stepper-title-wrap">
-          <h2 class="stepper-page-title">{{ activeDos.reference }}</h2>
-          <span class="statut-badge" :class="activeDos.statut">
-            {{ activeDos.statut === 'finalisee' ? 'Finalisée' : 'Brouillon' }}
-          </span>
-        </div>
-      </div>
-      <DosStepper
-        :dos="activeDos"
-        @save="onSectionSaved"
-        @finalized="onFinalized"
-        @close="closeStepper"
-      />
-    </template>
-
     <!-- ── LIST VIEW ─────────────────────────────────────────────────────── -->
-    <template v-if="!showStepper">
+    <template>
       <!-- Main header -->
       <div class="view-header">
         <div>
@@ -132,7 +111,12 @@
             <select v-model="filterStatut" class="form-input">
               <option value="">Tous</option>
               <option value="brouillon">Brouillon</option>
-              <option value="finalisee">Finalisée</option>
+              <option value="en_cours">En cours</option>
+              <option value="en_validation">En validation</option>
+              <option value="validee_rc">Validée conformité</option>
+              <option value="transmise">Transmise CENTIF</option>
+              <option value="classee">Classée sans suite</option>
+              <option value="accuse_recu">Accusé reçu</option>
             </select>
           </div>
           <div class="search-actions">
@@ -165,7 +149,7 @@
                 <th>Référence</th>
                 <th>Statut</th>
                 <th>Date de création</th>
-                <th>Date de finalisation</th>
+                <th>Transmission CENTIF</th>
                 <th>Annexes</th>
                 <th class="col-actions">Actions</th>
               </tr>
@@ -175,16 +159,16 @@
                 v-for="dos in dosList"
                 :key="dos.id"
                 class="dos-row"
-                :class="{ 'row--finalisee': dos.statut === 'finalisee' }"
+                :class="{ 'row--finalisee': isLocked(dos.statut) }"
               >
-                <td class="cell-ref">{{ dos.reference }}</td>
+                <td class="cell-ref">{{ dos.reference_interne }}</td>
                 <td>
-                  <span class="statut-badge" :class="dos.statut">
-                    {{ dos.statut === 'finalisee' ? 'Finalisée' : 'Brouillon' }}
+                  <span class="statut-badge" :class="statutClass(dos.statut)">
+                    {{ dosStatutLabel(dos.statut) }}
                   </span>
                 </td>
                 <td class="cell-date">{{ formatDate(dos.created_at) }}</td>
-                <td class="cell-date">{{ dos.finalized_at ? formatDate(dos.finalized_at) : '—' }}</td>
+                <td class="cell-date">{{ dos.date_transmission_centif ? formatDate(dos.date_transmission_centif) : '—' }}</td>
                 <td class="cell-annexes">
                   <span v-if="dos.addendums.length" class="annexe-count">
                     {{ dos.addendums.length }}
@@ -192,22 +176,14 @@
                   <span v-else class="no-annexe">—</span>
                 </td>
                 <td class="cell-actions">
-                  <button class="action-btn action-btn--view" @click="openConsultModal(dos)" title="Consulter">
-                    Consulter
-                  </button>
-                  <button
-                    v-if="dos.statut === 'brouillon' && canCreate"
-                    class="action-btn action-btn--edit"
-                    @click="openDos(dos)"
-                    title="Compléter le brouillon"
-                  >
-                    Modifier
+                  <button class="action-btn action-btn--view" @click="openDos(dos)" title="Ouvrir la DOS">
+                    Ouvrir
                   </button>
                   <button class="action-btn action-btn--pdf" @click="downloadPdf(dos.id)" title="Télécharger PDF">
                     PDF
                   </button>
                   <button
-                    v-if="dos.statut === 'finalisee' && canCreate"
+                    v-if="isLocked(dos.statut) && canCreate"
                     class="action-btn action-btn--annexe"
                     @click="openAddendumModal(dos)"
                     title="Ajouter une annexe"
@@ -250,100 +226,12 @@
       </template>
     </template>
 
-    <!-- ── Consult Modal (readonly) ────────────────────────────────────── -->
-    <Teleport to="body">
-      <div v-if="consultModal.visible" class="modal-overlay" @click.self="consultModal.visible = false">
-        <div class="modal consult-modal">
-          <div class="consult-modal-header">
-            <div class="consult-header-left">
-              <h2 class="modal-title">{{ consultModal.dos?.reference }}</h2>
-              <span v-if="consultModal.dos" class="statut-badge" :class="consultModal.dos.statut">
-                {{ consultModal.dos.statut === 'finalisee' ? 'Finalisée' : 'Brouillon' }}
-              </span>
-            </div>
-            <button class="modal-close-btn" @click="consultModal.visible = false">✕</button>
-          </div>
-          <div v-if="consultModal.dos" class="consult-body">
-            <div class="consult-meta">
-              <span>Créée le {{ formatDate(consultModal.dos.created_at) }}</span>
-              <span v-if="consultModal.dos.finalized_at"> · Finalisée le {{ formatDate(consultModal.dos.finalized_at) }}</span>
-            </div>
-
-            <div v-if="consultModal.dos.section_3_objet" class="consult-section">
-              <div class="consult-section-label">Section 3 — Objet de la déclaration</div>
-              <div class="consult-section-value">{{ consultModal.dos.section_3_objet }}</div>
-            </div>
-
-            <div v-if="consultModal.dos.section_5_contexte_operation" class="consult-section">
-              <div class="consult-section-label">Section 5 — Contexte de l'opération</div>
-              <div class="consult-section-value">{{ consultModal.dos.section_5_contexte_operation }}</div>
-            </div>
-
-            <div v-if="consultModal.dos.section_6_montant_estime" class="consult-section">
-              <div class="consult-section-label">Section 6 — Montant estimé</div>
-              <div class="consult-section-value">{{ consultModal.dos.section_6_montant_estime?.toLocaleString('fr-CI') }} FCFA</div>
-            </div>
-
-            <div v-if="consultModal.dos.section_8_analyse_soupcon" class="consult-section">
-              <div class="consult-section-label">Section 8 — Analyse des soupçons</div>
-              <div class="consult-section-value">{{ consultModal.dos.section_8_analyse_soupcon }}</div>
-            </div>
-
-            <div v-if="consultModal.dos.section_9_motifs?.length" class="consult-section">
-              <div class="consult-section-label">Section 9 — Motifs de suspicion</div>
-              <ul class="motifs-list">
-                <li v-for="m in consultModal.dos.section_9_motifs" :key="m">{{ m }}</li>
-              </ul>
-            </div>
-
-            <div v-if="consultModal.dos.section_10_informations_complementaires" class="consult-section">
-              <div class="consult-section-label">Section 10 — Informations complémentaires</div>
-              <div class="consult-section-value">{{ consultModal.dos.section_10_informations_complementaires }}</div>
-            </div>
-
-            <div v-if="consultModal.dos.addendums.length" class="consult-section">
-              <div class="consult-section-label">Annexes ({{ consultModal.dos.addendums.length }})</div>
-              <div
-                v-for="add in consultModal.dos.addendums"
-                :key="add.id"
-                class="addendum-item"
-              >
-                <div class="addendum-date">{{ formatDate(add.created_at) }}</div>
-                <div class="addendum-content">{{ add.contenu }}</div>
-              </div>
-            </div>
-
-            <div
-              v-if="!consultModal.dos.section_3_objet && !consultModal.dos.section_5_contexte_operation && !consultModal.dos.section_8_analyse_soupcon"
-              class="consult-empty"
-            >
-              Cette DOS est en brouillon — aucune section n'a encore été complétée.
-            </div>
-          </div>
-          <div class="modal-actions">
-            <button class="btn-secondary" @click="consultModal.visible = false">Fermer</button>
-            <button v-if="consultModal.dos" class="btn-secondary" @click="downloadPdf(consultModal.dos.id)">⬇ PDF</button>
-            <button
-              v-if="consultModal.dos?.statut === 'finalisee' && canCreate"
-              class="btn-secondary"
-              @click="openAddendumFromModal"
-            >+ Annexe</button>
-            <button
-              v-if="consultModal.dos?.statut === 'brouillon' && canCreate"
-              class="btn-edit"
-              @click="openDosFromModal"
-            >Modifier</button>
-          </div>
-        </div>
-      </div>
-    </Teleport>
-
     <!-- Addendum Modal -->
     <Teleport to="body">
       <div v-if="addendumModal.visible" class="modal-overlay" @click.self="addendumModal.visible = false">
         <div class="modal">
-          <h2 class="modal-title">Annexe — {{ addendumModal.dos?.reference }}</h2>
-          <p class="modal-desc">La DOS est finalisée. Ajoutez une annexe non supprimable.</p>
+          <h2 class="modal-title">Annexe — {{ addendumModal.dos?.reference_interne }}</h2>
+          <p class="modal-desc">Ajoutez une annexe (complément d'information) — append-only, non supprimable.</p>
           <textarea
             v-model="addendumModal.contenu"
             class="form-textarea"
@@ -365,25 +253,29 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
-import { dosService, type DosOut } from '@/services/dos'
+import { dosService, dosStatutLabel, type DosOut } from '@/services/dos'
 import { dossiersService } from '@/services/dossiers'
-import DosStepper from '@/components/dos/DosStepper.vue'
 
 const PAGE_SIZE = 15
 
 const route = useRoute()
+const router = useRouter()
 const auth = useAuthStore()
 
-const DOS_ROLES = ['responsable_conformite', 'declarant_centif', 'dirigeant', 'admin']
+// Accès DOS (Art. 63) — aligné sur le backend require_dos_access.
+const DOS_ROLES = ['admin', 'notaire_principal', 'responsable_conformite', 'declarant_centif']
 const canCreate = computed(() => !!auth.user && DOS_ROLES.includes(auth.user.role))
 
+// Statuts « verrouillés » : la DOS est engagée dans le circuit (plus un simple brouillon).
+const LOCKED_STATUTS = ['en_validation', 'validee_rc', 'soumis', 'transmise', 'classee', 'accuse_recu']
+function isLocked(statut: string): boolean { return LOCKED_STATUTS.includes(statut) }
+function statutClass(statut: string): string { return isLocked(statut) ? 'finalisee' : 'brouillon' }
+
 // ── Global list state ────────────────────────────────────────────────────────
-const dosList = ref<DosOut[]>([])
-const total = ref(0)
+const allDos = ref<DosOut[]>([])
 const currentPage = ref(1)
-const totalPages = computed(() => Math.ceil(total.value / PAGE_SIZE))
 const loading = ref(false)
 const searchError = ref('')
 
@@ -391,13 +283,22 @@ const searchError = ref('')
 const filterRef = ref('')
 const filterStatut = ref('')
 
-// ── Stepper ──────────────────────────────────────────────────────────────────
-const showStepper = ref(false)
-const activeDos = ref<DosOut | null>(null)
+// Filtrage client (le backend liste tout ; la recherche par référence est locale).
+const filteredDos = computed(() => {
+  const ref_ = filterRef.value.trim().toLowerCase()
+  return allDos.value.filter(d =>
+    (!filterStatut.value || d.statut === filterStatut.value) &&
+    (!ref_ || d.reference_interne.toLowerCase().includes(ref_))
+  )
+})
+const total = computed(() => filteredDos.value.length)
+const totalPages = computed(() => Math.ceil(total.value / PAGE_SIZE))
+const dosList = computed(() =>
+  filteredDos.value.slice((currentPage.value - 1) * PAGE_SIZE, currentPage.value * PAGE_SIZE)
+)
 
 // ── Modals ───────────────────────────────────────────────────────────────────
 const showArt63 = ref(false)
-const consultModal = ref({ visible: false, dos: null as DosOut | null })
 const addendumModal = ref({
   visible: false,
   dos: null as DosOut | null,
@@ -427,14 +328,8 @@ async function loadDos(page = 1) {
   searchError.value = ''
   currentPage.value = page
   try {
-    const resp = await dosService.listAll({
-      page,
-      page_size: PAGE_SIZE,
-      reference: filterRef.value.trim() || undefined,
-      statut: filterStatut.value || undefined,
-    })
-    dosList.value = resp.items
-    total.value = resp.total
+    const resp = await dosService.listAll()
+    allDos.value = resp.items
   } catch {
     searchError.value = 'Erreur lors du chargement des DOS.'
   } finally {
@@ -442,17 +337,17 @@ async function loadDos(page = 1) {
   }
 }
 
-function applyFilters() { loadDos(1) }
+function applyFilters() { currentPage.value = 1 }
 
 function resetFilters() {
   filterRef.value = ''
   filterStatut.value = ''
-  loadDos(1)
+  currentPage.value = 1
 }
 
 function goToPage(page: number) {
   if (page < 1 || page > totalPages.value) return
-  loadDos(page)
+  currentPage.value = page
 }
 
 // ── Resolve dossier reference → UUID ─────────────────────────────────────────
@@ -476,10 +371,10 @@ async function startNewDos() {
       return
     }
     const dos = await dosService.create(resolved)
-    activeDos.value = dos
-    showStepper.value = true
     showNewDosForm.value = false
     newDosRef.value = ''
+    // Ouvre directement le formulaire DOS (page /dos/:id, câblée au backend CENTIF).
+    router.push({ name: 'dos-detail', params: { id: dos.id } })
   } catch (e: any) {
     newDosError.value = e?.response?.data?.detail ?? 'Erreur lors de la création de la DOS.'
   } finally {
@@ -487,45 +382,9 @@ async function startNewDos() {
   }
 }
 
-// ── Stepper ────────────────────────────────────────────────────────────────────
+// ── Ouvrir une DOS (consultation / édition) ───────────────────────────────────
 function openDos(dos: DosOut) {
-  activeDos.value = dos
-  showStepper.value = true
-}
-
-function closeStepper() {
-  showStepper.value = false
-  activeDos.value = null
-  loadDos(currentPage.value)
-}
-
-function onSectionSaved(updated: DosOut) {
-  activeDos.value = updated
-  const idx = dosList.value.findIndex(d => d.id === updated.id)
-  if (idx >= 0) dosList.value[idx] = updated
-}
-
-function onFinalized(_updated: DosOut) {
-  activeDos.value = null
-  showStepper.value = false
-  loadDos(currentPage.value)
-}
-
-// ── Consult Modal ─────────────────────────────────────────────────────────────
-function openConsultModal(dos: DosOut) {
-  consultModal.value = { visible: true, dos }
-}
-
-function openDosFromModal() {
-  const dos = consultModal.value.dos
-  consultModal.value.visible = false
-  if (dos) openDos(dos)
-}
-
-function openAddendumFromModal() {
-  const dos = consultModal.value.dos
-  consultModal.value.visible = false
-  if (dos) openAddendumModal(dos)
+  router.push({ name: 'dos-detail', params: { id: dos.id } })
 }
 
 // ── PDF download ──────────────────────────────────────────────────────────────
