@@ -57,7 +57,6 @@
     </Teleport>
 
     <!-- ── LIST VIEW ─────────────────────────────────────────────────────── -->
-    <template>
       <!-- Main header -->
       <div class="view-header">
         <div>
@@ -224,7 +223,6 @@
           >→</button>
         </div>
       </template>
-    </template>
 
     <!-- Addendum Modal -->
     <Teleport to="body">
