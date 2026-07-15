@@ -3,7 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
-from app.core.deps import get_current_user, require_rc, require_supervisor
+from app.core.deps import get_current_user, require_rc
 from app.core.rbac import AssignedFilter
 from app.core import runtime_config
 from app.models.user import User
@@ -82,8 +82,27 @@ _TRANSITION_ROLES: dict[tuple[str, str], frozenset[str]] = {
     ("cloture",             "archive"):             _CLOTURE,
 }
 
-# Rôles pouvant se voir assigner un KYC / dossier : Notaire Principal et Clerc.
-_ASSIGNABLE_ROLES = ("notaire_principal", "clercs")
+# ── Chaîne d'assignation (alignée immo, adaptée notaire : PAS de départements) ──
+# Chaque rôle peut assigner (« router ») un dossier vers l'ensemble de rôles « niveau
+# suivant ». Les opérationnels (Clerc, Autre) routent vers la conformité ; RC et Déclarant
+# CENTIF sont pairs et escaladent vers le Notaire Principal ; le Notaire Principal escalade
+# vers l'Admin ; l'Admin est superviseur global (peut (ré)assigner à n'importe qui).
+_AGENT_ROLES = frozenset({"clercs", "autre_utilisateur"})
+_CHAIN_NEXT: dict[str, set[str]] = {
+    "clercs":                 {"responsable_conformite", "declarant_centif"},
+    "autre_utilisateur":      {"responsable_conformite", "declarant_centif"},
+    "responsable_conformite": {"responsable_conformite", "declarant_centif", "notaire_principal"},
+    "declarant_centif":       {"declarant_centif", "responsable_conformite", "notaire_principal"},
+    "notaire_principal":      {"admin"},
+    "admin":                  {"clercs", "autre_utilisateur", "responsable_conformite",
+                               "declarant_centif", "notaire_principal", "admin"},
+}
+# Rôles autorisés à s'auto-assigner un dossier (se le prendre à soi-même), hors chaîne.
+_SELF_ASSIGN_ROLES = frozenset({"responsable_conformite", "declarant_centif", "admin"})
+
+
+def _next_level_roles(role: str) -> set[str]:
+    return _CHAIN_NEXT.get(role, set())
 
 
 def _ref() -> str:
@@ -174,20 +193,25 @@ async def create_dossier(
 
 @router.get("/assignables", response_model=list[AssignableUserOut])
 async def list_assignables(
-    current_user: User = Depends(require_supervisor),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> list[AssignableUserOut]:
-    """Utilisateurs assignables à un KYC / dossier : Notaire Principal + Clerc.
-
-    Accessible aux superviseurs (admin, notaire_principal) — contrairement à
-    GET /users réservé à l'admin.
-    """
+    """Utilisateurs assignables selon la chaîne d'assignation (CDC §4.3) :
+    soi-même si l'auto-assignation est autorisée (RC / Déclarant CENTIF / Admin) +
+    les rôles du niveau hiérarchique suivant. Accessible à tout utilisateur authentifié
+    (chaque rôle route vers son niveau supérieur ; l'Admin voit tout le monde)."""
+    targets = _next_level_roles(current_user.role)
     users = await user_repo.get_all(db)
-    return [
-        AssignableUserOut(id=u.id, full_name=u.full_name, role=u.role)
-        for u in users
-        if u.is_active and u.role in _ASSIGNABLE_ROLES
-    ]
+    out: list[AssignableUserOut] = []
+    for u in users:
+        if not u.is_active:
+            continue
+        if u.id == current_user.id:
+            if current_user.role in _SELF_ASSIGN_ROLES:
+                out.append(AssignableUserOut(id=u.id, full_name=u.full_name, role=u.role))
+        elif u.role in targets:
+            out.append(AssignableUserOut(id=u.id, full_name=u.full_name, role=u.role))
+    return out
 
 
 async def _serialize_dossier(db: AsyncSession, dossier) -> DossierOut:
@@ -291,20 +315,36 @@ async def assign_dossier(
     dossier_id: str,
     user_id: str,
     request: Request,
-    current_user: User = Depends(require_supervisor),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> DossierOut:
     dossier = await dossier_repo.get_by_id(db, dossier_id)
     if not dossier:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Dossier introuvable.")
+    # Garde-fou accès (anti-IDOR) : un non-superviseur ne peut router qu'un dossier
+    # qui lui est assigné (mêmes règles que la consultation).
+    if not current_user.is_supervisor and dossier.assigned_to != current_user.id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Accès refusé à ce dossier.")
     target_user = await user_repo.get_by_id(db, user_id)
     if not target_user or not target_user.is_active:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Utilisateur invalide.")
-    if target_user.role not in _ASSIGNABLE_ROLES:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Seul un Notaire Principal ou un Clerc peut se voir assigner un dossier.",
-        )
+    # Validation chaîne d'assignation (CDC §4.3) — l'Admin reste libre.
+    is_self_assign = target_user.id == current_user.id
+    if current_user.role != "admin":
+        if is_self_assign:
+            if current_user.role not in _SELF_ASSIGN_ROLES:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="Votre rôle ne permet pas l'auto-assignation ; routez ce dossier vers un Responsable Conformité ou un Déclarant CENTIF.",
+                )
+        else:
+            targets = _next_level_roles(current_user.role)
+            if target_user.role not in targets:
+                allowed = ", ".join(sorted(targets)) if targets else "personne"
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=f"Assignation non autorisée : vous ne pouvez router ce dossier qu'à : {allowed} — ou à vous-même.",
+                )
     from sqlalchemy import update as sa_update
     from app.models.dossier import Dossier
     await db.execute(sa_update(Dossier).where(Dossier.id == dossier_id).values(assigned_to=user_id))

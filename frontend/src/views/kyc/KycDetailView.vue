@@ -1038,8 +1038,9 @@ const CLERCS_ROLES     = ['clercs']
 const CONFORMITE_ROLES = ['responsable_conformite', 'notaire_principal', 'admin']
 // Clôture / archivage (WRK-04, back: _CLOTURE) : Notaire Principal + Admin uniquement (séparation Art. 12).
 const CLOTURE_ROLES    = ['notaire_principal', 'admin']
-// Seuls admin et notaire_principal peuvent assigner un dossier
-const ASSIGNER_ROLES   = ['admin', 'notaire_principal']
+// Chaîne d'assignation (alignée immo) : tout rôle route vers son niveau suivant
+// (opérationnels → conformité → Notaire Principal → Admin). Le backend valide la cible.
+const ASSIGNER_ROLES   = ['admin', 'notaire_principal', 'responsable_conformite', 'declarant_centif', 'clercs', 'autre_utilisateur']
 
 const isAgent    = computed(() => CLERCS_ROLES.includes(auth.user?.role ?? ''))
 const isRC       = computed(() => CONFORMITE_ROLES.includes(auth.user?.role ?? ''))
