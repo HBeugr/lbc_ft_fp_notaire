@@ -82,23 +82,23 @@ _TRANSITION_ROLES: dict[tuple[str, str], frozenset[str]] = {
     ("cloture",             "archive"):             _CLOTURE,
 }
 
-# ── Chaîne d'assignation (alignée immo, adaptée notaire : PAS de départements) ──
-# Chaque rôle peut assigner (« router ») un dossier vers l'ensemble de rôles « niveau
-# suivant ». Les opérationnels (Clerc, Autre) routent vers la conformité ; RC et Déclarant
-# CENTIF sont pairs et escaladent vers le Notaire Principal ; le Notaire Principal escalade
-# vers l'Admin ; l'Admin est superviseur global (peut (ré)assigner à n'importe qui).
-_AGENT_ROLES = frozenset({"clercs", "autre_utilisateur"})
+# ── Chaîne d'assignation (modèle notaire — décision Hans 2026-07-15) ─────────────
+# Routage : Autre utilisateur → (Clerc ou Déclarant CENTIF) → Notaire Principal → Admin.
+# L'Admin « fait tout » (peut (ré)assigner à n'importe qui). Le RC (Responsable Conformité)
+# est traité comme un pair de la conformité (même niveau que le Déclarant CENTIF).
 _CHAIN_NEXT: dict[str, set[str]] = {
-    "clercs":                 {"responsable_conformite", "declarant_centif"},
-    "autre_utilisateur":      {"responsable_conformite", "declarant_centif"},
-    "responsable_conformite": {"responsable_conformite", "declarant_centif", "notaire_principal"},
-    "declarant_centif":       {"declarant_centif", "responsable_conformite", "notaire_principal"},
+    "autre_utilisateur":      {"clercs", "declarant_centif"},
+    "clercs":                 {"notaire_principal"},
+    "declarant_centif":       {"notaire_principal"},
+    "responsable_conformite": {"notaire_principal"},
     "notaire_principal":      {"admin"},
-    "admin":                  {"clercs", "autre_utilisateur", "responsable_conformite",
-                               "declarant_centif", "notaire_principal", "admin"},
+    "admin":                  {"autre_utilisateur", "clercs", "declarant_centif",
+                               "responsable_conformite", "notaire_principal", "admin"},
 }
-# Rôles autorisés à s'auto-assigner un dossier (se le prendre à soi-même), hors chaîne.
-_SELF_ASSIGN_ROLES = frozenset({"responsable_conformite", "declarant_centif", "admin"})
+# Rôles autorisés à s'auto-assigner un dossier (le prendre pour soi-même), hors chaîne :
+# Clerc et Déclarant CENTIF (demande Hans) + RC (pair conformité) + Admin. L'Autre utilisateur
+# route toujours (ne se prend pas de dossier) ; le Notaire Principal escalade vers l'Admin.
+_SELF_ASSIGN_ROLES = frozenset({"clercs", "declarant_centif", "responsable_conformite", "admin"})
 
 
 def _next_level_roles(role: str) -> set[str]:
