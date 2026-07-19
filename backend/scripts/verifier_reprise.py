@@ -24,7 +24,14 @@ passe initial. C'est un filet de sécurité voulu : si aucun mot de passe hérit
 n'était connu, le cabinet serait inaccessible malgré des données intactes.
 """
 import asyncio
+import os
 import sys
+
+# Comme le script de reprise : la racine du backend est ajoutée au chemin
+# d'import. Sans cela le script n'est exécutable que depuis un shell où
+# PYTHONPATH est déjà positionné — ce qui n'est pas le cas dans le conteneur
+# applicatif, précisément là où on l'exécute après une bascule.
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from sqlalchemy import select, text
 

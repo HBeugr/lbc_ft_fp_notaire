@@ -162,6 +162,25 @@ def _convert(value, column, fernet: Fernet, table_name: str):
 
 # ── Reprise ──────────────────────────────────────────────────────────────────
 
+def adresse_admin_deja_dans_la_source(admin_email: str) -> bool:
+    """L'adresse d'administrateur demandée existe-t-elle déjà dans l'ancienne base ?
+
+    Le provisioning crée ce compte AVANT la copie ; si la source contient la même
+    adresse, la copie de la table `users` viole la contrainte d'unicité et la
+    reprise s'interrompt — après avoir déjà écrit une partie des tables.
+
+    Contrôlé ici, en tête de course, plutôt que découvert au milieu du transfert.
+    """
+    connection = _mysql_connection()
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT COUNT(*) AS n FROM `users` WHERE LOWER(email) = %s",
+                           (admin_email.strip().lower(),))
+            return cursor.fetchone()["n"] > 0
+    finally:
+        connection.close()
+
+
 async def verifier_collisions_emails() -> list[tuple[str, str]]:
     """Détecte, AVANT toute écriture, les emails déjà rattachés à un autre cabinet.
 
@@ -349,7 +368,20 @@ async def main() -> None:
     parser.add_argument("--dry-run", action="store_true", help="Compter sans écrire.")
     args = parser.parse_args()
 
-    # ── Contrôle préalable : aucune écriture avant d'être sûr d'aboutir ──────
+    # ── Contrôles préalables : aucune écriture avant d'être sûr d'aboutir ────
+    if adresse_admin_deja_dans_la_source(args.admin_email):
+        print(
+            f"\nReprise refusée — l'adresse « {args.admin_email} » figure déjà parmi "
+            "les utilisateurs de l'ancienne base.\n\n"
+            "Le compte administrateur de la plateforme est créé AVANT la copie : "
+            "réutiliser une adresse de la source ferait échouer le transfert en cours "
+            "de route. Choisissez une adresse distincte (ex. "
+            "« admin.plateforme@… ») — les comptes d'origine sont repris tels quels, "
+            "avec leurs mots de passe.\n\nAucune donnée n'a été écrite.",
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
+
     collisions = await verifier_collisions_emails()
     if collisions:
         print("\nReprise refusée — adresses déjà rattachées à un autre cabinet :", file=sys.stderr)
