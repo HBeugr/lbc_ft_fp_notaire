@@ -61,6 +61,13 @@ app = FastAPI(
     version="1.0.0",
     docs_url="/api/docs" if settings.APP_ENV == "development" else None,
     redoc_url=None,
+    # Le schéma OpenAPI décrit toute la surface de l'API (routes, champs des
+    # modèles — y compris DOS et pièces d'identité). En production il ne doit pas
+    # plus être servi que la documentation interactive : désactiver `docs_url`
+    # sans désactiver `openapi_url` laissait fuiter le contrat complet via
+    # `/openapi.json`. La méthode `app.openapi()` (usage interne/tests) reste, elle,
+    # disponible.
+    openapi_url="/openapi.json" if settings.APP_ENV == "development" else None,
     lifespan=lifespan,
 )
 

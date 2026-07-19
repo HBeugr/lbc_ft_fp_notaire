@@ -17,6 +17,7 @@ Endpoints:
 """
 import hashlib
 import io
+import os
 import uuid
 from datetime import datetime, timezone
 
@@ -30,6 +31,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.core.deps import get_current_user
 from app.core.storage import ensure_current_tenant_bucket, get_minio_client, tenant_bucket
+from app.core.uploads import sniff_signature
 from app.models.user import User
 from app.repositories import audit_repo
 
@@ -41,6 +43,8 @@ _MAX_FILE_BYTES = 20 * 1024 * 1024  # 20 Mo (aligné sur documents.py)
 # Formats de pièces acceptés (PDF, JPG/JPEG, PNG)
 ACCEPTED_CONTENT_TYPES = {"application/pdf", "image/jpeg", "image/jpg", "image/png"}
 ACCEPTED_EXTENSIONS = (".pdf", ".jpg", ".jpeg", ".png")
+# Signatures réelles autorisées (magic-bytes) — les seules qui fassent foi.
+ACCEPTED_SIGNATURE_FAMILIES = frozenset({"pdf", "jpeg", "png"})
 
 
 # ── Schemas ───────────────────────────────────────────────────────────────────
@@ -367,10 +371,19 @@ async def upload_procedure_file(
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
             detail="Fichier trop volumineux (max 20 Mo).",
         )
+    # Le format déclaré (nom + content-type) est déclaratif : seule la signature
+    # réelle du contenu fait foi. Refuse un fichier déguisé (HTML/script renommé .pdf).
+    if sniff_signature(content) not in ACCEPTED_SIGNATURE_FAMILIES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Contenu ne correspondant pas au format déclaré (fichier déguisé).",
+        )
 
     sha256_hash = hashlib.sha256(content).hexdigest()
     file_id = str(uuid.uuid4())
-    safe_name = file.filename.replace(" ", "_") if file.filename else "fichier"
+    # basename + neutralisation des séparateurs : la clé de stockage ne doit pas
+    # pouvoir échapper au préfixe de la procédure via « ../ » dans le nom de fichier.
+    safe_name = os.path.basename(file.filename or "fichier").replace(" ", "_") or "fichier"
     minio_key = f"procedures/{procedure_id}/{slot}/{file_id}/{safe_name}"
     content_type = file.content_type or "application/octet-stream"
 
@@ -385,9 +398,10 @@ async def upload_procedure_file(
             content_type=content_type,
         )
     except S3Error as exc:
+        # Ne pas divulguer les détails internes du stockage (bucket, clé, endpoint).
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Erreur stockage fichier : {exc}",
+            detail=f"Erreur de stockage : {type(exc).__name__}.",
         )
 
     now = datetime.now(timezone.utc)
@@ -470,10 +484,10 @@ async def download_procedure_file(
         data = response.read()
         response.close()
         response.release_conn()
-    except S3Error as exc:
+    except S3Error:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Fichier introuvable dans le stockage : {exc}",
+            detail="Fichier introuvable dans le stockage.",
         )
 
     content_type = "application/octet-stream"

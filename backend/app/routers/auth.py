@@ -6,9 +6,12 @@ from app.core.database import get_db, tenant_session
 from app.core.config import settings
 from app.core import security, tenant_resolver
 from app.core.deps import get_current_user_for_password_change
+from app.core.redis_client import get_login_attempts, increment_login_attempts
 from app.core.tenant_context import TenantContext, tenant_scope
 from app.models.user import User
-from app.services.auth_service import authenticate, issue_tokens, refresh_access_token, logout, AuthError
+from app.services.auth_service import (
+    authenticate, issue_tokens, refresh_access_token, logout, AuthError, MAX_LOGIN_ATTEMPTS,
+)
 from app.schemas.auth import LoginRequest, LoginResponse, TenantOut, TokenResponse, UserOut, PasswordChangeRequest
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -31,6 +34,13 @@ def _clear_refresh_cookie(response: Response) -> None:
 
 
 _INVALID_CREDENTIALS = "Email ou mot de passe incorrect."
+
+# Empreinte bcrypt « leurre », calculée une fois. Sur un email inconnu, aucun
+# hash réel n'est vérifié : la réponse reviendrait bien plus vite que pour un
+# compte existant (où bcrypt s'exécute), rouvrant l'oracle d'énumération par
+# mesure de temps. On vérifie donc ce leurre pour aligner le coût des deux
+# chemins. Le mot de passe ne correspondra jamais — seul le temps compte.
+_DUMMY_HASH = security.hash_password("timing-equalizer-not-a-real-password")
 
 
 def _assert_tenant_usable(tenant: TenantContext) -> None:
@@ -65,9 +75,26 @@ async def login(body: LoginRequest, request: Request, response: Response) -> Log
 
     tenant = await tenant_resolver.get_by_email(body.email)
     if tenant is None:
-        # Message identique à un mot de passe erroné : ne pas révéler quels
-        # emails sont rattachés à un cabinet de la plateforme.
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=_INVALID_CREDENTIALS)
+        # Email non rattaché à un cabinet. La réponse doit être STRICTEMENT
+        # indiscernable de celle d'un mot de passe erroné sur un compte existant,
+        # sinon la forme du corps (présence/absence de `remaining_attempts`) et le
+        # basculement en 429 deviennent un oracle d'énumération : un attaquant
+        # distingue en une requête les emails clients de la plateforme des autres.
+        # On applique donc ici le même rate-limit et la même charge utile, via
+        # l'espace de noms Redis « plateforme » (hors cabinet, faute de tenant),
+        # et l'on aligne le temps de réponse en vérifiant une empreinte leurre.
+        security.verify_password(body.password, _DUMMY_HASH)
+        if await get_login_attempts(ip, body.email) >= MAX_LOGIN_ATTEMPTS:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="Trop de tentatives. Réessayez dans 15 minutes.",
+            )
+        new_count = await increment_login_attempts(ip, body.email)
+        remaining = max(0, MAX_LOGIN_ATTEMPTS - new_count)
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={"message": _INVALID_CREDENTIALS, "remaining_attempts": remaining},
+        )
 
     _assert_tenant_usable(tenant)
 

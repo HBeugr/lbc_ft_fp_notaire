@@ -55,6 +55,25 @@ def _safe_header_filename(name: str) -> str:
     return cleaned[:255] or "document"
 
 
+# Content-type servi à la restitution : dérivé de l'extension validée, JAMAIS du
+# `content_type` déclaré par le client à l'upload. Ce dernier est stocké tel quel
+# et un client peut y placer `text/html` sur une pièce par ailleurs valide ; le
+# renvoyer ferait de l'API un vecteur de XSS stocké dès qu'un consommateur rend
+# la ressource en ligne. On ne restitue donc qu'un type sûr, connu et inerte.
+_SAFE_DOWNLOAD_TYPES = {
+    ".pdf": "application/pdf",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".png": "image/png",
+    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+}
+
+
+def _safe_download_type(nom_fichier: str) -> str:
+    return _SAFE_DOWNLOAD_TYPES.get(Path(nom_fichier or "").suffix.lower(), "application/octet-stream")
+
+
 async def _assert_access(db: AsyncSession, dossier_id: str, user: User):
     dossier = await dossier_repo.get_by_id(db, dossier_id)
     if not dossier:
@@ -156,8 +175,13 @@ async def download_document(
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=f"Erreur de récupération : {type(exc).__name__}.")
     return Response(
         content=content,
-        media_type=doc.content_type or "application/octet-stream",
-        headers={"Content-Disposition": f'attachment; filename="{_safe_header_filename(doc.nom_fichier)}"'},
+        # Type sûr dérivé de l'extension validée, pas le `content_type` déclaré à
+        # l'upload (attaquant-contrôlé). `attachment` + `nosniff` complètent la défense.
+        media_type=_safe_download_type(doc.nom_fichier),
+        headers={
+            "Content-Disposition": f'attachment; filename="{_safe_header_filename(doc.nom_fichier)}"',
+            "X-Content-Type-Options": "nosniff",
+        },
     )
 
 

@@ -191,6 +191,14 @@ async def alertes_stream(token: str = Query(...)):
     # Durcissement : refuser tout token non-access (ex. refresh) ou révoqué.
     if not user_id or payload.get("type") != "access":
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token invalide.")
+    # Le portail 2FA doit être complet : un jeton `totp_pending` (émis au login
+    # avant validation du second facteur) est rejeté par tous les endpoints
+    # métier via `get_current_user`. Ce flux SSE lit son jeton en paramètre de
+    # requête et court-circuitait donc ce contrôle — un utilisateur disposant du
+    # seul mot de passe pouvait suivre en direct le compteur d'alertes (signal
+    # LBC/FT sensible) sans avoir passé la 2FA. On applique ici la même règle.
+    if payload.get("totp_pending"):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Vérification 2FA requise.")
     jti = payload.get("jti")
     if (jti and await is_token_revoked(jti)) or await is_user_globally_revoked(user_id):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Session révoquée.")

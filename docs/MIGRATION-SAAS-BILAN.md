@@ -283,3 +283,58 @@ Base propre, environnement vierge, après tous les correctifs :
 | Recette SaaS de bout en bout | **22/22** |
 | Couverture d'API | **135 routes, 200 appels, 0 erreur serveur** |
 | Parcours navigateur | **14/14** |
+
+---
+
+## 6. Audit de sécurité (2026-07-19)
+
+Trois volets — isolation/authentification, injections/fichiers/surface web,
+dépendances — menés par lecture du code **et exploitation réelle** contre l'API
+en service. Chaque correctif a été rejoué comme exploit contre l'image
+reconstruite, pas seulement testé en processus.
+
+### 6.1 Vulnérabilités trouvées et corrigées
+
+| # | Gravité | Vulnérabilité | Preuve → après correctif |
+|---|---|---|---|
+| 1 | Moyenne | **Téléversement de fichiers déguisés (fail-open).** `python-magic` absent du conteneur → le contrôle de signature échouait en silence ; ne restaient que l'extension et le type déclarés, tous deux contrôlés par l'attaquant. Un HTML avec `<script>` était stocké sous `evil.pdf`. | 201 → **400** (signature magic-bytes en Python pur, obligatoire) |
+| 2 | Moyenne | **Énumération de comptes au login.** Email inconnu et mauvais mot de passe donnaient des réponses distinctes (forme du corps, bascule 429, temps bcrypt) : une requête suffisait à lister les études clientes. | Réponses indiscernables · Δ temps médian **3 ms** · rate-limit sur email inconnu |
+| 3 | Moyenne-faible | **Contournement du portail 2FA sur le flux SSE.** `/api/alertes/stream` lisait son jeton en paramètre et court-circuitait le contrôle `totp_pending`. Un jeton pré-2FA suivait le compteur d'alertes. | 200 → **403** |
+| 4 | Faible-moyenne | **Content-Type de restitution attaquant-contrôlé.** Le download servait le type déclaré à l'upload (XSS stocké latent). | Type dérivé de l'extension validée + `nosniff` |
+| 5 | Faible | **`/openapi.json` exposé en production** (170 Ko : toutes les routes et modèles). | 200 → **404** |
+| 6 | Faible | Fuite d'info S3 dans les erreurs des procédures + hygiène de chemin (`basename`). | Erreurs génériques |
+| 7 | — | **Dépendances** : `python-jose` 3.3→3.4, `python-multipart` 0.0.12→0.0.32 (0 CVE résiduelle), `cryptography` 43→44, `lxml` 5.3→5.4. | pip-audit |
+
+### 6.2 Barrières éprouvées — tenues
+
+Exploitées sans succès, donc validées comme robustes :
+
+- **Isolation inter-cabinets** : un cabinet ne voit rien de l'autre (404/listes
+  vides). `tid` falsifié, `alg=none`, mauvais secret, refresh-comme-access, IDOR
+  cross-cabinet par UUID connu, en-têtes `X-Tenant-Id` injectés → tous rejetés.
+- **Le claim `role` du jeton ne fait jamais foi** : un jeton forgé `role=admin`
+  sur un compte clerc reste refusé (la RBAC lit le rôle en base). La
+  confidentialité DOS tient (Art. 63).
+- **Étanchéité Super-Admin ↔ métier** : jeton cabinet → console = 401 ; jeton
+  d'exploitation → métier = 401 ; jeton forgé combinant les deux = 401.
+- **Injection SQL** : paramètres liés partout, y compris les 16 requêtes brutes
+  des procédures ; le nom de schéma est un UUID serveur validé.
+- **Secrets** : `/users/me` ne fuit ni empreinte de mot de passe, ni secret TOTP,
+  ni sel de chiffrement ; clés dérivées par cabinet (HKDF).
+
+### 6.3 Durcissements souhaitables (non exploitables, documentés)
+
+- Montée coordonnée FastAPI + Starlette (le header `Host` de Starlette n'est pas
+  une barrière chez nous : le cabinet vient du JWT).
+- Anti-rejeu TOTP par compteur (fenêtre de ~30 s aujourd'hui — standard).
+- Neutralisation anti-formule des exports XLSX/CSV — latente (aucune colonne
+  texte libre exportée), à activer avant d'en ajouter une.
+- `python-magic` comme couche additionnelle (non critique : la signature
+  pure-Python fait désormais foi).
+- Divulgation du statut des cabinets non-production au login (nécessité UX).
+
+### 6.4 Validation
+
+Suite complète : **371 passés, 4 xfailed, 0 échec** (dont 17 tests de sécurité
+ajoutés). Les correctifs sont dans le dépôt ; le déploiement VPS les recevra au
+prochain build.
