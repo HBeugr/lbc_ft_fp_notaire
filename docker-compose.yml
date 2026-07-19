@@ -28,7 +28,20 @@ services:
       - "9000:8000"
     env_file: .env
     environment:
-      - APP_ENV=${APP_ENV:-production}
+      # Ces deux valeurs sont IMPOSÉES ici plutôt que laissées à la configuration
+      # de l'hébergeur, parce qu'une erreur sur l'une ou l'autre est silencieuse
+      # et coûteuse :
+      #
+      #  · APP_ENV=development active l'écho SQL — les requêtes ET LEURS
+      #    PARAMÈTRES, donc des données clients, partent dans les journaux — et
+      #    expose /api/docs publiquement.
+      #  · DB_PORT est le port INTERNE du conteneur PostgreSQL, pas un réglage
+      #    de déploiement. Hériter d'un 3306 laissé par l'ère MySQL empêche
+      #    simplement l'API de joindre sa base.
+      #
+      # Le développement local surcharge APP_ENV via docker-compose.dev.yml.
+      - APP_ENV=production
+      - DB_PORT=5432
     depends_on:
       db:
         condition: service_healthy

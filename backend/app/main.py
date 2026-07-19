@@ -36,6 +36,15 @@ from app.routers import tenant as tenant_router
 async def lifespan(app: FastAPI):
     configure_logging(settings.APP_ENV)
     logger.info("startup", env=settings.APP_ENV)
+    # Échec au démarrage plutôt qu'à la première écriture : une clé maîtresse
+    # absente en production arme une bombe à retardement (cf. `crypto._master_key`).
+    from app.core.crypto import MasterKeyManquante, _master_key
+
+    try:
+        _master_key()
+    except MasterKeyManquante as exc:
+        logger.error("startup.master_key_manquante", detail=str(exc))
+        raise
     # Les privilèges DOS sont posés dans chaque schéma cabinet (Art. 63) ; les
     # cabinets créés ensuite les reçoivent à leur provisioning.
     await dos_privileges.apply_to_all_tenants()

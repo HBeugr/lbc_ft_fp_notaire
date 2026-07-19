@@ -40,8 +40,32 @@ class TenantKeyError(RuntimeError):
     """
 
 
+class MasterKeyManquante(RuntimeError):
+    """`TENANT_MASTER_KEY` n'est pas configurée alors qu'elle est exigée."""
+
+
 def _master_key() -> str:
-    return settings.TENANT_MASTER_KEY or settings.AES_KEY
+    """Secret racine dont dérivent les clés de chiffrement de chaque cabinet.
+
+    Le repli sur `AES_KEY` n'est toléré qu'en dehors de la production, et c'est
+    délibéré : il constitue un piège différé. Si l'on démarre en production sans
+    `TENANT_MASTER_KEY`, les données se chiffrent avec des clés dérivées d'`AES_KEY` ;
+    le jour où quelqu'un renseigne enfin la variable — geste qui paraît anodin,
+    voire vertueux — l'intégralité des données de TOUS les cabinets devient
+    illisible, sauvegardes comprises, sans message d'erreur au moment de la faute.
+    On refuse donc de démarrer plutôt que d'armer cette bombe.
+    """
+    if settings.TENANT_MASTER_KEY:
+        return settings.TENANT_MASTER_KEY
+    if settings.APP_ENV == "production":
+        raise MasterKeyManquante(
+            "TENANT_MASTER_KEY doit être définie en production. Les clés de "
+            "chiffrement de chaque cabinet en dérivent : la renseigner APRÈS "
+            "avoir écrit des données rendrait celles-ci définitivement illisibles. "
+            "Générez-la une fois (`openssl rand -hex 32`), conservez-la hors de "
+            "la plateforme, et ne la modifiez jamais."
+        )
+    return settings.AES_KEY
 
 
 def derive_tenant_fernet(key_salt: str) -> Fernet:
