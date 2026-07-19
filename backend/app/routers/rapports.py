@@ -1,6 +1,6 @@
 """Rapports PDF — conformité, client, audit (Art. 23, Ordonnance 2023-875)."""
 from datetime import datetime, timezone
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import Response
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession

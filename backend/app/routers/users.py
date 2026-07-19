@@ -7,6 +7,8 @@ from app.core.deps import get_current_user, require_rc, require_user_manager
 from app.models.user import User
 from app.repositories import user_repo, audit_repo
 from app.schemas.users import UserCreate, UserListOut, UserOut, UserUpdate
+from app.services import tenant_directory
+from app.services.tenant_directory import DirectoryError, QuotaExceededError
 
 router = APIRouter(prefix="/users", tags=["users"])
 
@@ -40,9 +42,17 @@ async def create_user(
     existing = await user_repo.get_by_email(db, body.email)
     if existing:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email déjà utilisé.")
+    # L'email sert de clé de routage au login : il doit être libre sur TOUTE la
+    # plateforme, pas seulement dans ce cabinet.
+    if not await tenant_directory.is_email_available(body.email):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email déjà utilisé.")
     # Anti-escalade : seul un admin peut créer un compte admin.
     if body.role == "admin" and admin.role != "admin":
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Seul un administrateur peut créer un compte administrateur.")
+    try:
+        await tenant_directory.assert_quota_available(await tenant_directory.count_registered())
+    except QuotaExceededError as exc:
+        raise HTTPException(status_code=status.HTTP_402_PAYMENT_REQUIRED, detail=str(exc))
     hashed = security.hash_password(body.password)
     new_user = await user_repo.create(
         db,
@@ -53,6 +63,11 @@ async def create_user(
         hashed_password=hashed,
         must_change_password=body.must_change_password,
     )
+    # Sans cette inscription, le compte existerait mais serait injoignable au login.
+    try:
+        await tenant_directory.register(new_user.email, new_user.id)
+    except DirectoryError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
     ip = request.client.host if request.client else "unknown"
     await audit_repo.log(
         db,
@@ -101,6 +116,14 @@ async def update_user(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Impossible de se désactiver soi-même.")
     updates = body.model_dump(exclude_none=True)
     updated = await user_repo.update(db, target, **updates)
+    # L'annuaire porte le routage : il doit suivre l'email et l'état du compte.
+    try:
+        if "email" in updates:
+            await tenant_directory.rename(updated.id, updates["email"])
+        if "is_active" in updates:
+            await tenant_directory.set_active(updated.id, bool(updates["is_active"]))
+    except DirectoryError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
     ip = request.client.host if request.client else "unknown"
     await audit_repo.log(
         db,
@@ -128,6 +151,7 @@ async def deactivate_user(
     if not target:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Utilisateur introuvable.")
     await user_repo.update(db, target, is_active=False)
+    await tenant_directory.set_active(user_id, False)
     ip = request.client.host if request.client else "unknown"
     await audit_repo.log(
         db,

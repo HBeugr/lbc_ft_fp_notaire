@@ -22,15 +22,14 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, UploadFile, File, Form, status
 from fastapi.responses import StreamingResponse
-from minio import Minio
 from minio.error import S3Error
 from pydantic import BaseModel, Field
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.config import settings
 from app.core.database import get_db
 from app.core.deps import get_current_user
+from app.core.storage import ensure_current_tenant_bucket, get_minio_client, tenant_bucket
 from app.models.user import User
 from app.repositories import audit_repo
 
@@ -83,23 +82,6 @@ class ProcedureListResponse(BaseModel):
     total: int
     page: int
     page_size: int
-
-
-# ── MinIO helper ──────────────────────────────────────────────────────────────
-
-def _minio_client() -> Minio:
-    return Minio(
-        settings.MINIO_ENDPOINT,
-        access_key=settings.MINIO_ACCESS_KEY,
-        secret_key=settings.MINIO_SECRET_KEY,
-        secure=settings.MINIO_USE_SSL,
-    )
-
-
-def _ensure_bucket(client: Minio) -> None:
-    bucket = settings.MINIO_BUCKET_DOCUMENTS
-    if not client.bucket_exists(bucket):
-        client.make_bucket(bucket)
 
 
 def _ip(request: Request) -> str:
@@ -393,10 +375,10 @@ async def upload_procedure_file(
     content_type = file.content_type or "application/octet-stream"
 
     try:
-        client = _minio_client()
-        _ensure_bucket(client)
-        client.put_object(
-            settings.MINIO_BUCKET_DOCUMENTS,
+        # Filet de sécurité si le bucket du cabinet n'a pas survécu au provisioning.
+        bucket = ensure_current_tenant_bucket()
+        get_minio_client().put_object(
+            bucket,
             minio_key,
             io.BytesIO(content),
             length=len(content),
@@ -484,8 +466,7 @@ async def download_procedure_file(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Pièce introuvable.")
 
     try:
-        client = _minio_client()
-        response = client.get_object(settings.MINIO_BUCKET_DOCUMENTS, doc.minio_key)
+        response = get_minio_client().get_object(tenant_bucket(), doc.minio_key)
         data = response.read()
         response.close()
         response.release_conn()

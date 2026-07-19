@@ -435,6 +435,11 @@ class DossierOut(BaseModel):
     classification: str | None
     trigger_actif: str | None
     force_par_trigger: bool
+    # Archivage réglementaire (CDC §5.2, Art. 23) — posé automatiquement à la
+    # clôture. Exposé car l'échéance des 10 ans doit être opposable : elle fonde
+    # l'alerte d'expiration J-180 et la communication à la CENTIF (Art. 103).
+    archivage_date: date | None = None
+    archivage_expiration: date | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
     kyc_pp: KycPPOut | None = None

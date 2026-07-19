@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, delete as sa_delete, update as sa_update
 
+from app.core import archivage
 from app.core.database import get_db
 from app.core.deps import get_current_user
 from app.models.user import User
@@ -107,18 +108,49 @@ async def _check_sanctions_on_save(
             pass
 
 
+# États à partir desquels la fiche est « validée » au sens de KYC-04 : le dossier
+# a franchi la validation, sa diligence est arrêtée. « vigilance_renforcee » et
+# « bloque » n'en font pas partie — ce sont des états d'instruction, où la
+# collecte documentaire par le clerc reste précisément ce qu'on attend de lui.
+_STATUTS_FICHE_VALIDEE = ("valide", "traite", "cloture", "archive")
+
+
 def _can_access(user: User, dossier: Dossier) -> bool:
     if user.is_supervisor:
         return True
     return dossier.assigned_to == user.id
 
 
-async def _get_dossier_or_404(db: AsyncSession, dossier_id: str, user: User) -> Dossier:
+async def _get_dossier_or_404(
+    db: AsyncSession, dossier_id: str, user: User, *, ecriture: bool = False
+) -> Dossier:
+    """Résout un dossier accessible à l'appelant.
+
+    `ecriture=True` ajoute le verrou d'archivage : CDC §5.2 place l'état
+    « Archivé » en lecture seule, « aucune modification possible par aucun rôle »
+    (Art. 23). La consultation d'un dossier archivé reste évidemment ouverte —
+    c'est même l'objet de la conservation décennale.
+    """
     dossier = await dossier_repo.get_by_id(db, dossier_id)
     if not dossier:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Dossier introuvable.")
     if not _can_access(user, dossier):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Accès refusé.")
+    if ecriture:
+        archivage.assert_dossier_modifiable(dossier)
+        # KYC-04 (CDC §7.3) — « Modifier une fiche validée » : O pour l'Admin, le
+        # Notaire Principal et le Responsable Conformité, **N pour les Clercs**.
+        # KYC-02 (« modifier une fiche EN COURS DE SAISIE ») leur reste ouvert :
+        # la frontière est la validation du dossier. Sans ce contrôle, un clerc
+        # pouvait réécrire l'état civil, la pièce d'identité ou le profil
+        # financier d'une relation d'affaires déjà approuvée — et donc invalider
+        # a posteriori la diligence sur laquelle le Notaire s'est engagé
+        # (Art. 12, séparation des fonctions).
+        if not user.is_supervisor and dossier.statut in _STATUTS_FICHE_VALIDEE:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Modification d'une fiche validée réservée aux superviseurs (KYC-04).",
+            )
     return dossier
 
 
@@ -130,7 +162,10 @@ async def get_kyc_pp(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> KycPPOut:
-    dossier = await _get_dossier_or_404(db, dossier_id, current_user)
+    # Appel conservé pour ses EFFETS : il valide l'existence du dossier (404) et
+    # le droit d'accès de l'utilisateur (403). La valeur de retour n'est pas
+    # utilisée ici — ne pas « nettoyer » cette ligne, ce serait ouvrir l'accès.
+    await _get_dossier_or_404(db, dossier_id, current_user)
     kyc = await dossier_repo.get_kyc_pp(db, dossier_id)
     if not kyc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="KYC PP non trouvé.")
@@ -150,7 +185,7 @@ async def upsert_kyc_pp(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> KycPPOut:
-    dossier = await _get_dossier_or_404(db, dossier_id, current_user)
+    dossier = await _get_dossier_or_404(db, dossier_id, current_user, ecriture=True)
     data = body.model_dump()
     # Sérialise les sous-objets Pydantic en dict
     for field in ("mandataire", "operations_cochees", "origine_fonds"):
@@ -196,7 +231,9 @@ async def add_be_pp(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> KycBEOut:
-    dossier = await _get_dossier_or_404(db, dossier_id, current_user)
+    # Le dossier est nécessaire ici : il valide l'accès (404/403) ET sert au
+    # criblage des listes de sanctions plus bas.
+    dossier = await _get_dossier_or_404(db, dossier_id, current_user, ecriture=True)
     kyc = await dossier_repo.get_kyc_pp(db, dossier_id)
     if not kyc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Créer le KYC PP d'abord.")
@@ -221,7 +258,7 @@ async def delete_be_pp(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> None:
-    await _get_dossier_or_404(db, dossier_id, current_user)
+    await _get_dossier_or_404(db, dossier_id, current_user, ecriture=True)
     await db.execute(sa_delete(KycBE).where(KycBE.id == be_id))
     await db.commit()
 
@@ -246,7 +283,7 @@ async def update_be_pp(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> KycBEOut:
-    await _get_dossier_or_404(db, dossier_id, current_user)
+    await _get_dossier_or_404(db, dossier_id, current_user, ecriture=True)
     be = await _update_be(db, be_id, body)
     return KycBEOut.model_validate(be)
 
@@ -260,7 +297,7 @@ async def add_ppe_pp(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> KycPPEOut:
-    await _get_dossier_or_404(db, dossier_id, current_user)
+    await _get_dossier_or_404(db, dossier_id, current_user, ecriture=True)
     kyc = await dossier_repo.get_kyc_pp(db, dossier_id)
     if not kyc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Créer le KYC PP d'abord.")
@@ -278,7 +315,7 @@ async def delete_ppe_pp(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> None:
-    await _get_dossier_or_404(db, dossier_id, current_user)
+    await _get_dossier_or_404(db, dossier_id, current_user, ecriture=True)
     await db.execute(sa_delete(KycPPE).where(KycPPE.id == ppe_id))
     await db.commit()
 
@@ -303,7 +340,7 @@ async def update_ppe_pp(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> KycPPEOut:
-    await _get_dossier_or_404(db, dossier_id, current_user)
+    await _get_dossier_or_404(db, dossier_id, current_user, ecriture=True)
     return KycPPEOut.model_validate(await _update_ppe(db, ppe_id, body))
 
 
@@ -337,7 +374,7 @@ async def upsert_kyc_pm(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> KycPMOut:
-    dossier = await _get_dossier_or_404(db, dossier_id, current_user)
+    dossier = await _get_dossier_or_404(db, dossier_id, current_user, ecriture=True)
     data = body.model_dump()
     for field in ("mandataire", "operations_cochees", "origine_fonds", "infos_pm"):
         if data.get(field) is not None and not isinstance(data[field], dict):
@@ -411,7 +448,7 @@ async def add_be_pm(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> KycBEOut:
-    dossier = await _get_dossier_or_404(db, dossier_id, current_user)
+    dossier = await _get_dossier_or_404(db, dossier_id, current_user, ecriture=True)
     kyc = await dossier_repo.get_kyc_pm(db, dossier_id)
     if not kyc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Créer le KYC PM d'abord.")
@@ -436,7 +473,7 @@ async def delete_be_pm(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> None:
-    await _get_dossier_or_404(db, dossier_id, current_user)
+    await _get_dossier_or_404(db, dossier_id, current_user, ecriture=True)
     await db.execute(sa_delete(KycBE).where(KycBE.id == be_id))
     await db.commit()
 
@@ -449,7 +486,7 @@ async def update_be_pm(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> KycBEOut:
-    await _get_dossier_or_404(db, dossier_id, current_user)
+    await _get_dossier_or_404(db, dossier_id, current_user, ecriture=True)
     be = await _update_be(db, be_id, body)
     return KycBEOut.model_validate(be)
 
@@ -461,7 +498,7 @@ async def add_actionnaire(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> KycActOut:
-    await _get_dossier_or_404(db, dossier_id, current_user)
+    await _get_dossier_or_404(db, dossier_id, current_user, ecriture=True)
     kyc = await dossier_repo.get_kyc_pm(db, dossier_id)
     if not kyc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Créer le KYC PM d'abord.")
@@ -479,7 +516,7 @@ async def delete_actionnaire(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> None:
-    await _get_dossier_or_404(db, dossier_id, current_user)
+    await _get_dossier_or_404(db, dossier_id, current_user, ecriture=True)
     await db.execute(sa_delete(KycActionnaire).where(KycActionnaire.id == act_id))
     await db.commit()
 
@@ -491,7 +528,7 @@ async def add_ppe_pm(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> KycPPEOut:
-    await _get_dossier_or_404(db, dossier_id, current_user)
+    await _get_dossier_or_404(db, dossier_id, current_user, ecriture=True)
     kyc = await dossier_repo.get_kyc_pm(db, dossier_id)
     if not kyc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Créer le KYC PM d'abord.")
@@ -509,7 +546,7 @@ async def delete_ppe_pm(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> None:
-    await _get_dossier_or_404(db, dossier_id, current_user)
+    await _get_dossier_or_404(db, dossier_id, current_user, ecriture=True)
     await db.execute(sa_delete(KycPPE).where(KycPPE.id == ppe_id))
     await db.commit()
 
@@ -522,5 +559,5 @@ async def update_ppe_pm(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> KycPPEOut:
-    await _get_dossier_or_404(db, dossier_id, current_user)
+    await _get_dossier_or_404(db, dossier_id, current_user, ecriture=True)
     return KycPPEOut.model_validate(await _update_ppe(db, ppe_id, body))

@@ -16,13 +16,13 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile, status
 from fastapi.responses import Response
-from sqlalchemy import select, func
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic import BaseModel
 
-from app.core.config import settings
 from app.core.database import get_db
 from app.core.deps import get_current_user
+from app.core.storage import ensure_current_tenant_bucket, get_minio_client, tenant_bucket
 from app.core.uploads import ensure_allowed_upload
 from app.models.document import Document
 from app.models.user import User
@@ -47,16 +47,6 @@ def _out(d: Document) -> DocumentOut:
         id=d.id, dossier_id=d.dossier_id, nom_fichier=d.nom_fichier,
         type_document=d.type_document, taille_octets=d.taille_octets,
         created_at=d.created_at.isoformat() if d.created_at else "",
-    )
-
-
-def _minio():
-    from minio import Minio
-    return Minio(
-        settings.MINIO_ENDPOINT,
-        access_key=settings.MINIO_ACCESS_KEY,
-        secret_key=settings.MINIO_SECRET_KEY,
-        secure=settings.MINIO_USE_SSL,
     )
 
 
@@ -100,11 +90,11 @@ async def upload_document(
     content_type = file.content_type or "application/octet-stream"
 
     try:
-        client = _minio()
-        bucket = settings.MINIO_BUCKET_DOCUMENTS
-        if not client.bucket_exists(bucket):
-            client.make_bucket(bucket)
-        client.put_object(bucket, minio_key, io.BytesIO(content), length=len(content), content_type=content_type)
+        # Filet de sécurité si le bucket du cabinet n'a pas survécu au provisioning.
+        bucket = ensure_current_tenant_bucket()
+        get_minio_client().put_object(
+            bucket, minio_key, io.BytesIO(content), length=len(content), content_type=content_type
+        )
     except Exception as exc:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=f"Erreur de stockage : {type(exc).__name__}.")
 
@@ -158,8 +148,7 @@ async def download_document(
     doc = await _get_doc_or_404(db, doc_id)
     await _assert_access(db, doc.dossier_id, current_user)
     try:
-        client = _minio()
-        response = client.get_object(settings.MINIO_BUCKET_DOCUMENTS, doc.minio_key)
+        response = get_minio_client().get_object(tenant_bucket(), doc.minio_key)
         content = response.read()
         response.close()
         response.release_conn()

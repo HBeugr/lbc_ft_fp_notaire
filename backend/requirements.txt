@@ -4,7 +4,9 @@ uvicorn[standard]==0.30.6
 
 # Database
 sqlalchemy==2.0.35
-asyncmy==0.2.9
+asyncpg==0.30.0
+# Requis par le mode asynchrone de SQLAlchemy (pont greenlet/asyncio).
+greenlet==3.1.1
 alembic==1.13.3
 
 # Auth & Security
@@ -21,6 +23,10 @@ cryptography==43.0.1
 
 # PDF generation
 fpdf2==2.8.3
+
+# Traitement d'image — validation des logos de cabinet (dimensions, format réel).
+# Tirée transitivement par fpdf2, mais épinglée car nous en dépendons directement.
+pillow==12.3.0
 
 # Sanctions list parsing
 pdfplumber==0.11.4

@@ -6,7 +6,7 @@ import csv
 import io
 
 from app.core.database import get_db
-from app.core.deps import require_admin, require_rc
+from app.core.deps import require_admin, require_log_reader
 from app.models.user import User
 from app.repositories import audit_repo
 
@@ -50,7 +50,8 @@ class AuditLogsResponse(BaseModel):
 
 @router.get("/logs", response_model=AuditLogsResponse)
 async def get_audit_logs(
-    _: User = Depends(require_rc),
+    # ADM-06 — Admin + Notaire Principal uniquement (le RC est exclu par le CDC §7.3).
+    _: User = Depends(require_log_reader),
     db: AsyncSession = Depends(get_db),
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),

@@ -19,7 +19,7 @@ from app.models.dos import DeclarationSuspicion, DosAddendum
 from app.models.user import User
 from app.repositories import dos_repo, dossier_repo, audit_repo, alertes_repo
 from app.schemas.dos import (
-    AddendumCreate, AddendumOut, DosAccuseRequest, DosClasserRequest,
+    AddendumCreate, AddendumOut, DosClasserRequest,
     DosCreate, DosOut, DosUpsert,
 )
 
@@ -399,7 +399,11 @@ def _generate_dos_pdf(dos: DeclarationSuspicion) -> bytes:
         pdf.set_text_color(30, 41, 59)
         pdf.set_font("Helvetica", "", 8)
         for line in lines:
-            pdf.multi_cell(0, 5, _pdf_txt(line))
+            # `new_x` explicite : par défaut fpdf2 laisse le curseur à DROITE de la
+            # cellule, si bien que la largeur auto (w=0) de la ligne suivante tombe
+            # à zéro et lève « Not enough horizontal space » sur toute section de
+            # plus d'une ligne.
+            pdf.multi_cell(0, 5, _pdf_txt(line), new_x="LMARGIN", new_y="NEXT")
         pdf.ln(1)
 
     section("1. Organisme declarant", [

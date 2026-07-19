@@ -2,13 +2,14 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import update
 
-from app.core.database import get_db
+from app.core.database import get_db, tenant_session
 from app.core.config import settings
-from app.core import security
+from app.core import security, tenant_resolver
 from app.core.deps import get_current_user_for_password_change
+from app.core.tenant_context import TenantContext, tenant_scope
 from app.models.user import User
 from app.services.auth_service import authenticate, issue_tokens, refresh_access_token, logout, AuthError
-from app.schemas.auth import LoginRequest, LoginResponse, TokenResponse, UserOut, PasswordChangeRequest
+from app.schemas.auth import LoginRequest, LoginResponse, TenantOut, TokenResponse, UserOut, PasswordChangeRequest
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -29,33 +30,104 @@ def _clear_refresh_cookie(response: Response) -> None:
     response.delete_cookie(key=_REFRESH_COOKIE, path="/api/auth")
 
 
+_INVALID_CREDENTIALS = "Email ou mot de passe incorrect."
+
+
+def _assert_tenant_usable(tenant: TenantContext) -> None:
+    """Portier : un cabinet non actif ne peut pas ouvrir de session."""
+    if tenant.statut == "configuration":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={"code": "tenant_configuration",
+                    "message": "Cabinet en cours de configuration. Contactez votre administrateur."},
+        )
+    if tenant.statut == "suspendu":
+        raise HTTPException(
+            status_code=status.HTTP_402_PAYMENT_REQUIRED,
+            detail={"code": "tenant_suspended",
+                    "message": "Accès suspendu. Contactez l'administrateur de la plateforme."},
+        )
+    if tenant.statut == "archive":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={"code": "tenant_archived", "message": "Ce cabinet est archivé."},
+        )
+
+
 @router.post("/login", response_model=LoginResponse)
-async def login(body: LoginRequest, request: Request, response: Response, db: AsyncSession = Depends(get_db)) -> LoginResponse:
+async def login(body: LoginRequest, request: Request, response: Response) -> LoginResponse:
+    """Connexion : l'email désigne le cabinet, qui désigne le schéma.
+
+    Aucune session métier n'est ouverte avant d'avoir identifié le cabinet — le
+    routage précède l'authentification, jamais l'inverse.
+    """
     ip = request.client.host if request.client else "unknown"
-    try:
-        user = await authenticate(db, body.email, body.password, ip)
-    except AuthError as exc:
-        if exc.code == "rate_limited":
-            raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=exc.message)
-        detail: dict | str = exc.message
-        if exc.remaining is not None:
-            detail = {"message": exc.message, "remaining_attempts": exc.remaining}
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=detail)
-    access_token, refresh_token = issue_tokens(user)
+
+    tenant = await tenant_resolver.get_by_email(body.email)
+    if tenant is None:
+        # Message identique à un mot de passe erroné : ne pas révéler quels
+        # emails sont rattachés à un cabinet de la plateforme.
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=_INVALID_CREDENTIALS)
+
+    _assert_tenant_usable(tenant)
+
+    with tenant_scope(tenant):
+        async with tenant_session(tenant) as db:
+            try:
+                user = await authenticate(db, body.email, body.password, ip)
+            except AuthError as exc:
+                if exc.code == "rate_limited":
+                    raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=exc.message)
+                detail: dict | str = exc.message
+                if exc.remaining is not None:
+                    detail = {"message": exc.message, "remaining_attempts": exc.remaining}
+                raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=detail)
+
+            access_token, refresh_token = issue_tokens(user)
+            payload = LoginResponse(
+                access_token=access_token,
+                user=UserOut.model_validate(user),
+                totp_pending=user.requires_2fa and user.totp_enabled,
+                tenant=TenantOut(id=tenant.id, slug=tenant.slug, nom=tenant.nom, statut=tenant.statut),
+            )
+
     _set_refresh_cookie(response, refresh_token)
-    return LoginResponse(access_token=access_token, user=UserOut.model_validate(user), totp_pending=user.requires_2fa and user.totp_enabled)
+    return payload
 
 
 @router.post("/refresh", response_model=TokenResponse)
-async def refresh(request: Request, response: Response, db: AsyncSession = Depends(get_db)) -> TokenResponse:
+async def refresh(request: Request, response: Response) -> TokenResponse:
+    """Renouvellement de session.
+
+    Le cabinet est relu depuis le claim `tid` du refresh token : cet endpoint
+    n'a pas d'en-tête Authorization, le middleware ne peut donc pas l'avoir
+    résolu en amont.
+    """
     token = request.cookies.get(_REFRESH_COOKIE)
     if not token:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Session expirée.")
+
     try:
-        access_token, new_refresh = await refresh_access_token(db, token)
-    except AuthError as exc:
+        tenant_id = security.decode_token(token).get("tid")
+    except Exception:
         _clear_refresh_cookie(response)
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=exc.message)
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token invalide ou expiré.")
+
+    tenant = await tenant_resolver.get_by_id(tenant_id) if tenant_id else None
+    if tenant is None:
+        _clear_refresh_cookie(response)
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Cabinet introuvable.")
+
+    _assert_tenant_usable(tenant)
+
+    with tenant_scope(tenant):
+        async with tenant_session(tenant) as db:
+            try:
+                access_token, new_refresh = await refresh_access_token(db, token)
+            except AuthError as exc:
+                _clear_refresh_cookie(response)
+                raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=exc.message)
+
     _set_refresh_cookie(response, new_refresh)
     return TokenResponse(access_token=access_token)
 
@@ -64,7 +136,18 @@ async def refresh(request: Request, response: Response, db: AsyncSession = Depen
 async def logout_endpoint(request: Request, response: Response) -> None:
     token = request.cookies.get(_REFRESH_COOKIE)
     if token:
-        await logout(token)
+        # La liste de révocation Redis est cloisonnée par cabinet : il faut se
+        # replacer dans le bon cabinet, sinon le jeton serait révoqué dans un
+        # espace de noms où personne ne le cherchera.
+        tenant = None
+        try:
+            tenant_id = security.decode_token(token).get("tid")
+            if tenant_id:
+                tenant = await tenant_resolver.get_by_id(tenant_id)
+        except Exception:
+            tenant = None
+        with tenant_scope(tenant):
+            await logout(token)
     _clear_refresh_cookie(response)
 
 

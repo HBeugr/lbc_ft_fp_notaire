@@ -58,6 +58,43 @@ def _lieu_match(client_lieu: str, list_lieu: str) -> bool:
     return fuzz.token_sort_ratio(cl, ll) >= 80
 
 
+
+# Séparateurs d'alias rencontrés dans les listes officielles. La liste nationale
+# 1373 consigne les pseudonymes DANS le champ nom : « SIDAT MOUCTARR FAAL ALIAS
+# « DADDYFALL » ». Comparer le nom recherché à cette chaîne entière fait chuter
+# le score de correspondance (66 au lieu de 100 sur l'exemple ci-dessus, pour un
+# seuil applicatif de 85) : la personne, pourtant listée, n'est PAS détectée si
+# l'on saisit son vrai nom — ce que fait naturellement un notaire.
+#
+# On compare donc le nom recherché à chaque SEGMENT de l'entrée : la chaîne
+# complète, la partie avant l'alias, et l'alias lui-même. Un match sur l'un
+# quelconque des segments suffit. C'est un défaut de détection T3 (Art. 89), pas
+# une question de confort.
+_SEPARATEURS_ALIAS = (" ALIAS ", " ALIAS:", " AKA ", " DIT ", " DITE ")
+
+
+# Guillemets et apostrophes encadrant les pseudonymes : sans portée sémantique.
+_ORNEMENTS = "«»\"'“” "
+
+
+def _nettoyer_segment(texte: str) -> str:
+    return texte.strip().strip(_ORNEMENTS).strip()
+
+
+def variantes_nom(nom: str) -> list[str]:
+    """Segments comparables d'une entrée de liste : nom réel et alias éventuels."""
+    if not nom:
+        return []
+    variantes = [nom]
+    reste = nom.upper()
+    for sep in _SEPARATEURS_ALIAS:
+        if sep in reste:
+            avant, apres = reste.split(sep, 1)
+            variantes += [_nettoyer_segment(avant), _nettoyer_segment(apres)]
+            reste = avant
+    return [v for v in dict.fromkeys(variantes) if len(v) >= 3]
+
+
 def screen(
     *,
     nom: str,
@@ -84,14 +121,23 @@ def screen(
         entrees = liste.entrees
         if not entrees:
             continue
-        noms_seuls = [e.nom for e in entrees]
-        match = process.extractOne(norm_nom, noms_seuls, scorer=fuzz.token_sort_ratio)
+        # Un segment par variante de nom, en gardant le lien vers l'entrée d'origine.
+        segments: list[str] = []
+        origine: list[int] = []
+        for position, e in enumerate(entrees):
+            for variante in variantes_nom(e.nom):
+                segments.append(variante)
+                origine.append(position)
+        if not segments:
+            continue
+
+        match = process.extractOne(norm_nom, segments, scorer=fuzz.token_sort_ratio)
         if match is None:
             continue
 
         matched_name, score, idx = match
         score = int(round(score))
-        entry = entrees[idx]
+        entry = entrees[origine[idx]]
         entry_dob = entry.date_naissance or ""
         entry_lieu = entry.lieu_naissance or ""
 
@@ -164,17 +210,25 @@ def pre_check(
     listes_avec_entrees = False
     for liste in listes:
         entrees = liste.entrees
-        noms_seuls = [e.nom for e in entrees]
-        if not noms_seuls:
+        # Mêmes segments que `screen()` : sans cela l'écran de saisie KYC — le
+        # chemin réellement emprunté par l'utilisateur — resterait aveugle aux
+        # entrées portant un alias en ligne.
+        segments: list[str] = []
+        origine: list[int] = []
+        for position, e in enumerate(entrees):
+            for variante in variantes_nom(e.nom):
+                segments.append(variante)
+                origine.append(position)
+        if not segments:
             continue
         listes_avec_entrees = True
-        match = process.extractOne(norm_nom, noms_seuls, scorer=fuzz.token_sort_ratio)
+        match = process.extractOne(norm_nom, segments, scorer=fuzz.token_sort_ratio)
         if not match or match[1] < seuil:
             continue
 
         matched_name, score, idx = match
         score = int(round(score))
-        entry = entrees[idx]
+        entry = entrees[origine[idx]]
         entry_dob = entry.date_naissance or ""
         entry_nat = normalize_name(entry.nationalite) if entry.nationalite else None
         entry_lieu = entry.lieu_naissance or ""

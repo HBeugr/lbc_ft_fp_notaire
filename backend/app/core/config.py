@@ -14,15 +14,22 @@ class Settings(BaseSettings):
     APP_PORT: int = 8000
     APP_CORS_ORIGINS: list[str] = ["http://localhost:5173"]
 
-    # Database
+    # Database — PostgreSQL (SaaS multi-tenant : 1 schéma par cabinet)
     DB_HOST: str = "db"
-    DB_PORT: int = 3306
+    DB_PORT: int = 5432
     DB_NAME: str = "notaire_lbcft"
     DB_USER: str
     DB_PASSWORD: str
     DB_ROOT_PASSWORD: str = ""
     DOS_DB_USER: str
     DOS_DB_PASSWORD: str
+
+    # Multi-tenant
+    SHARED_SCHEMA: str = "shared"
+    TENANT_SCHEMA_PREFIX: str = "tenant_"
+    # Clé maîtresse : les clés AES par tenant en sont dérivées (HKDF). Ne jamais
+    # réutiliser AES_KEY directement pour des données métier en multi-tenant.
+    TENANT_MASTER_KEY: str = ""
 
     # Redis
     REDIS_URL: str = "redis://redis:6379/0"
@@ -52,11 +59,13 @@ class Settings(BaseSettings):
 
     @property
     def DB_URL(self) -> str:
-        return f"mysql+asyncmy://{self.DB_USER}:{self.DB_PASSWORD}@{self.DB_HOST}:{self.DB_PORT}/{self.DB_NAME}"
+        return f"postgresql+asyncpg://{self.DB_USER}:{self.DB_PASSWORD}@{self.DB_HOST}:{self.DB_PORT}/{self.DB_NAME}"
 
-    @property
-    def DOS_DB_URL(self) -> str:
-        return f"mysql+asyncmy://{self.DOS_DB_USER}:{self.DOS_DB_PASSWORD}@{self.DB_HOST}:{self.DB_PORT}/{self.DB_NAME}"
+
+    def tenant_schema(self, tenant_id: str) -> str:
+        """Nom du schéma PostgreSQL d'un tenant. Un tenant_id est un UUID :
+        les tirets sont remplacés car un identifiant PG non quoté ne les admet pas."""
+        return f"{self.TENANT_SCHEMA_PREFIX}{tenant_id.replace('-', '')}"
 
 
 @lru_cache

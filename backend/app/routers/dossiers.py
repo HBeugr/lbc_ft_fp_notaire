@@ -4,8 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.deps import get_current_user, require_rc
-from app.core.rbac import AssignedFilter
-from app.core import runtime_config
+from app.core import archivage, runtime_config
 from app.models.user import User
 from app.repositories import dossier_repo, audit_repo, user_repo, alertes_repo
 from pydantic import BaseModel
@@ -256,6 +255,8 @@ async def update_transaction(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Dossier introuvable.")
     if not current_user.is_supervisor and dossier.assigned_to != current_user.id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Accès refusé.")
+    # CDC §5.2 — un dossier archivé est en lecture seule pour tous les rôles (Art. 23).
+    archivage.assert_dossier_modifiable(dossier)
 
     dossier.montant_tranche = body.montant_tranche
     if body.montant_transaction is not None:
@@ -325,6 +326,8 @@ async def assign_dossier(
     # qui lui est assigné (mêmes règles que la consultation).
     if not current_user.is_supervisor and dossier.assigned_to != current_user.id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Accès refusé à ce dossier.")
+    # CDC §5.2 — réassigner un dossier archivé le modifierait (Art. 23, lecture seule).
+    archivage.assert_dossier_modifiable(dossier)
     target_user = await user_repo.get_by_id(db, user_id)
     if not target_user or not target_user.is_active:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Utilisateur invalide.")
@@ -421,6 +424,18 @@ async def change_statut(
     if dossier.statut != "brouillon" and not (commentaire and commentaire.strip()):
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Un commentaire est obligatoire pour cette transition.")
 
+    # ── Archivage automatique à la clôture (CDC §5.2, Art. 23) ────────────────────
+    # « Le passage en état Clôturé déclenche automatiquement l'archivage » et la
+    # conservation court « à compter de la date de clôture ». Sans cette pose de
+    # dates, le dossier passait en `cloture` puis `archive` sans jamais porter son
+    # échéance de conservation : impossible de justifier les 10 ans devant un
+    # contrôle, et l'alerte d'expiration J-180 n'avait aucun point d'ancrage.
+    # Posé AVANT la persistance du statut : le changement d'état et son échéance
+    # d'archivage sont ainsi écrits dans la même transaction — un dossier clôturé
+    # sans date de conservation ne peut pas exister, même en cas d'incident.
+    if new_statut == "cloture":
+        archivage.declencher_archivage(dossier)
+
     dossier = await dossier_repo.update_statut(db, dossier, new_statut, current_user.id, commentaire)
 
     # Auto-planification d'une révision périodique à la validation (fréquence selon le
@@ -489,6 +504,8 @@ async def declencher_trigger_manuel(
     dossier = await dossier_repo.get_by_id(db, dossier_id)
     if not dossier:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Dossier introuvable.")
+    # CDC §5.2 — reclasser un dossier archivé reviendrait à le modifier (Art. 23).
+    archivage.assert_dossier_modifiable(dossier)
     type_alerte, motif = spec
     dossier.trigger_actif = body.trigger
     dossier.classification = "ELEVE"
@@ -543,6 +560,9 @@ async def add_commentaire_endpoint(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Dossier introuvable.")
     if not current_user.is_supervisor and dossier.assigned_to != current_user.id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Accès refusé.")
+    # CDC §5.2 — un dossier archivé n'accepte plus d'écriture, commentaire interne compris :
+    # enrichir a posteriori un dossier archivé altérerait la pièce conservée (Art. 23).
+    archivage.assert_dossier_modifiable(dossier)
     commentaire = await dossier_repo.add_commentaire(db, dossier_id, current_user.id, body.contenu)
     return CommentaireOut.from_orm_safe(commentaire)
 

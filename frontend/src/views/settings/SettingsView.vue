@@ -5,6 +5,134 @@
       <p class="page-sub">Configuration de la plateforme — réservé aux administrateurs.</p>
     </div>
 
+    <!-- Mon cabinet (SaaS multi-tenant) — lecture seule -->
+    <div class="card">
+      <div class="card-header">
+        <div>
+          <h2 class="card-title">Mon cabinet</h2>
+          <p class="card-desc">
+            Informations de l'espace du cabinet. Modifiables uniquement par l'administrateur
+            de la plateforme.
+          </p>
+        </div>
+        <span v-if="tenantStatut" class="badge-statut" :class="`badge-statut--${tenantStatut}`">
+          {{ TENANT_STATUT_LABELS[tenantStatut] }}
+        </span>
+      </div>
+
+      <div class="info-grid">
+        <div class="info-row">
+          <span class="info-label">Nom du cabinet</span>
+          <span class="info-val">{{ tenantMe?.nom_cabinet ?? auth.tenantName ?? '—' }}</span>
+        </div>
+        <div class="info-row">
+          <span class="info-label">Identifiant</span>
+          <span class="info-val info-val--mono">{{ tenantMe?.slug ?? auth.tenant?.slug ?? '—' }}</span>
+        </div>
+        <div class="info-row">
+          <span class="info-label">Pays</span>
+          <span class="info-val">{{ tenantMe?.pays ?? '—' }}</span>
+        </div>
+        <div class="info-row">
+          <span class="info-label">N° agrément</span>
+          <!-- `numero_agrement` est nullable côté backend tant qu'il n'a pas été saisi. -->
+          <span class="info-val">{{ tenantMe?.numero_agrement ?? '—' }}</span>
+        </div>
+        <div class="info-row">
+          <span class="info-label">Quota de sièges</span>
+          <span class="info-val">
+            {{ tenantMe && tenantMe.max_users > 0 ? tenantMe.max_users : 'Illimité' }}
+          </span>
+        </div>
+        <div class="info-row">
+          <span class="info-label">2FA obligatoire</span>
+          <span class="info-val">{{ tenantMe?.totp_required ? 'Oui' : 'Non' }}</span>
+        </div>
+        <div class="info-row">
+          <span class="info-label">Sièges utilisés</span>
+          <span class="info-val">
+            <template v-if="quota">
+              {{ quota.utilisateurs_actifs }}
+              <template v-if="quota.quota_utilisateurs > 0"> / {{ quota.quota_utilisateurs }}</template>
+              <span class="info-muted">
+                ({{ quota.quota_utilisateurs === 0 ? 'quota illimité' : `${quotaRestant} restant(s)` }})
+              </span>
+            </template>
+            <template v-else>—</template>
+          </span>
+        </div>
+        <div v-if="quota" class="info-row">
+          <span class="info-label">Dossiers enregistrés</span>
+          <span class="info-val">{{ quota.dossiers_total }}</span>
+        </div>
+      </div>
+
+      <!-- Jauge de consommation des sièges (masquée si quota illimité) -->
+      <div v-if="quota && quota.quota_utilisateurs > 0" class="quota-bar">
+        <div class="quota-fill" :class="quotaClass" :style="{ width: `${quotaPct}%` }" />
+      </div>
+
+      <!-- Logo du cabinet -->
+      <div class="logo-section">
+        <h3 class="sub-title">Logo du cabinet</h3>
+        <p class="sub-desc">
+          Affiché dans la barre latérale, à côté du nom du cabinet.
+        </p>
+
+        <div class="logo-row">
+          <!-- Aperçu : gabarit fixe, l'image s'y inscrit sans déformation. -->
+          <div class="logo-preview" :class="{ 'logo-preview--vide': !branding.logoUrl }">
+            <img v-if="branding.logoUrl" class="logo-preview-img" :src="branding.logoUrl" alt="Logo du cabinet" />
+            <span v-else class="logo-preview-vide">Aucun logo</span>
+          </div>
+
+          <div class="logo-actions">
+            <template v-if="peutGererLogo">
+              <input
+                ref="logoInput"
+                type="file"
+                class="logo-file-input"
+                :accept="acceptLogo"
+                @change="handleLogoChange"
+              />
+              <div class="logo-buttons">
+                <button type="button" class="btn-save" :disabled="logoBusy" @click="logoInput?.click()">
+                  <span v-if="logoBusy" class="spinner" />
+                  {{ branding.logoUrl ? 'Remplacer le logo' : 'Envoyer un logo' }}
+                </button>
+                <button
+                  v-if="branding.logoUrl"
+                  type="button"
+                  class="btn-ghost-danger"
+                  :disabled="logoBusy"
+                  @click="handleLogoDelete"
+                >
+                  Supprimer
+                </button>
+              </div>
+            </template>
+            <p v-else class="read-only-notice">
+              Lecture seule — seul un administrateur peut modifier le logo du cabinet.
+            </p>
+
+            <!-- Contraintes servies par l'API : jamais recopiées en dur dans l'interface. -->
+            <ul v-if="contraintes" class="logo-rules">
+              <li>Formats acceptés : {{ formatsLisibles }}</li>
+              <li>Poids maximum : {{ tailleMaxLisible }}</li>
+              <li>
+                Dimensions : de {{ contraintes.dimension_min_px }}×{{ contraintes.dimension_min_px }}
+                à {{ contraintes.dimension_max_px }}×{{ contraintes.dimension_max_px }} pixels
+              </li>
+              <li>Rapport largeur/hauteur : {{ contraintes.ratio_max }}:1 maximum</li>
+            </ul>
+
+            <!-- Le 422 du serveur est explicite et en français : on l'affiche tel quel. -->
+            <p v-if="logoMsg" class="save-msg" :class="logoMsgClass">{{ logoMsg }}</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- Pondérations scoring (FR-26) -->
     <div class="card">
       <div class="card-header">
@@ -120,10 +248,144 @@ import { ref, computed, onMounted } from 'vue'
 import api from '@/services/api'
 import { useAuthStore } from '@/stores/auth'
 import { useNotificationsStore } from '@/stores/notifications'
+import { tenantService, type TenantQuota, type LogoContraintes } from '@/services/tenant'
+import { TENANT_STATUT_LABELS } from '@/services/superAdmin'
+import { useBrandingStore } from '@/stores/branding'
+import type { TenantMe } from '@/stores/auth'
 
 const auth = useAuthStore()
 const notif = useNotificationsStore()
+const branding = useBrandingStore()
 const isAdmin = computed(() => auth.user?.role === 'admin')
+
+// ── Mon cabinet ────────────────────────────────────────────────────
+const tenantMe = ref<TenantMe | null>(null)
+const quota = ref<TenantQuota | null>(null)
+
+const tenantStatut = computed(() => tenantMe.value?.statut ?? auth.tenant?.statut ?? null)
+// Note : pays et n° d'agrément ne sont pas exposés par /api/tenant/me — ils restent
+// visibles uniquement depuis la console d'exploitation.
+
+const quotaRestant = computed(() => {
+  const q = quota.value
+  if (!q || q.quota_utilisateurs === 0) return 0
+  return Math.max(0, q.quota_utilisateurs - q.utilisateurs_actifs)
+})
+
+const quotaPct = computed(() => {
+  const q = quota.value
+  if (!q || q.quota_utilisateurs === 0) return 0
+  return Math.min(100, Math.round((q.utilisateurs_actifs / q.quota_utilisateurs) * 100))
+})
+
+const quotaClass = computed(() => {
+  if (quotaPct.value >= 100) return 'quota-fill--high'
+  if (quotaPct.value >= 80) return 'quota-fill--medium'
+  return 'quota-fill--low'
+})
+
+async function loadTenant() {
+  try {
+    const me = await tenantService.me()
+    tenantMe.value = me
+    auth.setTenantFromMe(me)
+  } catch {
+    // Endpoint indisponible — on retombe sur les informations du store.
+  }
+  // Le quota est réservé aux rôles admin / notaire principal.
+  if (auth.user?.role === 'admin' || auth.user?.role === 'notaire_principal') {
+    try {
+      quota.value = await tenantService.quota()
+    } catch {
+      quota.value = null
+    }
+  }
+}
+
+// ── Logo du cabinet ────────────────────────────────────────────────
+// Droits alignés sur ce que l'API applique RÉELLEMENT : les routes
+// PUT/DELETE /api/tenant/logo dépendent de `require_user_manager`, qui
+// n'autorise que l'Administrateur (ADM-01, séparation des fonctions Art. 12).
+// Le notaire principal reçoit un 403 : lui afficher les boutons reviendrait à
+// promettre une action qui échoue systématiquement. Il voit donc l'aperçu seul,
+// comme les autres rôles.
+const peutGererLogo = computed(() => auth.user?.role === 'admin')
+
+const contraintes = ref<LogoContraintes | null>(null)
+const logoInput = ref<HTMLInputElement | null>(null)
+const logoBusy = ref(false)
+const logoMsg = ref('')
+const logoMsgClass = ref('')
+
+/** Filtre du sélecteur de fichiers, déduit des formats annoncés par l'API. */
+const acceptLogo = computed(() => contraintes.value?.formats.join(',') ?? 'image/*')
+
+const formatsLisibles = computed(() =>
+  (contraintes.value?.formats ?? [])
+    .map(f => f.replace('image/', '').toUpperCase())
+    .join(', ')
+)
+
+const tailleMaxLisible = computed(() => {
+  const octets = contraintes.value?.taille_max_octets
+  if (!octets) return '—'
+  const mo = octets / (1024 * 1024)
+  return mo >= 1 ? `${Number(mo.toFixed(2))} Mo` : `${Math.round(octets / 1024)} Ko`
+})
+
+async function loadContraintes() {
+  try {
+    contraintes.value = await tenantService.logoContraintes()
+  } catch {
+    // Endpoint indisponible : le bloc de rappel est masqué plutôt que d'afficher
+    // des valeurs inventées, qui pourraient contredire le serveur.
+    contraintes.value = null
+  }
+}
+
+async function handleLogoChange(event: Event) {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  // On vide tout de suite la sélection : renvoyer deux fois le même fichier doit
+  // redéclencher l'événement `change`.
+  input.value = ''
+  if (!file) return
+
+  logoBusy.value = true
+  logoMsg.value = ''
+  try {
+    const res = await tenantService.uploadLogo(file)
+    auth.setTenantLogoUpdatedAt(res.logo_updated_at)
+    await branding.charger(res.logo_updated_at)
+    logoMsg.value = `Logo enregistré (${res.largeur}×${res.hauteur} px).`
+    logoMsgClass.value = 'msg--ok'
+  } catch (err: any) {
+    // Le 422 du serveur porte un message explicite en français : on le restitue.
+    const detail = err?.response?.data?.detail
+    logoMsg.value = typeof detail === 'string' ? detail : "Impossible d'envoyer ce logo."
+    logoMsgClass.value = 'msg--err'
+  } finally {
+    logoBusy.value = false
+  }
+}
+
+async function handleLogoDelete() {
+  logoBusy.value = true
+  logoMsg.value = ''
+  try {
+    await tenantService.deleteLogo()
+    auth.setTenantLogoUpdatedAt(null)
+    await branding.charger(null)
+    logoMsg.value = 'Logo supprimé.'
+    logoMsgClass.value = 'msg--ok'
+  } catch (err: any) {
+    const detail = err?.response?.data?.detail
+    logoMsg.value = typeof detail === 'string' ? detail : 'Impossible de supprimer le logo.'
+    logoMsgClass.value = 'msg--err'
+  } finally {
+    logoBusy.value = false
+  }
+}
 
 const loading = ref(true)
 const saving  = ref(false)
@@ -191,6 +453,8 @@ async function saveWeights() {
 
 onMounted(() => {
   loadWeights()
+  loadTenant()
+  loadContraintes()
   notif.dismissWeightsBadge()
 })
 </script>
@@ -298,4 +562,70 @@ onMounted(() => {
 .info-row  { display: flex; gap: 1rem; font-size: 0.875rem; }
 .info-label { min-width: 160px; color: var(--color-text-secondary); font-weight: 500; }
 .info-val   { color: var(--color-text-primary); }
+.info-val--mono { font-family: monospace; }
+.info-muted { color: var(--color-text-muted); font-size: 0.8125rem; margin-left: 0.25rem; }
+
+/* Mon cabinet — statut + jauge de sièges */
+.badge-statut {
+  flex-shrink: 0;
+  font-size: 0.6875rem;
+  font-weight: 700;
+  padding: 3px 8px;
+  border-radius: 6px;
+  letter-spacing: 0.02em;
+}
+.badge-statut--production    { background: var(--color-risk-low-bg); color: var(--color-risk-low); }
+.badge-statut--configuration { background: var(--color-status-en-analyse-bg); color: var(--color-status-en-analyse); }
+.badge-statut--suspendu      { background: var(--color-risk-high-bg); color: var(--color-risk-high); }
+.badge-statut--archive       { background: var(--color-status-cloture-bg); color: var(--color-status-cloture); }
+
+.quota-bar {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--color-bg-page);
+  border: 1px solid var(--color-border);
+  overflow: hidden;
+}
+.quota-fill { height: 100%; transition: width 0.2s; }
+
+/* Mon cabinet — logo */
+.logo-section { border-top: 1px solid var(--color-border); padding-top: 1.125rem; }
+.sub-title { font-size: 0.875rem; font-weight: 600; color: var(--color-text-primary); margin: 0; }
+.sub-desc  { font-size: 0.8125rem; color: var(--color-text-secondary); margin: 0.25rem 0 0.875rem; }
+
+.logo-row { display: flex; align-items: flex-start; gap: 1.25rem; flex-wrap: wrap; }
+
+/* Gabarit fixe : `contain` empêche tout logo large ou haut de casser la mise en page. */
+.logo-preview {
+  width: 120px; height: 120px; flex-shrink: 0;
+  border: 1px solid var(--color-border); border-radius: 10px;
+  background: var(--color-bg-page, #f8fafc);
+  display: flex; align-items: center; justify-content: center;
+  padding: 0.5rem; overflow: hidden;
+}
+.logo-preview--vide { border-style: dashed; }
+.logo-preview-img  { max-width: 100%; max-height: 100%; object-fit: contain; display: block; }
+.logo-preview-vide { font-size: 0.75rem; color: var(--color-text-muted); }
+
+.logo-actions { flex: 1; min-width: 240px; display: flex; flex-direction: column; gap: 0.75rem; }
+.logo-file-input { display: none; }
+.logo-buttons { display: flex; gap: 0.625rem; flex-wrap: wrap; }
+
+.btn-ghost-danger {
+  padding: 0.5625rem 1rem; background: none;
+  border: 1px solid var(--color-border); border-radius: 8px;
+  font-size: 0.875rem; font-weight: 500; color: var(--color-risk-high);
+  cursor: pointer; transition: border-color 0.12s;
+}
+.btn-ghost-danger:hover:not(:disabled) { border-color: var(--color-risk-high); }
+.btn-ghost-danger:disabled { opacity: 0.6; cursor: not-allowed; }
+
+.logo-rules {
+  margin: 0; padding: 0.75rem 0.875rem 0.75rem 1.75rem;
+  background: #f8fafc; border: 1px solid var(--color-border); border-radius: 8px;
+  font-size: 0.75rem; color: var(--color-text-secondary); line-height: 1.7;
+}
+.quota-fill--low    { background: var(--color-risk-low); }
+.quota-fill--medium { background: var(--color-risk-medium); }
+.quota-fill--high   { background: var(--color-risk-high); }
 </style>

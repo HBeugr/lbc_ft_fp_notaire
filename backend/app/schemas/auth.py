@@ -27,11 +27,23 @@ class UserOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class TenantOut(BaseModel):
+    """Cabinet servant la session — alimente le branding et le portier côté client."""
+
+    id: str
+    slug: str
+    nom: str
+    statut: str
+
+    model_config = {"from_attributes": True}
+
+
 class LoginResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
     user: UserOut
     totp_pending: bool = False
+    tenant: TenantOut | None = None
 
 
 class PasswordChangeRequest(BaseModel):

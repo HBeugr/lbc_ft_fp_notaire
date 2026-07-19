@@ -1,10 +1,10 @@
-from datetime import date, datetime, timezone
+from datetime import date, datetime
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
-from app.core.deps import get_current_user, require_rc, require_supervisor
+from app.core.deps import require_rc, require_supervisor
 from app.models.user import User
 from app.models.revision import RevisionKyc
 from app.repositories import revision_repo, dossier_repo, audit_repo, alertes_repo

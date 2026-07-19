@@ -21,6 +21,20 @@ from app.core import runtime_config
 # Seuils verrouillés — NE PAS RENDRE PARAMÉTRABLES
 _SEUILS = {"FAIBLE": (0, 7), "MOYEN": (8, 13), "ELEVE": (14, 20)}
 
+# Plafond légal du seuil espèces (Art. 72). Le cabinet peut décider de surveiller
+# PLUS BAS — c'est un durcissement, toujours licite — mais jamais plus haut :
+# relever ce seuil reviendrait à désactiver T2 sur la plage que la loi couvre,
+# ce que le CDC §2.3 interdit (« triggers non paramétrables »), Administrateur
+# compris. Le plafond est donc appliqué ici, au calcul, et non seulement à la
+# saisie : une valeur déjà en base (migration, écriture directe) ne doit pas
+# davantage pouvoir affaiblir le trigger.
+SEUIL_ESPECES_PLAFOND_LEGAL = 15_000_000
+
+
+def seuil_especes_effectif() -> float:
+    """Seuil T2 réellement appliqué : le paramétrage du cabinet, borné par l'Art. 72."""
+    return min(float(runtime_config.get_seuil_especes_t2()), float(SEUIL_ESPECES_PLAFOND_LEGAL))
+
 # 10 axes canoniques (ordre CDC v4 §Module 2). code → libellé + auto-dérivable
 AXES: list[dict] = [
     {"code": "type_client",     "label": "Type de client",          "auto": True},
@@ -81,7 +95,7 @@ def calculate(
 
     triggers = {
         "T1": bool(est_ppe),
-        "T2": (mode_paiement == "especes" and float(montant_transaction or 0) > runtime_config.get_seuil_especes_t2()),
+        "T2": (mode_paiement == "especes" and float(montant_transaction or 0) > seuil_especes_effectif()),
         "T3": bool(sur_liste_sanctions),
         "T4": bool(pays_liste_noire_gafi or pays_liste_grise_gafi),
         "T5": bool(refus_documents),
@@ -380,7 +394,7 @@ def simulate(
     especes_t2 = (mode_paiement_code == "especes" and s_mont >= 2)
     result = calculate(
         axes,
-        montant_transaction=(runtime_config.get_seuil_especes_t2() + 1) if especes_t2 else 0,
+        montant_transaction=(seuil_especes_effectif() + 1) if especes_t2 else 0,
         mode_paiement="especes" if especes_t2 else "",
         est_ppe=bool(is_ppe),
         pays_liste_grise_gafi=(zone_geo == "gafi"),

@@ -128,3 +128,35 @@ Les trois steppers étaient des reliquats de la migration immo, non câblés au 
 - ✅ **Stepper PM (`KycPMStepper.vue`)** : réaligné (`denomination_sociale`, `pays_constitution`, `adresse`, représentant → JSON `mandataire` + `nom_representant_legal` + `representant_statut_ppe`) + champs CDC (nom commercial, date émission RCCM → calcul 90j validé, CA, effectif, pays d'opérations, volume, objet social). Actionnaires/BE ≥25% persistés via les endpoints dédiés.
 - ✅ **BE (`KycBEForm.vue` + `KycBEPanel.vue`)** : formulaire réaligné (`raison_sociale_nom`, `pourcentage`) + champs CDC (lien avec le client, entreprise cotée, % droits de vote, entité intermédiaire) + registre BE (greffe) + filtrage SFC structuré + validation RC. Méthodes service manquantes ajoutées (`createKycBE`/`listKycBE`/`deleteKycBE`, contexte PP/PM).
 - ✅ **Édition BE** : endpoints `PATCH /kyc/pp/be/{id}` et `PATCH /kyc/pm/be/{id}` ajoutés (mise à jour partielle `KycBEUpdate`, `exclude_unset`) + service `updateKycBE` ; le formulaire édite désormais un BE existant. Smoke-test PATCH validé.
+
+---
+
+## Addendum — 2026-07-18 : migration SaaS multi-tenant PostgreSQL
+
+> Les constats ci-dessous sont **datés du 2026-06-15** et conservés tels quels :
+> un rapport d'audit se complète, il ne se réécrit pas. Cet addendum signale ce
+> qui a changé depuis, sans modifier les constats d'origine.
+
+La plateforme est passée de MySQL mono-tenant à **PostgreSQL SaaS multi-tenant**
+(un schéma par cabinet). Voir `docs/ADR-001-isolation-schema-par-tenant.md`.
+
+Effets sur les écarts relevés dans ce rapport :
+
+| Écart d'origine (§ ligne) | Statut au 2026-07-18 |
+|---|---|
+| « MySQL au lieu de PostgreSQL (CDC) » | ✅ **Levé** — la base est désormais PostgreSQL 16 |
+| « Vue.js au lieu de Next.js (CDC) » | ⚠️ **Inchangé** — écart assumé, cohérence avec les autres verticaux |
+| « Pas de Desktop Electron / offline SQLite / synchronisation » | ⚠️ **Inchangé et confirmé hors périmètre** — décision « web only » |
+| « Immuabilité applicative (pas DB) » sur les registres | ✅ **Renforcé** — la conservation 10 ans (Art. 23) est portée par un trigger plpgsql : aucun rôle ni chemin de code ne peut supprimer un dossier archivé |
+| « Chiffrement au repos » | ✅ **Renforcé** — clé AES-256 dérivée **par cabinet** (HKDF) ; un déchiffrement croisé échoue explicitement au lieu de retourner silencieusement le chiffré |
+| « Pondérations non configurables » | ✅ **Levé et cloisonné** — configurables, et propres à chaque cabinet |
+
+**Limite du rapport d'origine levée** : celui-ci précisait « Docker indisponible
+→ l'application n'a pas pu être exécutée ». La migration SaaS a été validée en
+exécution réelle : 39 tests backend sur PostgreSQL réel (dont 23 dédiés à
+l'étanchéité inter-cabinets) et 21 contrôles de recette de bout en bout contre
+une API démarrée (`backend/scripts/e2e_saas.sh`).
+
+**Nouveau périmètre à auditer**, non couvert par le rapport d'origine :
+cloisonnement inter-cabinets, provisioning, console d'exploitation et statut
+d'aveuglement du Super-Admin aux données métier.

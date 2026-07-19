@@ -142,6 +142,9 @@ async function handleSubmit() {
       password: form.password,
     })
 
+    // Le cabinet est posé avant l'utilisateur : setTenant purge le state persisté
+    // si l'on se connecte à un autre cabinet sur ce navigateur.
+    authStore.setTenant(data.tenant ?? null)
     authStore.setToken(data.access_token)
     authStore.setUser(data.user)
 
@@ -158,7 +161,15 @@ async function handleSubmit() {
     const httpStatus = err?.response?.status
     const detail = err?.response?.data?.detail
 
-    if (httpStatus === 429) {
+    if (httpStatus === 402 || httpStatus === 403) {
+      // Cabinet suspendu / en configuration / archivé : le message vient du backend.
+      const code = typeof detail === 'object' ? detail?.code : undefined
+      const msg = typeof detail === 'object' ? detail?.message : detail
+      globalError.value = msg ?? "L'accès de votre cabinet à la plateforme est indisponible."
+      if (code === 'tenant_configuration') {
+        attemptsWarning.value = "Votre espace est en cours de configuration par l'administrateur de la plateforme."
+      }
+    } else if (httpStatus === 429) {
       globalError.value = typeof detail === 'string' ? detail : 'Trop de tentatives. Réessayez dans 15 minutes.'
     } else if (httpStatus === 401) {
       const msg = typeof detail === 'object' ? detail?.message : (detail ?? 'Email ou mot de passe incorrect.')

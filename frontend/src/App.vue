@@ -1,4 +1,5 @@
 <template>
+  <TenantStatusBanner />
   <RouterView />
   <ToastContainer />
 </template>
@@ -6,8 +7,8 @@
 <script setup lang="ts">
 import { watch, onMounted, onUnmounted } from 'vue'
 import { RouterView, useRouter } from 'vue-router'
-import axios from 'axios'
 import ToastContainer from '@/components/common/ToastContainer.vue'
+import TenantStatusBanner from '@/components/layout/TenantStatusBanner.vue'
 import { useAuthStore } from '@/stores/auth'
 import { useNotificationsStore } from '@/stores/notifications'
 
@@ -15,29 +16,23 @@ const auth = useAuthStore()
 const notifications = useNotificationsStore()
 const router = useRouter()
 
-// Refresh the access token silently using the httpOnly refresh_token cookie.
-// Returns true on success, false on failure (also calls clearAuth on failure).
-async function silentRefresh(): Promise<boolean> {
-  try {
-    const { data } = await axios.post<{ access_token: string }>(
-      '/api/auth/refresh',
-      null,
-      { withCredentials: true },
-    )
-    auth.setToken(data.access_token)
-    return true
-  } catch {
-    auth.clearAuth()
-    return false
-  }
-}
+// Le rafraîchissement silencieux vit dans le store : il doit distinguer un échec
+// d'authentification (session purgée) d'un cabinet bloqué (session conservée,
+// pour que la page d'explication reste atteignable).
 
 // On page reload or new tab: Pinia resets but the httpOnly refresh_token cookie
 // survives. Attempt a silent refresh to restore the access token before the
 // router guard runs (guard awaits bootstrapReady).
 onMounted(async () => {
   if (auth.user && !auth.accessToken) {
-    await silentRefresh()
+    await auth.silentRefresh()
+  }
+  // Recharge le cabinet : son statut a pu changer (suspension) pendant que l'onglet
+  // était fermé, et le tenant persisté doit être confronté à celui du serveur.
+  // `tenantBlocked` est inclus : un cabinet suspendu n'a pas de jeton d'accès, mais
+  // /api/tenant/me reste ouvert pour lui présenter son statut.
+  if (auth.isAuthenticated || auth.tenantBlocked) {
+    await auth.fetchTenant()
   }
   auth.resolveBootstrap()
 })
@@ -51,10 +46,11 @@ function startProactiveRefresh() {
   if (proactiveRefreshTimer) return
   proactiveRefreshTimer = setInterval(async () => {
     if (!auth.isAuthenticated) { stopProactiveRefresh(); return }
-    const ok = await silentRefresh()
+    const ok = await auth.silentRefresh()
     if (!ok) {
       stopProactiveRefresh()
-      router.push({ name: 'login' })
+      // Cabinet bloqué en cours de session : on explique plutôt que de déconnecter.
+      router.push({ name: auth.tenantBlocked ? 'compte-suspendu' : 'login' })
     }
   }, PROACTIVE_REFRESH_MS)
 }

@@ -1,17 +1,24 @@
 """Registres légaux — 6 registres basés sur audit_logs + export PDF (Art. 23, Ordonnance 2023-875)."""
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
-from app.core.deps import get_current_user, require_rc
+from app.core.deps import get_current_user
 from app.models.audit import AuditLog
 from app.models.dossier import Dossier
 from app.models.user import User
 from app.repositories import audit_repo
 
 router = APIRouter(prefix="/registres", tags=["registres"])
+
+# CDC §7.3 — REG-01 « Consulter les registres » et REG-02 « Exporter les registres » :
+# Admin O, Notaire Principal O, Resp. Conformité O, Clercs **N**. Les registres sont
+# des pièces de conformité opposables (Art. 23) : leur consultation relève de la
+# supervision, pas de la saisie. Aucun registre n'est donc ouvert aux clercs, y
+# compris les registres non marqués « confidentiels ».
+_ROLES_REGISTRES = ["admin", "notaire_principal", "responsable_conformite"]
 
 REGISTRE_DEFS: dict[str, dict] = {
     "kyc": {
@@ -53,20 +60,33 @@ REGISTRE_DEFS: dict[str, dict] = {
     "journal": {
         "label": "Journal des Actions Utilisateurs",
         "filter_actions": None,
+        # Le Notaire Principal était exclu du journal des actions, alors que le CDC
+        # lui accorde REG-01 (consulter les registres) ET ADM-06 (consulter les logs).
+        # Or c'est l'assujetti au sens de l'Ordonnance : lui refuser la piste d'audit
+        # de son propre cabinet le privait du moyen d'exercer sa supervision (Art. 12).
         "confidential": False,
-        "roles": ["admin", "responsable_conformite"],
+        "roles": ["admin", "notaire_principal", "responsable_conformite"],
     },
 }
+
+
+def _roles_autorises(reg: dict) -> list[str]:
+    """Rôles admis sur un registre — repli sur la règle REG-01 (jamais « tout le monde »).
+
+    Un `roles: None` signifiait auparavant « aucune restriction », ce qui ouvrait
+    les registres KYC, alertes, statuts et révisions aux clercs en violation de
+    REG-01. Le repli est désormais restrictif : c'est la valeur par défaut qui doit
+    être sûre, pas l'exception.
+    """
+    return reg.get("roles") or _ROLES_REGISTRES
 
 
 def _require_registre_access(reg_id: str, actor: User) -> None:
     reg = REGISTRE_DEFS.get(reg_id)
     if not reg:
         raise HTTPException(status_code=404, detail="Registre inconnu.")
-    if reg.get("confidential") or reg.get("roles"):
-        allowed = reg.get("roles") or ["admin", "notaire_principal", "responsable_conformite"]
-        if actor.role not in allowed:
-            raise HTTPException(status_code=403, detail="Accès non autorisé à ce registre.")
+    if actor.role not in _roles_autorises(reg):
+        raise HTTPException(status_code=403, detail="Accès non autorisé à ce registre.")
 
 
 def _s(text: str) -> str:
@@ -189,10 +209,10 @@ _XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 async def list_registres(current_user: User = Depends(get_current_user)) -> dict:
     visible = {}
     for key, reg in REGISTRE_DEFS.items():
-        if reg.get("confidential") or reg.get("roles"):
-            allowed = reg.get("roles") or ["admin", "notaire_principal", "responsable_conformite"]
-            if current_user.role not in allowed:
-                continue
+        # Même règle que `_require_registre_access` : la liste ne doit pas révéler
+        # l'existence de registres que l'appelant n'a pas le droit de consulter.
+        if current_user.role not in _roles_autorises(reg):
+            continue
         visible[key] = {"id": key, "label": reg["label"], "confidential": reg.get("confidential", False)}
     return {"registres": list(visible.values())}
 

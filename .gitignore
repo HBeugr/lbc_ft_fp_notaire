@@ -40,3 +40,9 @@ DEPLOY.md
 deploy-guide.md
 deploy-workflow.md
 key_vps.md
+
+# E2E Playwright
+e2e/node_modules/
+e2e/.env.e2e
+e2e/playwright-report/
+e2e/test-results/

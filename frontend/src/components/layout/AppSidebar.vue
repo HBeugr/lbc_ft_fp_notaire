@@ -2,10 +2,21 @@
   <aside class="sidebar" role="navigation" aria-label="Navigation principale">
     <!-- Logo -->
     <div class="sidebar-logo">
-      <div class="logo-mark">⚖</div>
+      <!--
+        Zone de taille fixe : `object-fit: contain` garantit qu'un logo très large
+        ou très haut n'écrase jamais la mise en page de la barre latérale.
+        Sans logo défini, on garde l'icône générique.
+      -->
+      <img
+        v-if="branding.logoUrl"
+        class="logo-img"
+        :src="branding.logoUrl"
+        :alt="`Logo — ${cabinetName}`"
+      />
+      <div v-else class="logo-mark">⚖</div>
       <div class="logo-text">
-        <span class="logo-title">LBC/FT/FP</span>
-        <span class="logo-sub">NOTAIRES — CÔTE D'IVOIRE</span>
+        <span class="logo-title" :title="cabinetName">{{ cabinetName }}</span>
+        <span class="logo-sub">LBC/FT/FP — CONFORMITÉ NOTARIALE</span>
       </div>
       <button class="sidebar-close-btn" aria-label="Fermer le menu" @click="emit('close')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -69,9 +80,10 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
+import { useBrandingStore } from '@/stores/branding'
 import { authService } from '@/services/api'
 import { useNav } from '@/composables/useNav'
 import { ROLE_LABELS } from '@/utils/roles'
@@ -80,7 +92,31 @@ const emit = defineEmits<{ close: [] }>()
 
 const router = useRouter()
 const auth = useAuthStore()
+const branding = useBrandingStore()
 const { navItems } = useNav()
+
+// Branding par cabinet : le nom du tenant remplace l'ancien libellé en dur.
+const cabinetName = computed(() => auth.tenantName ?? 'LBC/FT/FP')
+
+/**
+ * Le bloc `tenant` renvoyé par le login ne porte pas l'horodatage du logo : juste
+ * après une connexion, l'information vaut `undefined` (inconnue) et non `null`
+ * (pas de logo). On complète alors depuis /tenant/me, sinon le logo n'apparaîtrait
+ * qu'au rechargement de la page.
+ */
+onMounted(() => {
+  if (auth.isAuthenticated && auth.tenantLogoUpdatedAt === undefined) {
+    auth.fetchTenant()
+  }
+})
+
+// Le logo suit l'horodatage : un envoi depuis Paramètres le rafraîchit ici sans
+// rechargement. À la déconnexion, l'URL d'objet est révoquée.
+watch(
+  () => (auth.isAuthenticated ? auth.tenantLogoUpdatedAt : null),
+  (version) => { branding.charger(version) },
+  { immediate: true },
+)
 
 const fullName = computed(() =>
   auth.user ? `${auth.user.first_name} ${auth.user.last_name}` : ''
@@ -119,10 +155,21 @@ async function handleLogout() {
   line-height: 1;
 }
 
+/* Logo du cabinet : gabarit fixe, l'image s'y inscrit sans jamais le déformer. */
+.logo-img {
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+  object-fit: contain;
+  border-radius: 4px;
+  display: block;
+}
+
 .logo-text {
   display: flex;
   flex-direction: column;
   line-height: 1.2;
+  min-width: 0; /* autorise l'ellipse sur un nom de cabinet long */
 }
 
 .logo-title {
@@ -130,6 +177,9 @@ async function handleLogout() {
   font-weight: 700;
   color: #fff;
   letter-spacing: 0.02em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .logo-sub {
@@ -137,6 +187,9 @@ async function handleLogout() {
   color: rgba(255, 255, 255, 0.45);
   text-transform: uppercase;
   letter-spacing: 0.06em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* ── Nav ── */

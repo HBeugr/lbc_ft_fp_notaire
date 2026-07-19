@@ -1,5 +1,5 @@
 import uuid
-from sqlalchemy import String, Boolean, Enum as SAEnum, ForeignKey, DateTime, Text, func
+from sqlalchemy import String, Enum as SAEnum, ForeignKey, DateTime, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database import Base

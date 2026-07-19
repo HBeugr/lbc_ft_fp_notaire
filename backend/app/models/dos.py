@@ -1,6 +1,6 @@
 import uuid
 from sqlalchemy import String, Boolean, Enum as SAEnum, ForeignKey, DateTime, Date, Text, func
-from sqlalchemy.dialects.mysql import JSON
+from sqlalchemy.dialects.postgresql import JSONB as JSON
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base

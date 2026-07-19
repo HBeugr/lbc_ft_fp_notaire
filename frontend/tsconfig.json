@@ -15,9 +15,12 @@
     "noUnusedLocals": false,
     "noUnusedParameters": false,
     "noFallthroughCasesInSwitch": true,
-    "baseUrl": ".",
+    // `baseUrl` est déprécié et disparaîtra en TypeScript 7.0. Depuis TS 4.4,
+    // `paths` se résout relativement à l'emplacement de ce fichier : le préfixe
+    // « ./ » suffit, sans base à déclarer. L'alias correspondant est défini
+    // dans vite.config.ts (`resolve.alias`).
     "paths": {
-      "@/*": ["src/*"]
+      "@/*": ["./src/*"]
     }
   },
   "include": ["src/**/*.ts", "src/**/*.d.ts", "src/**/*.tsx", "src/**/*.vue"],

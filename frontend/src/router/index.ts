@@ -1,5 +1,6 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
+import { useSuperAdminStore } from '@/stores/superAdmin'
 
 const router = createRouter({
   history: createWebHistory(),
@@ -28,6 +29,51 @@ const router = createRouter({
       name: 'change-password',
       component: () => import('@/views/auth/ChangePasswordView.vue'),
       meta: { requiresAuth: true, allowMustChange: true },
+    },
+
+    // ── Cabinet non actif (suspendu / en configuration / archivé) ───
+    {
+      path: '/compte-suspendu',
+      name: 'compte-suspendu',
+      component: () => import('@/views/tenant/CompteSuspenduView.vue'),
+      // allowMustChange : un cabinet bloqué doit voir l'explication plutôt qu'un
+      // formulaire de changement de mot de passe que l'API refusera (402).
+      meta: { allowInactiveTenant: true, allowMustChange: true },
+    },
+
+    // ── Console d'exploitation (Super-Admin plateforme) ─────────────
+    {
+      path: '/super-admin/login',
+      name: 'super-admin-login',
+      component: () => import('@/views/superadmin/SuperAdminLoginView.vue'),
+      meta: { public: true, superAdminPublic: true },
+    },
+    {
+      path: '/super-admin',
+      component: () => import('@/views/superadmin/SuperAdminLayout.vue'),
+      meta: { superAdmin: true },
+      children: [
+        {
+          path: '',
+          name: 'super-admin-tenants',
+          component: () => import('@/views/superadmin/TenantsListView.vue'),
+        },
+        {
+          path: 'cabinets/nouveau',
+          name: 'super-admin-tenant-create',
+          component: () => import('@/views/superadmin/TenantCreateView.vue'),
+        },
+        {
+          path: 'cabinets/:id',
+          name: 'super-admin-tenant-detail',
+          component: () => import('@/views/superadmin/TenantDetailView.vue'),
+        },
+        {
+          path: 'journal',
+          name: 'super-admin-audit',
+          component: () => import('@/views/superadmin/ExploitationAuditView.vue'),
+        },
+      ],
     },
 
     // ── Protected app routes (AppLayout) ────────────────────────────
@@ -167,6 +213,18 @@ const router = createRouter({
 router.beforeEach(async (to) => {
   const auth = useAuthStore()
 
+  // ── Console d'exploitation : session totalement indépendante du cabinet ──
+  if (to.meta.superAdmin || to.meta.superAdminPublic) {
+    const sa = useSuperAdminStore()
+    if (to.meta.superAdminPublic) {
+      return sa.isAuthenticated ? { name: 'super-admin-tenants' } : true
+    }
+    if (!sa.isAuthenticated) {
+      return { name: 'super-admin-login' }
+    }
+    return true
+  }
+
   await auth.bootstrapReady
 
   // Redirect authenticated users away from login
@@ -175,9 +233,24 @@ router.beforeEach(async (to) => {
     return { name: 'dashboard' }
   }
 
-  // Require authentication
-  if (!to.meta.public && !auth.isAuthenticated) {
+  // Cabinet non actif : seul `production` ouvre la plateforme. Contrôlé AVANT
+  // l'authentification et le changement de mot de passe — un cabinet bloqué est
+  // un arrêt plus fort, et l'API refuse de renouveler le jeton d'accès dans ce
+  // cas : exiger d'abord un jeton renverrait l'utilisateur au formulaire de
+  // connexion, sans jamais lui expliquer pourquoi son accès est fermé.
+  if (auth.tenantBlocked && !to.meta.public && !to.meta.allowInactiveTenant) {
+    return { name: 'compte-suspendu' }
+  }
+
+  // Require authentication — une session dont le cabinet est bloqué reste
+  // recevable sur les routes marquées `allowInactiveTenant` (page d'explication).
+  if (!to.meta.public && !auth.isAuthenticated && !auth.tenantBlocked) {
     return { name: 'login' }
+  }
+
+  // Cabinet redevenu actif : la page de blocage n'a plus lieu d'être.
+  if (to.name === 'compte-suspendu' && auth.isAuthenticated && auth.tenantActive) {
+    return { name: 'dashboard' }
   }
 
   // Force password change — redirect to change-password for any protected route

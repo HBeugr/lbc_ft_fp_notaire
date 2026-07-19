@@ -394,7 +394,14 @@ async function handleSubmit() {
     }
     closeModal()
   } catch (err: any) {
-    formError.value = err?.response?.data?.detail ?? 'Une erreur est survenue.'
+    // 402 = quota de sièges atteint : le detail est un objet {code, message}.
+    const detail = err?.response?.data?.detail
+    if (err?.response?.status === 402) {
+      formError.value = (typeof detail === 'object' ? detail?.message ?? detail?.detail : detail)
+        ?? "Le quota de sièges de votre cabinet est atteint. Contactez l'administrateur de la plateforme."
+    } else {
+      formError.value = (typeof detail === 'string' ? detail : detail?.message) ?? 'Une erreur est survenue.'
+    }
   } finally {
     submitting.value = false
   }

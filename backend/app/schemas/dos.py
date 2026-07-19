@@ -133,7 +133,11 @@ class DosOut(BaseModel):
     type_soupcon_prolif: bool
     motifs: dict | None
     statut_operations: dict | None
-    detail_transactions: dict | None
+    # Section 5 : `DosUpsert` écrit une LISTE de transactions ; typer la sortie en
+    # `dict` faisait échouer la validation Pydantic dès qu'une DOS était renseignée
+    # (500 sur GET/PUT/soumettre/valider). Le `dict` reste toléré pour les DOS
+    # héritées de la base MySQL, dont la section pouvait être un objet unique.
+    detail_transactions: list[TransactionSchema] | dict | None
     indices_blanchiment: str | None
     identification: dict | None
     relations_affaires: dict | None

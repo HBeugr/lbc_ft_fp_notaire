@@ -5,36 +5,82 @@ déchiffrement à la lecture. Les valeurs chiffrées sont préfixées par `enc::
 de distinguer une donnée chiffrée d'une donnée historique en clair (rétro-
 compatibilité : une valeur sans préfixe est renvoyée telle quelle).
 
-La clé est dérivée de `settings.AES_KEY` (32 octets, comme pour le TOTP). Les clés
-sont gérées séparément des données (variable d'environnement / secret).
+**Isolation multi-tenant (niveau 2)** : chaque cabinet possède sa propre clé,
+dérivée par HKDF-SHA256 de la clé maîtresse et du sel du cabinet
+(`shared.tenants.key_salt`). Conséquence directe : la compromission des données
+d'un cabinet n'expose aucun autre cabinet, et un défaut de routage de schéma se
+solde par un échec de déchiffrement bruyant plutôt que par une fuite silencieuse.
+
+La clé maîtresse ne chiffre jamais elle-même de données métier ; elle ne sert
+qu'à la dérivation. Elle est gérée hors base (variable d'environnement / secret).
 """
 import base64
-import hashlib
 
 from cryptography.fernet import Fernet, InvalidToken
-from sqlalchemy.types import TypeDecorator, Text
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.kdf.hkdf import HKDF
+from sqlalchemy.types import Text, TypeDecorator
 
 from app.core.config import settings
+from app.core.tenant_context import get_current_tenant
 
 _PREFIX = "enc::"
-_fernet_cache: Fernet | None = None
+_HKDF_INFO = b"notaire-lbcft:column-encryption:v1"
+
+# Cache des clés dérivées, par cabinet. La dérivation HKDF est peu coûteuse mais
+# se produirait sur chaque colonne chiffrée de chaque ligne sans ce cache.
+_fernet_cache: dict[str, Fernet] = {}
+
+
+class TenantKeyError(RuntimeError):
+    """Déchiffrement impossible avec la clé du cabinet courant.
+
+    Signale soit une corruption, soit — bien plus grave — une donnée lue depuis
+    le schéma d'un AUTRE cabinet. Ne jamais rattraper silencieusement.
+    """
+
+
+def _master_key() -> str:
+    return settings.TENANT_MASTER_KEY or settings.AES_KEY
+
+
+def derive_tenant_fernet(key_salt: str) -> Fernet:
+    """Dérive la clé Fernet d'un cabinet à partir de la clé maîtresse et de son sel.
+
+    Point d'entrée unique de la dérivation : tout ce qui chiffre des données d'un
+    cabinet (colonnes sensibles, secrets TOTP) doit passer par ici, sous peine de
+    voir réapparaître les dérivations divergentes que cette migration corrige.
+    """
+    hkdf = HKDF(
+        algorithm=hashes.SHA256(),
+        length=32,
+        salt=key_salt.encode("utf-8"),
+        info=_HKDF_INFO,
+    )
+    return Fernet(base64.urlsafe_b64encode(hkdf.derive(_master_key().encode("utf-8"))))
 
 
 def _fernet() -> Fernet:
-    global _fernet_cache
-    if _fernet_cache is None:
-        # Dérivation robuste d'une clé Fernet de 32 octets quelle que soit la forme
-        # de AES_KEY (base64 de 32 octets, hex, ou phrase secrète) : SHA-256.
-        key_bytes = hashlib.sha256(settings.AES_KEY.encode("utf-8")).digest()
-        _fernet_cache = Fernet(base64.urlsafe_b64encode(key_bytes))
-    return _fernet_cache
+    tenant = get_current_tenant()
+    cached = _fernet_cache.get(tenant.id)
+    if cached is None:
+        cached = derive_tenant_fernet(tenant.key_salt)
+        _fernet_cache[tenant.id] = cached
+    return cached
+
+
+def forget_tenant_key(tenant_id: str) -> None:
+    """Purge la clé d'un cabinet du cache (suspension, rotation, suppression)."""
+    _fernet_cache.pop(tenant_id, None)
 
 
 class EncryptedString(TypeDecorator):
     """Colonne TEXT chiffrée (Fernet/AES-256) — transparent à l'usage."""
 
     impl = Text
-    cache_ok = True
+    # Le chiffrement dépend du cabinet courant : la valeur liée ne peut pas être
+    # mise en cache dans le cache de requêtes compilées de SQLAlchemy.
+    cache_ok = False
 
     def process_bind_param(self, value, dialect):
         if value is None:
@@ -48,6 +94,11 @@ class EncryptedString(TypeDecorator):
         if value.startswith(_PREFIX):
             try:
                 return _fernet().decrypt(value[len(_PREFIX):].encode("ascii")).decode("utf-8")
-            except (InvalidToken, ValueError):
-                return value
+            except (InvalidToken, ValueError) as exc:
+                # Auparavant on renvoyait le chiffré tel quel. En multi-tenant ce
+                # serait le symptôme exact d'une lecture cross-cabinet : on échoue.
+                raise TenantKeyError(
+                    "Déchiffrement impossible avec la clé du cabinet courant — "
+                    "défaut d'isolation ou donnée corrompue."
+                ) from exc
         return value  # donnée héritée en clair

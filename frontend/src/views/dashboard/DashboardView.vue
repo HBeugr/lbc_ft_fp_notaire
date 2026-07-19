@@ -2,8 +2,9 @@
   <div class="dashboard">
     <!-- Header -->
     <div class="page-header">
-      <div>
-        <h1 class="page-title">Tableau de bord</h1>
+      <div class="page-header-main">
+        <!-- Le nom du cabinet complète le titre une fois la session ouverte. -->
+        <h1 class="page-title" :title="pageTitle">{{ pageTitle }}</h1>
         <p class="page-subtitle">
           Bonjour, {{ auth.user?.first_name }} · {{ roleLabel }}
         </p>
@@ -182,6 +183,15 @@ const router = useRouter()
 
 const roleLabel = computed(() =>
   auth.user ? (ROLE_LABELS[auth.user.role] ?? auth.user.role) : ''
+)
+
+/**
+ * « Tableau de bord — <nom du cabinet> ».
+ * Le nom du cabinet n'est ajouté qu'une fois connu, pour ne pas afficher un
+ * tiret orphelin pendant le chargement de la session.
+ */
+const pageTitle = computed(() =>
+  auth.tenantName ? `Tableau de bord — ${auth.tenantName}` : 'Tableau de bord'
 )
 
 const canCreateDossier = computed(() =>
@@ -383,12 +393,21 @@ const areaOptions = computed(() => ({
   margin-bottom: 1.75rem;
 }
 
+/* Autorise l'ellipse du titre : sans `min-width: 0`, un élément flex refuse de
+   passer sous la largeur de son contenu et le nom du cabinet déborderait. */
+.page-header-main {
+  min-width: 0;
+}
+
 .page-title {
   font-size: 1.375rem;
   font-weight: 700;
   color: var(--color-text-primary);
   margin: 0 0 0.25rem;
   letter-spacing: -0.01em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .page-subtitle {
@@ -401,6 +420,7 @@ const areaOptions = computed(() => ({
 }
 
 .today-date {
+  flex-shrink: 0;
   font-size: 0.8125rem;
   color: var(--color-text-muted);
   text-transform: capitalize;

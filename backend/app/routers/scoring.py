@@ -20,7 +20,7 @@ from app.schemas.kyc import (
     ScoreCalcIn, ScoreResultOut, ScoreAxisOut,
     SimulateurIn, SimResultOut,
 )
-from app.services import scoring_service
+from app.services import alertes_service, scoring_service
 
 router = APIRouter(prefix="/dossiers", tags=["scoring"])
 
@@ -93,6 +93,18 @@ async def update_weights(
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail="Le seuil espèces doit être supérieur à 1 000 000 FCFA.",
+            )
+        # Art. 72 + CDC §2.3 : le trigger T2 n'est pas paramétrable à la hausse.
+        # Abaisser le seuil durcit la vigilance et reste licite ; le relever
+        # au-dessus du plafond légal désactiverait la détection sur toute la
+        # plage couverte par la loi — interdit à tous les rôles, Admin compris.
+        if body.seuil_especes_t2_fcfa > scoring_service.SEUIL_ESPECES_PLAFOND_LEGAL:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=(
+                    "Le seuil espèces ne peut pas dépasser 15 000 000 FCFA "
+                    "(Art. 72) : le trigger T2 n'est pas paramétrable à la hausse."
+                ),
             )
         await runtime_config.set_seuil_especes_t2(db, body.seuil_especes_t2_fcfa, updated_by=current_user.id)
     await db.commit()
@@ -206,6 +218,10 @@ async def calculate_scoring(
         be_non_identifiable=body.be_non_identifiable,
     )
     await _persist_evaluation(db, dossier, result, flags, overrides_payload, current_user.id)
+    # Conséquences réglementaires du score : alertes de détection automatique
+    # (CDC Module 3) et blocage immédiat sur T3 (Art. 89). Un score calculé mais
+    # sans alerte resterait invisible du Responsable conformité.
+    await alertes_service.appliquer_consequences(db, dossier, result)
 
     ip = request.client.host if request.client else "unknown"
     await audit_repo.log(
@@ -223,6 +239,22 @@ async def calculate_scoring(
             "overrides": [o["axe"] for o in overrides_payload],
         },
     )
+
+    # SCO-01 P² (CDC §7.3) — « Clercs : score affiché uniquement sous forme de label
+    # (Faible/Moyen/Élevé) — pas le détail des axes ». Le calcul reste possible pour
+    # un clerc sur SON dossier assigné (il alimente la saisie), mais la ventilation
+    # axe par axe et le détail des triggers relèvent de l'analyse de risque, qui est
+    # du ressort du Responsable Conformité. On masque donc la décomposition en
+    # sortie plutôt que d'interdire l'appel.
+    if not current_user.is_supervisor:
+        return ScoreResultOut(
+            total=result.score,
+            niveau=result.classification,
+            axes=[],
+            triggers_actifs=[],
+            force_par_trigger=result.force_par_trigger,
+            trigger_principal=None,
+        )
 
     return ScoreResultOut(
         total=result.score,
@@ -326,4 +358,8 @@ async def recompute_cache(db: AsyncSession, dossier: Dossier, user_id: str):
         **flags,
     )
     await _persist_evaluation(db, dossier, result, flags, overrides_payload, user_id)
+    # Mêmes conséquences que sur l'écran de scoring : le CDC (Module 3) fonde la
+    # détection automatique sur les triggers, pas sur la porte d'entrée. C'est ce
+    # chemin qui fait naître l'alerte T1 lorsqu'un statut PPE est déclaré au KYC.
+    await alertes_service.appliquer_consequences(db, dossier, result)
     return result

@@ -222,7 +222,9 @@ async def check_freshness(
     def _age_days(activated) -> int:
         if not activated:
             return 0
-        if activated.tzinfo is None:  # MySQL renvoie un datetime naïf
+        # PostgreSQL renvoie des datetimes conscients du fuseau (TIMESTAMPTZ) ;
+        # le repli couvre les valeurs naïves héritées de la reprise MySQL.
+        if activated.tzinfo is None:
             activated = activated.replace(tzinfo=timezone.utc)
         return (now - activated).days
 

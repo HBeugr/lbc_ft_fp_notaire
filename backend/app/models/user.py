@@ -45,7 +45,17 @@ class User(Base):
 
     @property
     def requires_2fa(self) -> bool:
+        """2FA obligatoire pour les rôles de supervision (Art. 29).
+
+        La politique est portée par le cabinet, pas par la plateforme : un
+        cabinet peut l'exiger là où un autre ne l'a pas encore déployée. Le
+        réglage global ne sert plus que de repli hors contexte cabinet.
+        """
         from app.core.config import settings
-        if not settings.TOTP_REQUIRED:
+        from app.core.tenant_context import get_current_tenant_or_none
+
+        tenant = get_current_tenant_or_none()
+        required = tenant.totp_required if tenant is not None else settings.TOTP_REQUIRED
+        if not required:
             return False
         return self.role in ("admin", "notaire_principal", "responsable_conformite")

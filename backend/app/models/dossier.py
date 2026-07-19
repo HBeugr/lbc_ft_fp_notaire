@@ -1,11 +1,16 @@
 import uuid
-from datetime import date
 from sqlalchemy import String, Boolean, Enum as SAEnum, ForeignKey, DateTime, Date, Text, Numeric, SmallInteger, Integer, func
-from sqlalchemy.dialects.mysql import JSON
+from sqlalchemy.dialects.postgresql import JSONB as JSON
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
 from app.core.crypto import EncryptedString
+
+# En PostgreSQL un ENUM nommé est un type partagé par le schéma, pas un type
+# inline comme en MySQL. `classification_enum` servant à la fois `dossiers` et
+# `evaluations_risque`, la MÊME instance doit être réutilisée : deux instances
+# homonymes déclencheraient un « type classification_enum already exists ».
+CLASSIFICATION_ENUM = SAEnum("FAIBLE", "MOYEN", "ELEVE", name="classification_enum")
 
 
 class Dossier(Base):
@@ -56,9 +61,7 @@ class Dossier(Base):
     assigned_to: Mapped[str | None] = mapped_column(String(36), ForeignKey("users.id"), nullable=True)
     created_by: Mapped[str] = mapped_column(String(36), ForeignKey("users.id"), nullable=False)
     score_base: Mapped[int | None] = mapped_column(nullable=True)
-    classification: Mapped[str | None] = mapped_column(
-        SAEnum("FAIBLE", "MOYEN", "ELEVE", name="classification_enum"), nullable=True
-    )
+    classification: Mapped[str | None] = mapped_column(CLASSIFICATION_ENUM, nullable=True)
     trigger_actif: Mapped[str | None] = mapped_column(String(10), nullable=True)
     force_par_trigger: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     vigilance_justification: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -370,7 +373,7 @@ class EvaluationRisque(Base):
     # Résultat
     score_total: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     classification: Mapped[str] = mapped_column(
-        SAEnum("FAIBLE", "MOYEN", "ELEVE", name="classification_enum"), nullable=False, default="FAIBLE"
+        CLASSIFICATION_ENUM, nullable=False, default="FAIBLE"
     )
     trigger_principal: Mapped[str | None] = mapped_column(String(10), nullable=True)
     triggers_actifs: Mapped[dict | None] = mapped_column(JSON, nullable=True)

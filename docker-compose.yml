@@ -1,3 +1,10 @@
+# =============================================================================
+# Notaire LBC/FT/FP — Stack de production
+# -----------------------------------------------------------------------------
+# SaaS multi-tenant sur PostgreSQL 16, isolation par SCHÉMA :
+#   - schéma `shared`          : annuaire de routage (cabinets, Super-Admins)
+#   - schéma `tenant_<uuid>`   : données métier d'UN cabinet notarial
+# =============================================================================
 services:
   frontend:
     build:
@@ -33,28 +40,38 @@ services:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 10s
       timeout: 5s
-      retries: 5
+      # Marge volontairement large : l'entrypoint joue les migrations de
+      # l'annuaire avant de démarrer uvicorn.
+      retries: 10
+      start_period: 40s
     restart: unless-stopped
 
   db:
     build:
-      context: ./infra/mysql
+      context: ./infra/postgres
       dockerfile: Dockerfile
     env_file: .env
     environment:
-      MYSQL_ROOT_PASSWORD: ${DB_PASSWORD}
-      MYSQL_DATABASE: ${DB_NAME}
-      MYSQL_USER: ${DB_USER}
-      MYSQL_PASSWORD: ${DB_PASSWORD}
+      # ⚠️ PostgreSQL n'a pas de compte « root » distinct comme MySQL :
+      # le superutilisateur EST POSTGRES_USER. Le compte applicatif
+      # (DB_USER) est donc aussi le compte d'administration du cluster —
+      # il n'y a plus de MYSQL_ROOT_PASSWORD à définir.
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: ${DB_NAME}
+      # Sous-répertoire imposé : le point de montage lui-même ne doit pas être
+      # la racine du datadir (perdu+trouvé, permissions).
+      PGDATA: /var/lib/postgresql/data/pgdata
     volumes:
       - type: volume
-        source: db_data
-        target: /var/lib/mysql
+        source: pg_data
+        target: /var/lib/postgresql/data
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${DB_PASSWORD}"]
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER} -d ${DB_NAME}"]
       interval: 10s
       timeout: 5s
       retries: 10
+      start_period: 20s
     restart: unless-stopped
 
   redis:
@@ -73,9 +90,11 @@ services:
 
   storage:
     image: quay.io/minio/minio:latest
-    ports:
-      - "9010:9000"
-      - "9011:9001"
+    # Aucun port publié en production : le stockage documentaire n'est consommé
+    # que par `api`, sur le réseau interne. Le publier sur l'hôte exposerait les
+    # pièces d'identité et les actes derrière une simple clé S3, sans aucune
+    # nécessité. La console d'administration est ouverte en développement
+    # uniquement, via docker-compose.dev.yml (ports 9020/9021).
     env_file: .env
     environment:
       MINIO_ROOT_USER: ${MINIO_ACCESS_KEY}
@@ -98,12 +117,18 @@ services:
       dockerfile: Dockerfile
     env_file: .env
     environment:
-      MYSQL_HOST: db
-      MYSQL_DATABASE: ${DB_NAME}
-      MYSQL_USER: ${DB_USER}
-      MYSQL_PASSWORD: ${DB_PASSWORD}
+      # Variables libpq standard, directement comprises par pg_dump et psql.
+      PGHOST: db
+      PGPORT: 5432
+      PGDATABASE: ${DB_NAME}
+      PGUSER: ${DB_USER}
+      PGPASSWORD: ${DB_PASSWORD}
+      # Nom du schéma d'annuaire : le script y lit la liste des cabinets à
+      # sauvegarder individuellement (shared.tenants.schema_name).
+      SHARED_SCHEMA: ${SHARED_SCHEMA:-shared}
       BACKUP_AES_KEY: ${BACKUP_AES_KEY}
       BACKUP_DIR: /backups
+      BACKUP_RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:-30}
     volumes:
       - type: volume
         source: backup_data
@@ -114,7 +139,14 @@ services:
     restart: unless-stopped
 
 volumes:
-  db_data:
+  # Volume PostgreSQL VOLONTAIREMENT distinct de l'ancien `db_data`, qui porte
+  # encore les fichiers MySQL sur les environnements déjà déployés. Réutiliser
+  # le même nom ferait cohabiter deux moteurs dans un seul volume : on ne
+  # saurait plus ce qu'on sauvegarde ni ce qu'on supprime, et le retrait de
+  # l'ancienne base cesserait d'être un geste explicite.
+  # `db_data` n'est plus référencé : il se supprime à la main, après bascule
+  # vérifiée (cf. docs/BASCULE-POSTGRESQL.md §8).
+  pg_data:
   redis_data:
   minio_data:
   backup_data:

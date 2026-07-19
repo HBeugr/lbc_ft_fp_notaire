@@ -5,7 +5,16 @@ Couvre les endpoints ajoutés/modifiés lors de l'alignement :
 - Users/Admin : require_user_manager, mot de passe temporaire
 - 2FA : codes de secours (logique service)
 """
+import pytest
+
+# Les cabinets de test sont provisionnés une seule fois (création de schéma +
+# migrations Alembic). Leurs connexions appartiennent donc à la boucle de
+# session : les tests doivent s'y rattacher, sinon asyncpg refuse les futures
+# « attached to a different loop ».
+pytestmark = pytest.mark.asyncio(loop_scope="session")
+
 import json
+import uuid
 
 from app.services import totp_service
 from app.routers.admin import _generate_temp_password
@@ -99,7 +108,7 @@ async def test_users_require_user_manager(client, db):
     clerc = await create_user(db, role="clercs")
     admin = await create_user(db, role="admin")
     payload = {
-        "email": "nouveau@test.ci", "first_name": "N", "last_name": "U",
+        "email": f"nouveau-{uuid.uuid4().hex[:8]}@test.ci", "first_name": "N", "last_name": "U",
         "role": "clercs", "password": "TestPass123!",
     }
     # Clerc → interdit
@@ -143,7 +152,7 @@ async def test_alertes_superviseur_voit_tout(client, db):
 async def test_notaire_principal_cannot_create_admin(client, db):
     np = await create_user(db, role="notaire_principal")
     payload = {
-        "email": "evil-admin@test.ci", "first_name": "E", "last_name": "A",
+        "email": f"evil-admin-{uuid.uuid4().hex[:8]}@test.ci", "first_name": "E", "last_name": "A",
         "role": "admin", "password": "TestPass123!",
     }
     r = await client.post("/api/users", headers=auth_headers(np), json=payload)
@@ -163,7 +172,7 @@ async def test_notaire_principal_cannot_reset_admin_password(client, db):
 async def test_admin_can_still_create_admin(client, db):
     admin = await create_user(db, role="admin")
     payload = {
-        "email": "real-admin@test.ci", "first_name": "R", "last_name": "A",
+        "email": f"real-admin-{uuid.uuid4().hex[:8]}@test.ci", "first_name": "R", "last_name": "A",
         "role": "admin", "password": "TestPass123!",
     }
     r = await client.post("/api/users", headers=auth_headers(admin), json=payload)

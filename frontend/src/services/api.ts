@@ -1,5 +1,7 @@
 import axios, { type AxiosInstance } from 'axios'
 import { useAuthStore } from '@/stores/auth'
+import { useSuperAdminStore } from '@/stores/superAdmin'
+import { readTenantBlock } from '@/services/tenantBlock'
 
 const api: AxiosInstance = axios.create({
   baseURL: '/api',
@@ -26,7 +28,30 @@ api.interceptors.response.use(
   (r) => r,
   async (error) => {
     const original = error.config
-    if (error.response?.status !== 401 || original._retry) {
+    const status = error.response?.status
+
+    // Cabinet bloqué (402 suspendu, 403 en configuration / archivé).
+    // On NE déconnecte PAS : l'utilisateur reste identifié, seul l'accès est fermé.
+    // `readTenantBlock` accepte les deux formes de réponse du backend (code
+    // imbriqué dans `detail` côté routers, à la racine côté middleware).
+    const block = readTenantBlock(status, error.response?.data)
+    if (block) {
+      const auth = useAuthStore()
+      auth.applyTenantBlock(block)
+      const { default: router } = await import('@/router')
+      if (router.currentRoute.value.name !== 'compte-suspendu') {
+        router.push({ name: 'compte-suspendu' })
+      }
+      return Promise.reject(error)
+    }
+
+    // 402 sans code de blocage = quota de sièges atteint sur POST /users :
+    // laissé au composant appelant (message affiché dans le formulaire).
+    if (status === 402) {
+      return Promise.reject(error)
+    }
+
+    if (status !== 401 || original._retry) {
       return Promise.reject(error)
     }
     if (_isRefreshing) {
@@ -43,7 +68,9 @@ api.interceptors.response.use(
     original._retry = true
     _isRefreshing = true
     try {
-      const { data } = await axios.post<{ access_token: string }>('/api/auth/refresh', null, { withCredentials: true })
+      // Passe par l'instance `api` (baseURL + withCredentials) et non par axios global,
+      // sinon la requête échappe à la configuration commune du client.
+      const { data } = await api.post<{ access_token: string }>('/auth/refresh')
       const auth = useAuthStore()
       auth.setToken(data.access_token)
       original.headers.Authorization = `Bearer ${data.access_token}`
@@ -58,6 +85,39 @@ api.interceptors.response.use(
     } finally {
       _isRefreshing = false
     }
+  },
+)
+
+// ── Console d'exploitation ────────────────────────────────────────────
+// Instance dédiée : la population Super-Admin est distincte de celle des cabinets.
+// Les deux jetons ne doivent jamais se mélanger ni s'écraser, d'où deux instances
+// séparées plutôt qu'un en-tête conditionnel sur `api`.
+export const superAdminApi: AxiosInstance = axios.create({
+  baseURL: '/api/super-admin',
+  withCredentials: false,
+})
+
+superAdminApi.interceptors.request.use((config) => {
+  const sa = useSuperAdminStore()
+  if (sa.accessToken && !config.headers.Authorization) {
+    config.headers.Authorization = `Bearer ${sa.accessToken}`
+  }
+  return config
+})
+
+superAdminApi.interceptors.response.use(
+  (r) => r,
+  async (error) => {
+    const original = error.config
+    // Pas de refresh côté console : un 401 renvoie simplement à l'écran de connexion.
+    if (error.response?.status === 401 && !original?.url?.includes('/auth/login')) {
+      useSuperAdminStore().clearSession()
+      const { default: router } = await import('@/router')
+      if (router.currentRoute.value.name !== 'super-admin-login') {
+        router.push({ name: 'super-admin-login' })
+      }
+    }
+    return Promise.reject(error)
   },
 )
 

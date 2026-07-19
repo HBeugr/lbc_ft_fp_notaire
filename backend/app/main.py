@@ -1,10 +1,14 @@
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 from contextlib import asynccontextmanager
 
 from app.core.config import settings
 from app.core.logging import configure_logging, logger
+from app.core import dos_privileges
+from app.core.tenant_context import NoTenantContextError
+from app.core.tenant_middleware import TenantMiddleware
 from app.routers import auth as auth_router
 from app.routers import totp as totp_router
 from app.routers import users as users_router
@@ -24,82 +28,23 @@ from app.routers import admin as admin_router
 from app.routers import dashboard as dashboard_router
 from app.routers import procedures as procedures_router
 from app.routers import autorisations as autorisations_router
-
-
-def _ensure_minio_bucket() -> None:
-    from minio import Minio
-    try:
-        client = Minio(
-            settings.MINIO_ENDPOINT,
-            access_key=settings.MINIO_ACCESS_KEY,
-            secret_key=settings.MINIO_SECRET_KEY,
-            secure=settings.MINIO_USE_SSL,
-        )
-        if not client.bucket_exists(settings.MINIO_BUCKET_DOCUMENTS):
-            client.make_bucket(settings.MINIO_BUCKET_DOCUMENTS)
-            logger.info("minio.bucket_created", bucket=settings.MINIO_BUCKET_DOCUMENTS)
-    except Exception as exc:
-        logger.warning("minio.bucket_init_failed", error=str(exc))
-
-
-async def _ensure_dos_grants() -> None:
-    import sqlalchemy as sa
-    from sqlalchemy.ext.asyncio import create_async_engine
-    from sqlalchemy.engine import URL
-
-    db_name = settings.DB_NAME
-    dos_user = settings.DOS_DB_USER
-    dos_password = settings.DOS_DB_PASSWORD
-
-    root_url = URL.create(
-        drivername="mysql+asyncmy",
-        username="root",
-        password=settings.DB_ROOT_PASSWORD or settings.DB_PASSWORD,
-        host=settings.DB_HOST,
-        port=settings.DB_PORT,
-        database=db_name,
-    )
-    statements = [
-        f"CREATE USER IF NOT EXISTS '{dos_user}'@'%' IDENTIFIED BY '{dos_password}'",
-        f"ALTER USER '{dos_user}'@'%' IDENTIFIED BY '{dos_password}'",
-        f"GRANT SELECT, INSERT, UPDATE ON `{db_name}`.`declarations_suspicion` TO '{dos_user}'@'%'",
-        f"GRANT SELECT, INSERT ON `{db_name}`.`dos_addendums` TO '{dos_user}'@'%'",
-        "FLUSH PRIVILEGES",
-    ]
-    root_engine = create_async_engine(root_url, pool_size=1, max_overflow=0)
-    try:
-        async with root_engine.connect() as conn:
-            for stmt in statements:
-                await conn.execute(sa.text(stmt))
-            await conn.commit()
-        logger.info("dos.grants_applied", user=dos_user)
-    except Exception as exc:
-        logger.warning("dos.grants_failed", error=str(exc))
-    finally:
-        await root_engine.dispose()
+from app.routers import super_admin as super_admin_router
+from app.routers import tenant as tenant_router
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     configure_logging(settings.APP_ENV)
     logger.info("startup", env=settings.APP_ENV)
-    _ensure_minio_bucket()
-    await _ensure_dos_grants()
-    await _load_runtime_config()
+    # Les privilèges DOS sont posés dans chaque schéma cabinet (Art. 63) ; les
+    # cabinets créés ensuite les reçoivent à leur provisioning.
+    await dos_privileges.apply_to_all_tenants()
+    # La configuration de scoring n'est plus chargée au démarrage : elle est
+    # propre à chaque cabinet et serait donc fausse pour tous sauf un. Elle est
+    # désormais chargée paresseusement, à la première requête de chaque cabinet
+    # (cf. `runtime_config.ensure_loaded`).
     yield
     logger.info("shutdown")
-
-
-async def _load_runtime_config() -> None:
-    """Amorce le cache des seuils/pondérations configurables depuis la DB (FR-26)."""
-    from app.core import runtime_config
-    from app.core.database import _get_session_factory
-    try:
-        async with _get_session_factory()() as db:
-            await runtime_config.load_from_db(db)
-        logger.info("runtime_config.loaded")
-    except Exception as exc:
-        logger.warning("runtime_config.load_failed", error=str(exc))
 
 
 app = FastAPI(
@@ -109,6 +54,25 @@ app = FastAPI(
     redoc_url=None,
     lifespan=lifespan,
 )
+
+
+@app.exception_handler(NoTenantContextError)
+async def _no_tenant_context(request: Request, exc: NoTenantContextError) -> JSONResponse:
+    """Requête métier sans cabinet identifié → 401, jamais 500.
+
+    Le cas nominal est une requête sans jeton (ou avec un jeton illisible) sur un
+    endpoint protégé : FastAPI peut résoudre `Depends(get_db)` avant
+    `Depends(get_current_user)`, si bien que l'absence de cabinet se manifeste
+    avant que le contrôle d'authentification n'ait eu lieu.
+
+    Sans ce gestionnaire, l'API renverrait une 500 — bruit inutile en supervision,
+    et fuite d'information sur la pile interne.
+    """
+    return JSONResponse(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        content={"detail": "Authentification requise."},
+        headers={"WWW-Authenticate": "Bearer"},
+    )
 
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     """En-têtes de sécurité au niveau application (défense en profondeur, même hors nginx)."""
@@ -133,7 +97,21 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         return response
 
 
+# Starlette exécute les middlewares dans l'ordre INVERSE de leur ajout : le
+# dernier ajouté est le plus externe. L'ordre ci-dessous donne donc, de
+# l'extérieur vers l'intérieur : CORS → Tenant → SecurityHeaders → routes.
+#
+# CORS doit rester le plus externe : `TenantMiddleware` répond lui-même 401/402
+# (cabinet inconnu, cabinet suspendu), et sans en-têtes CORS le navigateur
+# masquerait ces réponses au frontend, qui ne pourrait pas afficher le message
+# de suspension.
+#
+# `TenantMiddleware` doit rester au-dessus des routes : le cabinet doit être
+# résolu avant que FastAPI ne résolve les dépendances de l'endpoint, `get_db`
+# en particulier.
 app.add_middleware(SecurityHeadersMiddleware)
+
+app.add_middleware(TenantMiddleware)
 
 app.add_middleware(
     CORSMiddleware,
@@ -163,6 +141,9 @@ app.include_router(admin_router.router, prefix="/api")
 app.include_router(dashboard_router.router, prefix="/api")
 app.include_router(procedures_router.router, prefix="/api")
 app.include_router(autorisations_router.router, prefix="/api")
+app.include_router(tenant_router.router, prefix="/api")
+# Console d'exploitation — n'ouvre que des sessions sur l'annuaire `shared`.
+app.include_router(super_admin_router.router, prefix="/api")
 
 
 @app.get("/health", tags=["system"])

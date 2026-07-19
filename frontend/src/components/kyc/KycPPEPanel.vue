@@ -5,7 +5,8 @@
         <h3 class="panel-title">Personnes Politiquement Exposées (PPE)</h3>
         <p class="panel-subtitle">Déclarations PPE — statut, fonctions, vérifications listes (GIABA / OFAC / UE)</p>
       </div>
-      <button class="btn-primary" @click="openForm">
+      <!-- openForm() sans argument : sinon l'événement du clic est passé comme PPE à éditer. -->
+      <button class="btn-primary" @click="openForm()">
         <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
         Ajouter un PPE
       </button>

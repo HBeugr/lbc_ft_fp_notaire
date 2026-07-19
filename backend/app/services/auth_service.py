@@ -7,6 +7,7 @@ from app.core.redis_client import (
     is_token_revoked, is_user_globally_revoked,
     increment_login_attempts, get_login_attempts, reset_login_attempts,
 )
+from app.core.tenant_context import get_current_tenant
 from app.models.user import User
 from app.repositories import user_repo
 from app.core.logging import logger
@@ -23,13 +24,13 @@ class AuthError(Exception):
 
 
 async def authenticate(db: AsyncSession, email: str, password: str, ip: str) -> User:
-    attempts = await get_login_attempts(ip)
+    attempts = await get_login_attempts(ip, email)
     if attempts >= MAX_LOGIN_ATTEMPTS:
         raise AuthError("Trop de tentatives. Réessayez dans 15 minutes.", "rate_limited")
 
     user = await user_repo.get_by_email(db, email)
     if not user or not security.verify_password(password, user.hashed_password):
-        new_count = await increment_login_attempts(ip)
+        new_count = await increment_login_attempts(ip, email)
         remaining = max(0, MAX_LOGIN_ATTEMPTS - new_count)
         logger.warning("login_failed", email=email, ip=ip, attempts=new_count)
         raise AuthError("Email ou mot de passe incorrect.", "invalid_credentials", remaining=remaining)
@@ -37,21 +38,32 @@ async def authenticate(db: AsyncSession, email: str, password: str, ip: str) -> 
     if not user.is_active:
         raise AuthError("Compte désactivé. Contactez l'administrateur.", "account_disabled")
 
-    await reset_login_attempts(ip)
+    await reset_login_attempts(ip, email)
     return user
 
 
 def issue_tokens(user: User, totp_verified: bool = False) -> tuple[str, str]:
+    """Émet le couple access/refresh du cabinet courant.
+
+    Le claim `tid` lie le jeton à un cabinet précis. Le secret JWT étant global,
+    cette liaison n'est pas cosmétique : sans elle, un jeton émis pour le cabinet
+    A serait cryptographiquement valide pour le cabinet B. C'est le middleware
+    qui la fait respecter en routant la session sur le schéma de `tid`.
+    """
+    tenant = get_current_tenant()
     needs_totp = user.requires_2fa and user.totp_enabled
     pending = needs_totp and not totp_verified
     extra = {
         "role": user.role,
         "totp_pending": pending,
+        "tid": tenant.id,
     }
     access = security.create_access_token(user.id, extra=extra)
     # Le refresh porte aussi l'état 2FA → /refresh ne peut pas émettre un access « propre »
     # tant que la 2FA n'est pas validée (corrige le contournement 2FA via /refresh).
-    refresh = security.create_refresh_token(user.id, extra={"totp_pending": pending})
+    refresh = security.create_refresh_token(
+        user.id, extra={"totp_pending": pending, "tid": tenant.id}
+    )
     return access, refresh
 
 

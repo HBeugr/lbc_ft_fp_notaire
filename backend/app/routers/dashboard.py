@@ -21,7 +21,13 @@ from app.models.dos import DeclarationSuspicion
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 
-_STATUTS_INACTIFS = ("resilie", "cloture", "archive")
+# Statuts hors flux actif. « resilie » figurait ici alors qu'il n'appartient pas
+# à `statut_dossier_enum` (héritage du vertical immobilier, où un contrat peut
+# être résilié) : MySQL tolérait la comparaison à une valeur hors énumération,
+# PostgreSQL la rejette — d'où une 500 sur tout le tableau de bord. Les statuts
+# valides sont : brouillon, en_analyse, vigilance_renforcee, valide, bloque,
+# traite, cloture, archive.
+_STATUTS_INACTIFS = ("cloture", "archive")
 
 
 def _recent_payload(rows) -> list[dict]:
@@ -81,11 +87,14 @@ async def dashboard_stats(
                 and_(scope, Dossier.classification == "ELEVE")
             )
         )).scalar_one()
-        dos_ouvertes = (await db.execute(
-            select(func.count()).select_from(DeclarationSuspicion).where(
-                DeclarationSuspicion.statut == "brouillon"
-            )
-        )).scalar_one()
+        # DOS — cloisonnement (CDC §7.3 DOS-04 « Consulter les DOS existants : Clercs N »,
+        # §6.2 et §8.5 Art. 63). Cette métrique comptait auparavant TOUTES les DOS du
+        # cabinet, sans aucun filtre de périmètre : un clerc lisait donc, depuis son
+        # tableau de bord, le volume d'activité déclarative du cabinet — à la fois une
+        # statistique globale interdite par P³ et une information DOS interdite par
+        # DOS-04. Le compteur est neutralisé pour les rôles opérationnels : la
+        # confidentialité du DOS prime sur la complétude du tableau de bord.
+        dos_ouvertes = 0
 
         return {
             "role": current_user.role,

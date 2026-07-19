@@ -6,9 +6,10 @@ from fastapi.responses import Response, StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
-from app.core.database import get_db, _get_session_factory
+from app.core.database import get_db, tenant_session
 from app.core.deps import get_current_user, require_rc
 from app.core import security
+from app.core.tenant_context import get_current_tenant, tenant_scope
 from pydantic import BaseModel
 from app.models.alerte import Alerte
 from app.models.user import User
@@ -194,11 +195,29 @@ async def alertes_stream(token: str = Query(...)):
     if (jti and await is_token_revoked(jti)) or await is_user_globally_revoked(user_id):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Session révoquée.")
 
+    # Le cabinet doit être capturé ICI, dans le corps de l'endpoint : le générateur
+    # SSE est consommé APRÈS la sortie du middleware, hors du `ContextVar` de
+    # cloisonnement. Sans cette capture, chaque session du flux tape le schéma par
+    # défaut (« relation "users" does not exist ») et le badge reste muet.
+    tenant = get_current_tenant()
+
+    async def _in_tenant(run):
+        """Exécute une lecture dans le cabinet capturé, sur une session cloisonnée.
+
+        Le `tenant_scope` est refermé AVANT tout `yield` du générateur : un
+        `ContextVar` posé à cheval sur une suspension fuiterait dans la tâche
+        qui consomme le flux.
+        """
+        with tenant_scope(tenant):
+            async with tenant_session(tenant) as session:
+                return await run(session)
+
     async def event_gen():
-        factory = _get_session_factory()
         # Charge le rôle une fois (is_supervisor) pour le périmètre du compteur
-        async with factory() as s:
-            user = await user_repo.get_by_id(s, user_id)
+        try:
+            user = await _in_tenant(lambda s: user_repo.get_by_id(s, user_id))
+        except Exception:
+            user = None
         if user is None:
             yield ": error\n\n"
             return
@@ -206,8 +225,9 @@ async def alertes_stream(token: str = Query(...)):
         last = None
         while True:
             try:
-                async with factory() as s:
-                    count = await alertes_repo.count_open_for_user(s, user_id, is_sup)
+                count = await _in_tenant(
+                    lambda s: alertes_repo.count_open_for_user(s, user_id, is_sup)
+                )
                 if count != last:
                     last = count
                     yield f"event: count\ndata: {count}\n\n"
