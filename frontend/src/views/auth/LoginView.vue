@@ -93,10 +93,11 @@
         Accès réservé aux collaborateurs autorisés · Art. 63 Ord. N°2023-875
       </p>
 
-      <!-- Accès exploitation : discret, hors du parcours cabinet. Ne mène à
-           aucune donnée métier — la console vit dans l'annuaire partagé. -->
-      <RouterLink :to="{ name: 'super-admin-login' }" class="login-platform" rel="nofollow">
-        <span aria-hidden="true">⚙</span>Console d'exploitation
+      <!-- Accès console super-administrateur (opérateur SaaS).
+           Même présentation que l'assujetti immo/foncier, pour que les deux
+           produits s'ouvrent de la même façon. -->
+      <RouterLink :to="{ name: 'super-admin-login' }" class="login-admin-link" rel="nofollow">
+        <span aria-hidden="true">🛡️</span> Accès super-administrateur
       </RouterLink>
     </div>
   </div>
@@ -414,28 +415,25 @@ async function handleSubmit() {
 
 /* Volontairement effacé : l'exploitant sait qu'il existe, le collaborateur
    de cabinet n'a aucune raison de cliquer. */
-/* flex + fit-content plutôt qu'inline-flex : .login-card est un bloc simple,
-   sans text-align, donc `margin: auto` est le seul centrage disponible. */
-.login-platform {
+/* Repris tel quel de l'assujetti immo/foncier (LoginView.vue) : filet de
+   séparation puis lien discret, plutôt qu'une pilule. `:focus-visible` est
+   ajouté — l'original ne donne aucun retour au clavier. */
+.login-admin-link {
   display: flex;
-  width: fit-content;
   align-items: center;
-  gap: 0.4375rem;
-  margin: 1rem auto 0;
-  padding: 0.5rem 0.875rem;
-  border: 1px solid var(--color-border);
-  border-radius: 999px;
+  justify-content: center;
+  gap: 0.4rem;
+  margin-top: 1.25rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--color-border);
   font-size: 0.75rem;
-  font-weight: 600;
-  color: var(--color-text-muted);
+  font-weight: 500;
+  color: var(--color-text-secondary);
   text-decoration: none;
-  white-space: nowrap;
-  transition: border-color 0.2s ease, color 0.2s ease;
 }
 
-.login-platform:hover,
-.login-platform:focus-visible {
-  border-color: var(--color-accent-gold);
-  color: var(--color-text-secondary);
+.login-admin-link:hover,
+.login-admin-link:focus-visible {
+  color: var(--color-sidebar-bg);
 }
 </style>

@@ -62,7 +62,7 @@ async function fixerMotDePasse(page: Page, cible: string) {
 test.describe('Console Super-Admin', () => {
   test('le lien depuis la connexion cabinet mène à la console', async ({ page }) => {
     await page.goto('/login')
-    const lien = page.getByRole('link', { name: /console d'exploitation/i })
+    const lien = page.getByRole('link', { name: /acc(è|e)s super-administrateur/i })
     await expect(lien).toBeVisible()
     await lien.click()
     await expect(page).toHaveURL(/\/super-admin\/login/)
