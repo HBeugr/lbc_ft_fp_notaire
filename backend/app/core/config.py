@@ -54,6 +54,19 @@ class Settings(BaseSettings):
     TOTP_ISSUER: str = "Notaire-LBC-FT-FP"
     TOTP_REQUIRED: bool = False
 
+    # Gestion des utilisateurs de cabinet depuis la console d'exploitation.
+    #
+    # DÉSACTIVÉ PAR DÉFAUT, et ce n'est pas un défaut de prudence : toute
+    # l'architecture de cette console est bâtie pour que l'exploitant héberge
+    # des dossiers LBC/FT sans voir qui les traite (Art. 63, confidentialité
+    # CENTIF). L'activer ouvre à l'exploitant la liste nominative des
+    # collaborateurs de chaque cabinet et le pouvoir d'agir sur leurs comptes.
+    #
+    # C'est un arbitrage juridique, pas un réglage de confort : ne l'activer
+    # qu'après avoir établi que l'Art. 63 ne couvre que le contenu des dossiers
+    # et non l'annuaire des personnes qui y accèdent.
+    SUPER_ADMIN_TENANT_USERS: bool = False
+
     # Scoring — T2 : espèces > 15M FCFA (Art. 72, verrouillé)
     ESPECES_THRESHOLD_FCFA: int = 15_000_000
 

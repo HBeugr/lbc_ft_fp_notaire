@@ -141,6 +141,7 @@
               </label>
               <input v-model="form.password" type="password" class="field-input" :class="{ 'field-input--error': fe.password }" autocomplete="new-password" />
               <p v-if="fe.password" class="field-error">{{ fe.password }}</p>
+              <p v-else-if="modal.mode === 'create'" class="field-hint">{{ PASSWORD_HINT }}</p>
             </div>
 
             <div v-if="formError" class="alert-error">{{ formError }}</div>
@@ -265,6 +266,7 @@ import { ref, computed, reactive, onMounted } from 'vue'
 import { useAuthStore } from '@/stores/auth'
 import { usersService, type UserOut } from '@/services/users'
 import { ROLE_LABELS } from '@/utils/roles'
+import { PASSWORD_HINT, checkPasswordStrength } from '@/utils/passwordPolicy'
 
 const auth = useAuthStore()
 const isReadOnly = computed(() => auth.user?.role === 'responsable_conformite')
@@ -374,7 +376,10 @@ function validate(): boolean {
   if (!form.first_name)    { fe.first_name    = 'Requis.'; ok = false }
   if (!form.last_name)     { fe.last_name     = 'Requis.'; ok = false }
   if (modal.mode === 'create' && !form.email) { fe.email = 'Requis.'; ok = false }
-  if (modal.mode === 'create' && form.password.length < 8) { fe.password = 'Minimum 8 caractères.'; ok = false }
+  if (modal.mode === 'create') {
+    const motif = checkPasswordStrength(form.password)
+    if (motif) { fe.password = motif; ok = false }
+  }
   if (!form.role)          { fe.role          = 'Requis.'; ok = false }
   return ok
 }
@@ -400,7 +405,15 @@ async function handleSubmit() {
       formError.value = (typeof detail === 'object' ? detail?.message ?? detail?.detail : detail)
         ?? "Le quota de sièges de votre cabinet est atteint. Contactez l'administrateur de la plateforme."
     } else {
-      formError.value = (typeof detail === 'string' ? detail : detail?.message) ?? 'Une erreur est survenue.'
+      // 422 = validation Pydantic : `detail` est une liste d'erreurs de champ,
+      // dont le motif lisible se trouve dans `msg` (préfixé par « Value error, »).
+      formError.value = (
+        typeof detail === 'string'
+          ? detail
+          : Array.isArray(detail)
+            ? detail.map((e: any) => String(e?.msg ?? '').replace(/^Value error,\s*/, '')).filter(Boolean).join(' ')
+            : detail?.message
+      ) || 'Une erreur est survenue.'
     }
   } finally {
     submitting.value = false

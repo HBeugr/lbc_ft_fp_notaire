@@ -236,6 +236,58 @@ class PlatformMetricsOut(BaseModel):
     cabinets_recents: list[TenantOut]
 
 
+class ConsoleCapabilities(BaseModel):
+    """Ce que cette instance de console autorise.
+
+    Permet à l'interface de ne pas proposer une action que l'API refusera :
+    un bouton qui échoue systématiquement est pire que pas de bouton.
+    """
+
+    gestion_utilisateurs_cabinet: bool
+
+
+class TenantUserOut(BaseModel):
+    """Un collaborateur d'un cabinet, vu depuis la console d'exploitation.
+
+    Volontairement pauvre : identité, rôle, état du compte. Aucun rattachement
+    à un dossier, aucune donnée de conformité.
+    """
+
+    id: str
+    email: str
+    first_name: str
+    last_name: str
+    role: str
+    is_active: bool
+    totp_enabled: bool = False
+    must_change_password: bool = False
+    created_at: datetime | None = None
+
+    model_config = {"from_attributes": True}
+
+
+class TenantUserRoleRequest(BaseModel):
+    role: str
+
+    @field_validator("role")
+    @classmethod
+    def _role_connu(cls, v: str) -> str:
+        if v not in _ROLES_PROVISIONNABLES and v != "admin":
+            raise ValueError("Rôle inconnu : " + v)
+        return v
+
+
+class TenantUserStatusRequest(BaseModel):
+    is_active: bool
+
+
+class TenantUserPasswordResetResponse(BaseModel):
+    """Mot de passe temporaire — affiché une seule fois, stocké nulle part en clair."""
+
+    email: str
+    temp_password: str
+
+
 class RoleInfo(BaseModel):
     """Un rôle cabinet et ce qu'il ouvre. Lecture seule : la console d'exploitation
     décrit les rôles, elle ne les modifie pas."""

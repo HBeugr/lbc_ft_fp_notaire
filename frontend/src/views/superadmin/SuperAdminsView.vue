@@ -123,6 +123,7 @@
 import { onMounted, reactive, ref } from 'vue'
 import { useSuperAdminStore } from '@/stores/superAdmin'
 import { superAdminService, type SuperAdminListItem } from '@/services/superAdmin'
+import { checkPasswordStrength } from '@/utils/passwordPolicy'
 
 const store = useSuperAdminStore()
 const moiId = store.superAdmin?.id ?? ''
@@ -168,8 +169,9 @@ async function creer() {
     formError.value = "L'adresse email est invalide."
     return
   }
-  if (form.password.length < 12) {
-    formError.value = 'Le mot de passe doit contenir au moins 12 caractères.'
+  const motifMdp = checkPasswordStrength(form.password)
+  if (motifMdp) {
+    formError.value = motifMdp
     return
   }
 

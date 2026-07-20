@@ -44,8 +44,13 @@ from app.schemas.tenants import (
     LogoOut,
     MigrationResultOut,
     PlatformMetricsOut,
+    ConsoleCapabilities,
     ProvisionedUser,
     RoleInfo,
+    TenantUserOut,
+    TenantUserPasswordResetResponse,
+    TenantUserRoleRequest,
+    TenantUserStatusRequest,
     SuperAdminLoginRequest,
     SuperAdminLoginResponse,
     SuperAdminCreateRequest,
@@ -191,6 +196,193 @@ async def super_admin_change_password(
     await db.refresh(stored)
     logger.info("super_admin.password_changed", super_admin_id=admin.id)
     return SuperAdminOut.model_validate(stored)
+
+
+# ── Gestion des utilisateurs d'un cabinet ────────────────────────────────────
+#
+# DÉSACTIVÉ PAR DÉFAUT (`SUPER_ADMIN_TENANT_USERS`). Ces endpoints sont les
+# seuls de ce router à ouvrir une session cabinet sur autre chose qu'un
+# `COUNT(*)` : ils lisent et modifient des comptes nominatifs, ce que
+# l'étanchéité décrite en tête de module exclut par principe.
+#
+# Ils existent parce que l'exploitation le demande, derrière un interrupteur
+# fermé : l'ouvrir est une décision juridique (Art. 63), pas un réglage.
+# Même activés, ils ne donnent accès à AUCUN dossier, KYC ou DOS.
+
+def _gestion_utilisateurs_activee() -> None:
+    if not settings.SUPER_ADMIN_TENANT_USERS:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="La gestion des utilisateurs de cabinet est désactivée sur cette instance.",
+        )
+
+
+async def _contexte_cabinet(tenant_id: str, db: AsyncSession) -> TenantContext:
+    tenant = await db.get(Tenant, tenant_id)
+    if tenant is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Cabinet introuvable.")
+    return TenantContext(
+        id=tenant.id, schema=tenant.schema_name, slug=tenant.slug, nom=tenant.nom_cabinet,
+        statut=tenant.statut, key_salt=tenant.key_salt, totp_required=tenant.totp_required,
+        storage_bucket=tenant.storage_bucket,
+    )
+
+
+@router.get("/capabilities", response_model=ConsoleCapabilities)
+async def console_capabilities(
+    _: SuperAdmin = Depends(get_current_super_admin),
+) -> ConsoleCapabilities:
+    return ConsoleCapabilities(
+        gestion_utilisateurs_cabinet=settings.SUPER_ADMIN_TENANT_USERS
+    )
+
+
+@router.get("/tenants/{tenant_id}/users", response_model=list[TenantUserOut])
+async def list_tenant_users(
+    tenant_id: str,
+    _: SuperAdmin = Depends(get_current_super_admin),
+    db: AsyncSession = Depends(get_shared_db),
+) -> list[TenantUserOut]:
+    _gestion_utilisateurs_activee()
+    context = await _contexte_cabinet(tenant_id, db)
+    with tenant_scope(context):
+        async with tenant_session(context) as tdb:
+            rows = (
+                await tdb.execute(select(User).order_by(User.created_at.asc()))
+            ).scalars().all()
+            return [TenantUserOut.model_validate(u) for u in rows]
+
+
+@router.patch("/tenants/{tenant_id}/users/{user_id}/role", response_model=TenantUserOut)
+async def set_tenant_user_role(
+    tenant_id: str,
+    user_id: str,
+    body: TenantUserRoleRequest,
+    admin: SuperAdmin = Depends(get_current_super_admin),
+    db: AsyncSession = Depends(get_shared_db),
+) -> TenantUserOut:
+    _gestion_utilisateurs_activee()
+    context = await _contexte_cabinet(tenant_id, db)
+    with tenant_scope(context):
+        async with tenant_session(context) as tdb:
+            membre = await tdb.get(User, user_id)
+            if membre is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND, detail="Utilisateur introuvable."
+                )
+            # Retirer le dernier admin fermerait le cabinet à lui-même.
+            if membre.role == "admin" and body.role != "admin":
+                admins = (
+                    await tdb.execute(
+                        select(func.count()).select_from(User)
+                        .where(User.role == "admin", User.is_active.is_(True))
+                    )
+                ).scalar_one()
+                if admins <= 1:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="C'est le dernier administrateur du cabinet.",
+                    )
+            membre.role = body.role
+            await tdb.commit()
+            await tdb.refresh(membre)
+            resultat = TenantUserOut.model_validate(membre)
+
+    db.add(TenantAuditLog(
+        tenant_id=tenant_id, super_admin_id=admin.id,
+        action="tenant.user.role_changed",
+        detail=f"{resultat.email} → {body.role}.",
+    ))
+    await db.commit()
+    return resultat
+
+
+@router.patch("/tenants/{tenant_id}/users/{user_id}/status", response_model=TenantUserOut)
+async def set_tenant_user_status(
+    tenant_id: str,
+    user_id: str,
+    body: TenantUserStatusRequest,
+    admin: SuperAdmin = Depends(get_current_super_admin),
+    db: AsyncSession = Depends(get_shared_db),
+) -> TenantUserOut:
+    _gestion_utilisateurs_activee()
+    context = await _contexte_cabinet(tenant_id, db)
+    with tenant_scope(context):
+        async with tenant_session(context) as tdb:
+            membre = await tdb.get(User, user_id)
+            if membre is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND, detail="Utilisateur introuvable."
+                )
+            if not body.is_active and membre.role == "admin":
+                admins = (
+                    await tdb.execute(
+                        select(func.count()).select_from(User)
+                        .where(User.role == "admin", User.is_active.is_(True))
+                    )
+                ).scalar_one()
+                if admins <= 1:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="C'est le dernier administrateur actif du cabinet.",
+                    )
+            membre.is_active = body.is_active
+            await tdb.commit()
+            await tdb.refresh(membre)
+            resultat = TenantUserOut.model_validate(membre)
+
+    db.add(TenantAuditLog(
+        tenant_id=tenant_id, super_admin_id=admin.id,
+        action="tenant.user.activated" if body.is_active else "tenant.user.deactivated",
+        detail=resultat.email,
+    ))
+    await db.commit()
+    return resultat
+
+
+@router.post(
+    "/tenants/{tenant_id}/users/{user_id}/password-reset",
+    response_model=TenantUserPasswordResetResponse,
+)
+async def reset_tenant_user_password(
+    tenant_id: str,
+    user_id: str,
+    admin: SuperAdmin = Depends(get_current_super_admin),
+    db: AsyncSession = Depends(get_shared_db),
+) -> TenantUserPasswordResetResponse:
+    """Réémet un mot de passe temporaire, et remet la 2FA à zéro.
+
+    Même raisonnement que pour l'admin du cabinet : rien ne permet à
+    l'exploitant de vérifier que le téléphone associé est toujours entre les
+    mêmes mains, et conserver le secret TOTP transformerait la
+    réinitialisation en verrou permanent.
+    """
+    _gestion_utilisateurs_activee()
+    context = await _contexte_cabinet(tenant_id, db)
+    mdp = tenant_provisioning._generate_temp_password()
+    with tenant_scope(context):
+        async with tenant_session(context) as tdb:
+            membre = await tdb.get(User, user_id)
+            if membre is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND, detail="Utilisateur introuvable."
+                )
+            membre.hashed_password = security.hash_password(mdp)
+            membre.must_change_password = True
+            membre.totp_enabled = False
+            membre.totp_secret = None
+            membre.totp_backup_codes = None
+            await tdb.commit()
+            email = membre.email
+
+    db.add(TenantAuditLog(
+        tenant_id=tenant_id, super_admin_id=admin.id,
+        action="tenant.user.password_reset",
+        detail=f"Mot de passe et 2FA réinitialisés pour {email}.",
+    ))
+    await db.commit()
+    logger.warning("tenant.user.password_reset", tenant_id=tenant_id, email=email, by=admin.id)
+    return TenantUserPasswordResetResponse(email=email, temp_password=mdp)
 
 
 # ── Matrice des rôles cabinet (lecture seule) ────────────────────────────────
