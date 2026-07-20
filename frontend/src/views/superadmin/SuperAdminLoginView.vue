@@ -74,6 +74,9 @@
       <p class="login-legal">
         Console distincte de l'espace cabinet · Toutes les actions sont journalisées
       </p>
+
+      <!-- Retour vers le login cabinet normal (aligné sur la console immo). -->
+      <RouterLink :to="{ name: 'login' }" class="login-back-link">← Retour à la connexion cabinet</RouterLink>
     </div>
   </div>
 </template>
@@ -142,7 +145,7 @@ async function handleSubmit() {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: var(--color-sidebar-darker);
+  background: var(--color-bg-page);
   padding: 1.5rem;
 }
 
@@ -152,7 +155,7 @@ async function handleSubmit() {
   background: var(--color-bg-card);
   border-radius: 12px;
   border: 1px solid var(--color-border);
-  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.24);
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.08);
   padding: 2.5rem 2rem;
 }
 
@@ -268,4 +271,17 @@ async function handleSubmit() {
   color: var(--color-text-muted);
   line-height: 1.6;
 }
+
+.login-back-link {
+  display: block;
+  margin-top: 1.25rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--color-border);
+  text-align: center;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: var(--color-text-secondary);
+  text-decoration: none;
+}
+.login-back-link:hover { color: var(--color-sidebar-bg); }
 </style>

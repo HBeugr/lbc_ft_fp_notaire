@@ -123,6 +123,10 @@
       </form>
 
       <p class="login-footer">Accès réservé aux collaborateurs autorisés · Art. 63 Ord. N°2023-875</p>
+
+      <!-- Sortie de secours : sans elle, un utilisateur forcé au changement de
+           mot de passe (compte temporaire) reste piégé sur cet écran. -->
+      <button type="button" class="login-back-link" @click="handleLogout">← Se déconnecter</button>
     </div>
   </div>
 </template>
@@ -184,6 +188,12 @@ function validate(): boolean {
 
   errors.confirmPassword = form.newPassword === form.confirmPassword ? '' : 'Les mots de passe ne correspondent pas.'
   return !errors.currentPassword && !errors.newPassword && !errors.confirmPassword
+}
+
+async function handleLogout() {
+  await authService.logout().catch(() => {})
+  authStore.clearAuth()
+  router.push({ name: 'login' })
 }
 
 async function handleSubmit() {
@@ -463,4 +473,20 @@ async function handleSubmit() {
   color: var(--color-text-muted);
   line-height: 1.6;
 }
+
+.login-back-link {
+  display: block;
+  width: 100%;
+  margin-top: 1.25rem;
+  padding-top: 1rem;
+  border: none;
+  border-top: 1px solid var(--color-border);
+  background: none;
+  text-align: center;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+}
+.login-back-link:hover { color: var(--color-sidebar-bg); }
 </style>
