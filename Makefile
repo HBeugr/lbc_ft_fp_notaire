@@ -86,8 +86,14 @@ new-migration-tenant:
 # cabinet peut dépendre d'une entrée d'annuaire, jamais l'inverse.
 migrate: migrate-shared migrate-tenants
 
+# Crée le compte Super-Admin d'exploitation (idempotent). Les migrations de
+# l'annuaire doivent être jouées avant : `make migrate-shared`.
 seed:
-	$(COMPOSE) exec api python seed_admin.py
+	$(COMPOSE) exec api python seed_platform.py
+
+# Idem + un cabinet de démonstration entièrement provisionné. Jamais en production.
+seed-demo:
+	$(COMPOSE) exec api python seed_platform.py --demo
 
 # ── Sauvegardes ───────────────────────────────────────────────────────────────
 # Déclenche une sauvegarde immédiate (dump global + un dump par cabinet)
