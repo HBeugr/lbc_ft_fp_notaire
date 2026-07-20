@@ -236,6 +236,15 @@ class PlatformMetricsOut(BaseModel):
     cabinets_recents: list[TenantOut]
 
 
+class RoleInfo(BaseModel):
+    """Un rôle cabinet et ce qu'il ouvre. Lecture seule : la console d'exploitation
+    décrit les rôles, elle ne les modifie pas."""
+
+    key: str
+    label: str
+    capabilities: list[str]
+
+
 class MigrationResultOut(BaseModel):
     resultats: dict[str, str]
 

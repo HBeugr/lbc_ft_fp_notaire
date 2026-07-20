@@ -145,6 +145,13 @@ export interface ExploitationAuditEntry {
   created_at: string
 }
 
+/** Un rôle cabinet et ce qu'il ouvre — lecture seule. */
+export interface RoleInfo {
+  key: string
+  label: string
+  capabilities: string[]
+}
+
 export interface MigrationResult {
   resultats: Record<string, string>
 }
@@ -233,6 +240,11 @@ export const superAdminService = {
 
   async tenantMetrics(id: string): Promise<TenantMetrics> {
     const { data } = await superAdminApi.get<TenantMetrics>(`/tenants/${id}/metrics`)
+    return data
+  },
+
+  async listRoles(): Promise<RoleInfo[]> {
+    const { data } = await superAdminApi.get<RoleInfo[]>('/roles')
     return data
   },
 

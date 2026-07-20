@@ -232,6 +232,25 @@
         </div>
       </div>
 
+      <!-- Rôles disponibles dans le cabinet -->
+      <div class="card">
+        <h2 class="card-title">Rôles &amp; permissions</h2>
+        <p class="card-desc">
+          Ce que chaque rôle ouvre à l'intérieur du cabinet. Lecture seule : la console
+          d'exploitation décrit les rôles, elle ne voit pas qui les porte.
+        </p>
+        <div v-if="roles.length" class="roles-grid">
+          <div v-for="r in roles" :key="r.key" class="role-card">
+            <p class="role-label">{{ r.label }}</p>
+            <code class="role-key">{{ r.key }}</code>
+            <ul class="role-caps">
+              <li v-for="c in r.capabilities" :key="c">{{ c }}</li>
+            </ul>
+          </div>
+        </div>
+        <p v-else class="card-desc">Matrice indisponible.</p>
+      </div>
+
       <!-- Logo du cabinet -->
       <div class="card">
         <h2 class="card-title">Logo du cabinet</h2>
@@ -352,6 +371,7 @@ import {
   type TenantAdminReset,
   type TenantUpdatePayload,
   type LogoContraintes,
+  type RoleInfo,
 } from '@/services/superAdmin'
 import { useObjectUrl } from '@/composables/useObjectUrl'
 
@@ -543,6 +563,7 @@ const quotaSubLabel = computed(() => {
 // l'instance axios dédiée puis par une URL d'objet, jamais par `<img src="/api…">`.
 const { url: logoUrl, set: setLogoUrl } = useObjectUrl()
 const contraintes = ref<LogoContraintes | null>(null)
+const roles = ref<RoleInfo[]>([])
 const logoInput = ref<HTMLInputElement | null>(null)
 const logoBusy = ref(false)
 const logoMsg = ref('')
@@ -650,9 +671,20 @@ async function load() {
   }
 }
 
+async function chargerRoles() {
+  // Dégradation silencieuse : la matrice est indicative, son absence ne doit
+  // pas empêcher d'administrer le cabinet.
+  try {
+    roles.value = await superAdminService.listRoles()
+  } catch {
+    roles.value = []
+  }
+}
+
 onMounted(() => {
   load()
   chargerContraintes()
+  chargerRoles()
 })
 
 async function handleActivate() {
@@ -787,6 +819,28 @@ async function handleMotifConfirm() {
   border-radius: 7px; font-size: 0.875rem; color: var(--color-text-secondary); cursor: pointer;
 }
 .btn-ghost-modal:hover { border-color: var(--color-text-secondary); }
+
+.roles-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: 0.875rem;
+}
+.role-card {
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  padding: 0.875rem 1rem;
+  background: var(--color-bg-page);
+}
+.role-label { font-size: 0.875rem; font-weight: 600; color: var(--color-text-primary); margin: 0; }
+.role-key {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.6875rem; color: var(--color-text-muted);
+}
+.role-caps { margin: 0.625rem 0 0; padding-left: 1rem; }
+.role-caps li {
+  font-size: 0.75rem; color: var(--color-text-secondary);
+  line-height: 1.5; margin-bottom: 0.25rem;
+}
 
 .spinner {
   width: 13px; height: 13px;

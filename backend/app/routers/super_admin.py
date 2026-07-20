@@ -45,6 +45,7 @@ from app.schemas.tenants import (
     MigrationResultOut,
     PlatformMetricsOut,
     ProvisionedUser,
+    RoleInfo,
     SuperAdminLoginRequest,
     SuperAdminLoginResponse,
     SuperAdminCreateRequest,
@@ -190,6 +191,55 @@ async def super_admin_change_password(
     await db.refresh(stored)
     logger.info("super_admin.password_changed", super_admin_id=admin.id)
     return SuperAdminOut.model_validate(stored)
+
+
+# ── Matrice des rôles cabinet (lecture seule) ────────────────────────────────
+#
+# Décrit ce que chaque rôle ouvre à l'intérieur d'un cabinet. L'exploitant ne
+# peut ni modifier ces rôles ni voir qui les porte : c'est une aide au
+# provisionnement, pas un accès aux comptes.
+#
+# Le contenu reflète les règles réellement appliquées (gardes de route et
+# `AssignedFilter` de `core/rbac.py`) : une description qui divergerait du code
+# induirait l'exploitant en erreur au moment de choisir un rôle.
+
+_MATRICE_ROLES: list[RoleInfo] = [
+    RoleInfo(key="admin", label="Administrateur", capabilities=[
+        "Paramétrage du cabinet et gestion des utilisateurs",
+        "Matrice de risque, sanctions, registres et journal d'audit",
+        "Accès à l'ensemble des modules",
+    ]),
+    RoleInfo(key="notaire_principal", label="Notaire principal", capabilities=[
+        "Validation et clôture des dossiers",
+        "Supervision de tous les dossiers du cabinet",
+        "Initiation d'une déclaration de soupçon (DOS)",
+        "Paramétrage du cabinet",
+    ]),
+    RoleInfo(key="responsable_conformite", label="Responsable conformité", capabilities=[
+        "Analyse du risque et traitement des alertes",
+        "Rédaction et validation des DOS",
+        "Réévaluation périodique des KYC",
+        "Rapports de conformité",
+    ]),
+    RoleInfo(key="clercs", label="Clerc", capabilities=[
+        "Saisie des KYC et collecte des pièces",
+        "Signalement d'une suspicion",
+        "Accès limité aux SEULS dossiers qui lui sont assignés",
+    ]),
+    RoleInfo(key="declarant_centif", label="Déclarant CENTIF", capabilities=[
+        "Transmission des déclarations vers la CENTIF",
+        "Consultation des dossiers concernés",
+    ]),
+    RoleInfo(key="autre_utilisateur", label="Autre utilisateur", capabilities=[
+        "Accès restreint : tableau de bord et consultation",
+        "Aucune gestion des utilisateurs ni du paramétrage",
+    ]),
+]
+
+
+@router.get("/roles", response_model=list[RoleInfo])
+async def list_roles(_: SuperAdmin = Depends(get_current_super_admin)) -> list[RoleInfo]:
+    return _MATRICE_ROLES
 
 
 # ── Gestion des comptes d'exploitation ───────────────────────────────────────
