@@ -92,13 +92,19 @@
       <p class="login-legal">
         Accès réservé aux collaborateurs autorisés · Art. 63 Ord. N°2023-875
       </p>
+
+      <!-- Accès exploitation : discret, hors du parcours cabinet. Ne mène à
+           aucune donnée métier — la console vit dans l'annuaire partagé. -->
+      <RouterLink :to="{ name: 'super-admin-login' }" class="login-platform" rel="nofollow">
+        <span aria-hidden="true">⚙</span>Console d'exploitation
+      </RouterLink>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, reactive } from 'vue'
-import { useRouter } from 'vue-router'
+import { RouterLink, useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import api from '@/services/api'
 
@@ -404,5 +410,32 @@ async function handleSubmit() {
   font-size: 0.6875rem;
   color: var(--color-text-muted);
   line-height: 1.6;
+}
+
+/* Volontairement effacé : l'exploitant sait qu'il existe, le collaborateur
+   de cabinet n'a aucune raison de cliquer. */
+/* flex + fit-content plutôt qu'inline-flex : .login-card est un bloc simple,
+   sans text-align, donc `margin: auto` est le seul centrage disponible. */
+.login-platform {
+  display: flex;
+  width: fit-content;
+  align-items: center;
+  gap: 0.4375rem;
+  margin: 1rem auto 0;
+  padding: 0.5rem 0.875rem;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  text-decoration: none;
+  white-space: nowrap;
+  transition: border-color 0.2s ease, color 0.2s ease;
+}
+
+.login-platform:hover,
+.login-platform:focus-visible {
+  border-color: var(--color-accent-gold);
+  color: var(--color-text-secondary);
 }
 </style>
