@@ -46,9 +46,23 @@ async def create_user(
     # plateforme, pas seulement dans ce cabinet.
     if not await tenant_directory.is_email_available(body.email):
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email déjà utilisé.")
-    # Anti-escalade : seul un admin peut créer un compte admin.
-    if body.role == "admin" and admin.role != "admin":
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Seul un administrateur peut créer un compte administrateur.")
+    # Anti-escalade : le rôle « admin » ne se distribue pas depuis le cabinet.
+    #
+    # L'administrateur du cabinet gère tous les autres rôles, mais ne fabrique
+    # pas de pair : le compte administrateur est posé au provisionnement par la
+    # console plateforme (`tenant_provisioning`), qui reste le seul point
+    # d'entrée tracé côté Super-Admin. Sans ce verrou, un administrateur
+    # compromis se dupliquerait un accès complet sans qu'aucun contrôle externe
+    # au cabinet n'en soit informé.
+    #
+    # La condition précédente (`and admin.role != "admin"`) était inatteignable :
+    # `require_user_manager` impose déjà `role == "admin"`. C'était un résidu de
+    # l'époque où le Notaire Principal gérait aussi les comptes.
+    if body.role == "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="La création d'un compte administrateur relève de la console plateforme.",
+        )
     try:
         await tenant_directory.assert_quota_available(await tenant_directory.count_registered())
     except QuotaExceededError as exc:
@@ -107,9 +121,13 @@ async def update_user(
     target = await user_repo.get_by_id(db, user_id)
     if not target:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Utilisateur introuvable.")
-    # Anti-escalade : seul un admin peut gérer un compte admin ou promouvoir au rôle admin.
-    if admin.role != "admin" and (target.role == "admin" or body.role == "admin"):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Seul un administrateur peut gérer un compte administrateur.")
+    # Même verrou qu'à la création : sans lui, la règle se contournerait en deux
+    # temps — créer un clerc, puis le promouvoir administrateur.
+    if body.role == "admin" and target.role != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="La promotion au rôle administrateur relève de la console plateforme.",
+        )
     if user_id == admin.id and body.role is not None and body.role != "admin":
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Impossible de changer son propre rôle.")
     if user_id == admin.id and body.is_active is False:

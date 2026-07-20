@@ -274,11 +274,19 @@ const isAdmin   = computed(() => auth.user?.role === 'admin')
 const canManageUsers = computed(() => auth.user?.role === 'admin' || auth.user?.role === 'notaire_principal')
 
 // Rôles disponibles selon CDC : Admin → tous ; Dirigeant → tous sauf admin
-const availableRoles = computed(() =>
-  isAdmin.value
-    ? ROLE_LABELS
-    : Object.fromEntries(Object.entries(ROLE_LABELS).filter(([k]) => k !== 'admin'))
-)
+// Le rôle « admin » ne se distribue pas depuis le cabinet : il est posé au
+// provisionnement par la console plateforme, et l'API le refuse (403) aussi bien
+// à la création qu'à la promotion.
+//
+// Seule exception : l'édition d'un compte qui est DÉJÀ administrateur. Sans lui
+// réinjecter son rôle, le `select` s'afficherait vide alors que `form.role` vaut
+// toujours « admin » — l'écran mentirait sur l'état réel du compte.
+const availableRoles = computed(() => {
+  const conserverAdmin = modal.mode === 'edit' && form.role === 'admin'
+  return Object.fromEntries(
+    Object.entries(ROLE_LABELS).filter(([k]) => k !== 'admin' || conserverAdmin)
+  )
+})
 
 const ROLE_PERMISSIONS: Record<string, { modules: string[]; operations: string[] }> = {
   admin: {

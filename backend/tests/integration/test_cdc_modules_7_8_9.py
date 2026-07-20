@@ -625,6 +625,48 @@ async def test_adm01_notaire_principal_ne_gere_pas_les_utilisateurs(client, db):
     assert reinit.status_code == 403, "ADM-01 : le Notaire Principal ne réinitialise pas de mot de passe."
 
 
+async def test_adm01_admin_ne_fabrique_pas_de_pair_administrateur(client, db):
+    """ADM-01 — l'Admin de cabinet gère tous les rôles SAUF « admin ».
+
+    Le compte administrateur est posé au provisionnement par la console
+    plateforme : c'est le seul point d'entrée tracé hors du cabinet. Un admin
+    compromis qui pourrait se dupliquer un pair échapperait à ce contrôle.
+
+    Le second volet (la promotion) est le vrai piège : sans lui, la règle se
+    contourne en deux temps — créer un clerc, puis l'élever administrateur.
+    """
+    admin = await _acteur(db, "admin")
+    h = auth_headers(admin)
+
+    creation_admin = await client.post(
+        "/api/users", headers=h,
+        json={
+            "email": f"adm_{uuid.uuid4().hex[:8]}@test.ci", "first_name": "A", "last_name": "D",
+            "role": "admin", "password": "TestPass123!",
+        },
+    )
+    assert creation_admin.status_code == 403, "ADM-01 : l'Admin ne crée pas de compte administrateur."
+
+    # Contrôle inverse : les autres rôles doivent rester ouverts, sinon le
+    # verrou aurait débordé sur la gestion courante des comptes.
+    for role in ("notaire_principal", "responsable_conformite", "clercs",
+                 "declarant_centif", "autre_utilisateur"):
+        r = await client.post(
+            "/api/users", headers=h,
+            json={
+                "email": f"ok_{uuid.uuid4().hex[:8]}@test.ci", "first_name": "O", "last_name": "K",
+                "role": role, "password": "TestPass123!",
+            },
+        )
+        assert r.status_code == 201, f"ADM-01 : l'Admin doit pouvoir créer le rôle « {role} » ({r.status_code})."
+
+    promotion = await client.patch(
+        f"/api/users/{(await create_user(db, role='clercs')).id}",
+        headers=h, json={"role": "admin"},
+    )
+    assert promotion.status_code == 403, "ADM-02 : l'Admin ne promeut personne administrateur."
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # MODULE 8 — DÉCLARATION D'OPÉRATION SUSPECTE (DOS)
 # ══════════════════════════════════════════════════════════════════════════════
