@@ -21,35 +21,11 @@ class SuperAdminOut(BaseModel):
     first_name: str
     last_name: str
     must_change_password: bool = False
-    totp_enabled: bool = False
 
     model_config = {"from_attributes": True}
 
 
 class SuperAdminLoginResponse(BaseModel):
-    access_token: str
-    token_type: str = "bearer"
-    super_admin: SuperAdminOut
-    # Vrai tant que le code TOTP n'a pas été fourni. Le jeton émis est alors
-    # « en attente » : il n'ouvre que les endpoints de vérification 2FA.
-    totp_pending: bool = False
-
-
-class SuperAdminTotpSetupResponse(BaseModel):
-    provisioning_uri: str
-
-
-class SuperAdminTotpCodeRequest(BaseModel):
-    code: str = Field(..., min_length=6, max_length=10)
-
-
-class SuperAdminTotpActivateResponse(BaseModel):
-    """Codes de secours — affichés une seule fois, jamais relisibles ensuite."""
-
-    backup_codes: list[str]
-
-
-class SuperAdminTotpVerifyResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
     super_admin: SuperAdminOut

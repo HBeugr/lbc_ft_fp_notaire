@@ -112,10 +112,10 @@ async function handleSubmit() {
   loading.value = true
   try {
     const data = await superAdminService.login(form.email, form.password)
-    store.setSession(data.access_token, data.super_admin, data.totp_pending)
-    // Le garde de route se charge d'orienter ensuite : étape 2FA si le jeton
-    // est en attente, page de compte si le mot de passe initial est en place.
-    router.push({ name: data.totp_pending ? 'super-admin-totp' : 'super-admin-dashboard' })
+    store.setSession(data.access_token, data.super_admin)
+    // Le garde de route redirige ensuite vers la page de compte si le mot de
+    // passe initial est encore en place.
+    router.push({ name: 'super-admin-dashboard' })
   } catch (err: any) {
     const status = err?.response?.status
     const detail = err?.response?.data?.detail

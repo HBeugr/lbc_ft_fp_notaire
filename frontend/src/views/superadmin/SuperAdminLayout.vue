@@ -63,17 +63,6 @@
     </aside>
 
     <main class="main-content">
-      <!-- Invitation à activer la 2FA. Rappel, pas blocage : le Super-Admin est
-           le seul compte sans recours externe, l'imposer risquerait de fermer
-           la console à son unique détenteur. -->
-      <div v-if="!store.mustChangePassword && !store.totpEnabled" class="banner-info">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <rect x="3" y="11" width="18" height="11" rx="2"/>
-          <path d="M7 11V7a5 5 0 0110 0v4"/>
-        </svg>
-        <span>La double authentification n'est pas activée sur ce compte.</span>
-        <RouterLink :to="{ name: 'super-admin-account' }" class="banner-action">Activer</RouterLink>
-      </div>
       <RouterView />
     </main>
   </div>
@@ -202,24 +191,4 @@ async function handleLogout() {
   flex-shrink: 0;
 }
 
-.banner-info {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  background: var(--color-risk-medium-bg);
-  color: var(--color-risk-medium);
-  border: 1px solid rgba(217, 119, 6, 0.2);
-  border-radius: 8px;
-  padding: 0.625rem 0.875rem;
-  font-size: 0.8125rem;
-  margin-bottom: 1.25rem;
-}
-.banner-info svg { width: 16px; height: 16px; flex-shrink: 0; }
-.banner-action {
-  margin-left: auto;
-  font-weight: 600;
-  color: inherit;
-  text-decoration: underline;
-  white-space: nowrap;
-}
 </style>

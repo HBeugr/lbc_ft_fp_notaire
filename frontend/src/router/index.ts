@@ -49,14 +49,6 @@ const router = createRouter({
       meta: { public: true, superAdminPublic: true },
     },
     {
-      // Étape 2 du login. Route publique au sens du garde cabinet, mais
-      // atteignable uniquement avec un jeton en attente de 2FA.
-      path: '/super-admin/2fa',
-      name: 'super-admin-totp',
-      component: () => import('@/views/superadmin/SuperAdminTotpView.vue'),
-      meta: { public: true, superAdminPublic: true, superAdminTotp: true },
-    },
-    {
       path: '/super-admin',
       component: () => import('@/views/superadmin/SuperAdminLayout.vue'),
       meta: { superAdmin: true },
@@ -238,23 +230,10 @@ router.beforeEach(async (to) => {
   if (to.meta.superAdmin || to.meta.superAdminPublic) {
     const sa = useSuperAdminStore()
 
-    // Étape 2FA : n'a de sens qu'avec un jeton en attente. Déjà authentifié →
-    // la console ; pas de jeton du tout → retour au formulaire.
-    if (to.meta.superAdminTotp) {
-      if (sa.isAuthenticated) return { name: 'super-admin-dashboard' }
-      return sa.isTotpPending ? true : { name: 'super-admin-login' }
-    }
-
     if (to.meta.superAdminPublic) {
-      // Une session bloquée à l'étape 2 ne doit pas repartir du formulaire de
-      // mot de passe : on la renvoie là où elle s'est arrêtée.
-      if (sa.isTotpPending) return { name: 'super-admin-totp' }
       return sa.isAuthenticated ? { name: 'super-admin-dashboard' } : true
     }
 
-    if (sa.isTotpPending) {
-      return { name: 'super-admin-totp' }
-    }
     if (!sa.isAuthenticated) {
       return { name: 'super-admin-login' }
     }

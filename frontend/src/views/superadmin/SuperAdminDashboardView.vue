@@ -5,10 +5,19 @@
         <h1 class="page-title">Tableau de bord</h1>
         <p class="page-subtitle">Volumétrie de la plateforme — aucun contenu de dossier n'est lu</p>
       </div>
-      <button class="btn-ghost" :disabled="loading" @click="load">
-        <span v-if="loading" class="spinner spinner--dark" />
-        Actualiser
-      </button>
+      <div class="header-actions">
+        <button class="btn-ghost" :disabled="loading" @click="load">
+          <span v-if="loading" class="spinner spinner--dark" />
+          Actualiser
+        </button>
+        <RouterLink :to="{ name: 'super-admin-tenant-create' }" class="btn-primary">
+          <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="12" y1="5" x2="12" y2="19" />
+            <line x1="5" y1="12" x2="19" y2="12" />
+          </svg>
+          Nouveau cabinet
+        </RouterLink>
+      </div>
     </div>
 
     <div v-if="loadError" class="alert-error">{{ loadError }}</div>
@@ -30,26 +39,31 @@
         </span>
       </div>
 
+      <!-- Mêmes cartes que la console de l'assujetti immo/foncier : un volume
+           global, puis un chiffre par statut. Seul le libellé du deuxième
+           statut change — notaire n'a pas de période d'essai, son équivalent
+           est le cabinet provisionné mais pas encore ouvert. -->
       <div class="kpi-grid">
         <div class="card kpi">
           <p class="kpi-label">Cabinets</p>
           <p class="kpi-value">{{ metrics.cabinets_total }}</p>
-          <p class="kpi-foot">{{ enProduction }} en production · {{ enConfiguration }} en configuration</p>
         </div>
         <div class="card kpi">
-          <p class="kpi-label">Utilisateurs actifs</p>
-          <p class="kpi-value">{{ metrics.utilisateurs_actifs }}</p>
-          <p class="kpi-foot">sur {{ metrics.utilisateurs_total }} enregistré{{ metrics.utilisateurs_total !== 1 ? 's' : '' }}</p>
+          <p class="kpi-label">Utilisateurs</p>
+          <p class="kpi-value">{{ metrics.utilisateurs_total }}</p>
+          <p class="kpi-foot">dont {{ metrics.utilisateurs_actifs }} actif{{ metrics.utilisateurs_actifs !== 1 ? 's' : '' }}</p>
         </div>
         <div class="card kpi">
-          <p class="kpi-label">Dossiers</p>
-          <p class="kpi-value">{{ metrics.dossiers_total }}</p>
-          <p class="kpi-foot">tous cabinets confondus</p>
+          <p class="kpi-label">Actifs</p>
+          <p class="kpi-value kpi-value--ok">{{ enProduction }}</p>
         </div>
-        <div class="card kpi" :class="{ 'kpi--alert': aSurveiller > 0 }">
-          <p class="kpi-label">À surveiller</p>
-          <p class="kpi-value">{{ aSurveiller }}</p>
-          <p class="kpi-foot">{{ suspendus }} suspendu{{ suspendus !== 1 ? 's' : '' }} · {{ archives }} archivé{{ archives !== 1 ? 's' : '' }}</p>
+        <div class="card kpi">
+          <p class="kpi-label">En configuration</p>
+          <p class="kpi-value kpi-value--warn">{{ enConfiguration }}</p>
+        </div>
+        <div class="card kpi">
+          <p class="kpi-label">Suspendus</p>
+          <p class="kpi-value kpi-value--bad">{{ suspendus }}</p>
         </div>
       </div>
 
@@ -84,15 +98,32 @@
           <h2 class="card-title">Derniers cabinets créés</h2>
           <RouterLink :to="{ name: 'super-admin-tenants' }" class="card-link">Tout voir</RouterLink>
         </div>
+        <!-- Ligne entière cliquable, comme sur l'assujetti : viser le seul nom
+             fait rater la cible et oblige à la précision au pointeur.
+             `tabindex` + Entrée conservent l'accès clavier, que le `@click`
+             sur `<tr>` supprimerait sinon. -->
         <table v-if="metrics.cabinets_recents.length" class="mini-table">
+          <thead>
+            <tr>
+              <th>Cabinet</th>
+              <th>Identifiant</th>
+              <th>Statut</th>
+              <th class="th-date">Créé le</th>
+            </tr>
+          </thead>
           <tbody>
-            <tr v-for="t in metrics.cabinets_recents" :key="t.id">
-              <td>
-                <RouterLink
-                  :to="{ name: 'super-admin-tenant-detail', params: { id: t.id } }"
-                  class="row-link"
-                >{{ t.nom_cabinet }}</RouterLink>
-              </td>
+            <tr
+              v-for="t in metrics.cabinets_recents"
+              :key="t.id"
+              class="row"
+              tabindex="0"
+              role="link"
+              :aria-label="`Ouvrir la fiche de ${t.nom_cabinet}`"
+              @click="ouvrir(t.id)"
+              @keydown.enter="ouvrir(t.id)"
+            >
+              <td class="td-nom">{{ t.nom_cabinet }}</td>
+              <td><code class="slug">{{ t.slug }}</code></td>
               <td class="td-statut">
                 <span class="badge" :class="`badge--${t.statut}`">{{ TENANT_STATUT_LABELS[t.statut] }}</span>
               </td>
@@ -111,7 +142,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { RouterLink } from 'vue-router'
+import { RouterLink, useRouter } from 'vue-router'
 import {
   superAdminService,
   TENANT_STATUT_LABELS,
@@ -119,9 +150,15 @@ import {
   type TenantStatut,
 } from '@/services/superAdmin'
 
+const router = useRouter()
+
 const metrics = ref<PlatformMetrics | null>(null)
 const loading = ref(false)
 const loadError = ref('')
+
+function ouvrir(id: string) {
+  router.push({ name: 'super-admin-tenant-detail', params: { id } })
+}
 
 const ORDRE: TenantStatut[] = ['production', 'configuration', 'suspendu', 'archive']
 
@@ -132,8 +169,8 @@ function compte(statut: TenantStatut): number {
 const enProduction = computed(() => compte('production'))
 const enConfiguration = computed(() => compte('configuration'))
 const suspendus = computed(() => compte('suspendu'))
-const archives = computed(() => compte('archive'))
-const aSurveiller = computed(() => suspendus.value + archives.value)
+// Les cabinets archivés n'ont pas de carte dédiée — comme sur l'assujetti, qui
+// n'en compte que trois. Ils restent visibles dans la barre de répartition.
 
 const segments = computed(() => {
   const total = metrics.value?.cabinets_total ?? 0
@@ -251,7 +288,27 @@ onMounted(load)
   margin: 0.375rem 0 0;
 }
 .kpi-foot { font-size: 0.75rem; color: var(--color-text-secondary); margin: 0.25rem 0 0; }
-.kpi--alert .kpi-value { color: var(--color-risk-medium); }
+.kpi-value--ok { color: var(--color-risk-low); }
+.kpi-value--warn { color: var(--color-risk-medium); }
+.kpi-value--bad { color: var(--color-risk-high); }
+
+.header-actions { display: flex; gap: 0.625rem; flex-shrink: 0; }
+.btn-primary {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  background: var(--color-btn-primary);
+  color: #fff;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  padding: 0.5rem 0.875rem;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  text-decoration: none;
+  white-space: nowrap;
+}
+.btn-primary:hover { background: var(--color-btn-primary-hover); }
+.btn-icon { width: 14px; height: 14px; }
 
 .card { margin-bottom: 1.25rem; }
 .card-head { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; }
@@ -302,15 +359,40 @@ onMounted(load)
 .legend-dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
 
 .mini-table { width: 100%; border-collapse: collapse; }
+.mini-table th {
+  padding: 0 0 0.5rem;
+  text-align: left;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-muted);
+  border-bottom: 1px solid var(--color-border);
+}
 .mini-table td {
   padding: 0.625rem 0;
   border-bottom: 1px solid var(--color-border);
   font-size: 0.8125rem;
   color: var(--color-text-primary);
 }
-.mini-table tr:last-child td { border-bottom: none; }
-.row-link { color: var(--color-text-primary); text-decoration: none; font-weight: 500; }
-.row-link:hover { text-decoration: underline; }
+.mini-table tbody tr:last-child td { border-bottom: none; }
+
+/* Ligne entière cliquable. `:focus-visible` est indispensable ici : le
+   `tabindex` rend la ligne atteignable au clavier, sans repère visuel elle
+   serait inutilisable autrement qu'au pointeur. */
+.row { cursor: pointer; }
+.row:hover td { background: var(--color-bg-page); }
+.row:focus-visible {
+  outline: 2px solid var(--color-accent-gold);
+  outline-offset: -2px;
+}
+.td-nom { font-weight: 500; }
+.slug {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.75rem;
+  color: var(--color-text-secondary);
+}
+.th-date { text-align: right; }
 .td-statut { width: 1%; white-space: nowrap; }
 .td-date { width: 1%; white-space: nowrap; color: var(--color-text-muted); text-align: right; }
 

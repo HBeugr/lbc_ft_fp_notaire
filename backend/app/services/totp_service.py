@@ -5,7 +5,6 @@ import pyotp
 from cryptography.fernet import Fernet
 
 from app.core import security as sec
-from app.core.config import settings
 from app.core.crypto import derive_tenant_fernet
 from app.core.redis_client import get_redis
 from app.core.tenant_context import get_current_tenant
@@ -123,61 +122,3 @@ async def pop_pending_secret(user_id: str) -> str | None:
     await redis.delete(key)
     return decrypt_secret(encrypted)
 
-
-# ── Variante plateforme (Super-Admin) ───────────────────────────────────────
-#
-# Le Super-Admin n'appartient à aucun cabinet : les fonctions ci-dessus lui sont
-# inapplicables telles quelles, elles appellent toutes `get_current_tenant()` et
-# lèveraient `NoTenantContextError`. Seules trois d'entre elles sont réellement
-# liées au cabinet — la clé Redis, la clé de chiffrement et l'émetteur affiché
-# dans l'application d'authentification. On en décline donc une variante, plutôt
-# que de rendre le contexte cabinet optionnel : le rendre optionnel ferait taire
-# l'erreur là où elle protège légitimement le chemin métier.
-
-# Sel dédié, distinct de tout sel de cabinet : le secret 2FA de l'exploitant ne
-# doit pas être déchiffrable avec la clé d'un cabinet, ni l'inverse.
-_PLATFORM_SALT = "platform:super-admin:v1"
-
-
-def _platform_fernet() -> Fernet:
-    return derive_tenant_fernet(_PLATFORM_SALT)
-
-
-def _platform_pending_key(admin_id: str) -> str:
-    return f"platform:{_PENDING_PREFIX}{admin_id}"
-
-
-def encrypt_platform_secret(secret: str) -> str:
-    return _platform_fernet().encrypt(secret.encode()).decode()
-
-
-def decrypt_platform_secret(ciphertext: str) -> str:
-    return _platform_fernet().decrypt(ciphertext.encode()).decode()
-
-
-def platform_provisioning_uri(secret: str, email: str) -> str:
-    """URI d'enrôlement de l'exploitant.
-
-    L'émetteur est le nom global de la plateforme et non celui d'un cabinet :
-    ce compte n'en administre aucun en particulier.
-    """
-    return pyotp.TOTP(secret).provisioning_uri(
-        name=email, issuer_name=f"{settings.TOTP_ISSUER} — Exploitation"
-    )
-
-
-async def store_platform_pending_secret(admin_id: str, secret: str) -> None:
-    redis = await get_redis()
-    await redis.setex(
-        _platform_pending_key(admin_id), _PENDING_TTL, encrypt_platform_secret(secret)
-    )
-
-
-async def pop_platform_pending_secret(admin_id: str) -> str | None:
-    redis = await get_redis()
-    key = _platform_pending_key(admin_id)
-    encrypted = await redis.get(key)
-    if not encrypted:
-        return None
-    await redis.delete(key)
-    return decrypt_platform_secret(encrypted)

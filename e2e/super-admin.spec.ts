@@ -103,11 +103,13 @@ test.describe('Console Super-Admin', () => {
     await page.locator('#next').fill(NOUVEAU_PWD)
     await page.locator('#confirm').fill(NOUVEAU_PWD)
     await page.getByRole('button', { name: /changer le mot de passe/i }).click()
-    await expect(page.getByText(/mot de passe modifié/i)).toBeVisible()
 
-    // Le verrou est levé : la navigation redevient libre.
-    await page.getByRole('link', { name: /tableau de bord/i }).click()
+    // Le verrou levé, la console doit EMMENER l'utilisateur au tableau de bord.
+    // Sans cette redirection il restait sur une page inchangée, libre d'en
+    // sortir mais sans aucun signe le lui indiquant — ce qui se lisait comme un
+    // blocage. C'est le défaut remonté en production.
     await expect(page).toHaveURL(/\/super-admin$/)
+    await expect(page.getByRole('heading', { name: /tableau de bord/i })).toBeVisible()
   })
 
   test('parcours complet : connexion → dashboard → cabinets → déconnexion', async ({ page }) => {
@@ -118,12 +120,18 @@ test.describe('Console Super-Admin', () => {
     await expect(page).toHaveURL(/\/super-admin$/)
     await expect(page.getByRole('heading', { name: /tableau de bord/i })).toBeVisible()
 
-    // Les KPI d'agrégat sont servis par le nouvel endpoint /metrics. Portée
-    // limitée à <main> : « Cabinets » existe aussi dans la barre de navigation.
+    // Les 5 cartes, alignées sur la console de l'assujetti. Portée limitée à
+    // <main> : « Cabinets » existe aussi dans la barre de navigation.
     const contenu = page.getByRole('main')
-    await expect(contenu.getByText('Cabinets', { exact: true })).toBeVisible()
-    await expect(contenu.getByText(/utilisateurs actifs/i)).toBeVisible()
-    await expect(contenu.getByText('Dossiers', { exact: true })).toBeVisible()
+    for (const carte of ['Cabinets', 'Utilisateurs', 'Actifs', 'En configuration', 'Suspendus']) {
+      await expect(contenu.getByText(carte, { exact: true })).toBeVisible()
+    }
+
+    // Aucune trace de 2FA ne doit subsister sur la console.
+    await expect(page.getByText(/double authentification/i)).toHaveCount(0)
+
+    // Le CTA de création, absent jusqu'ici du tableau de bord.
+    await expect(contenu.getByRole('link', { name: /nouveau cabinet/i })).toBeVisible()
 
     // ── 5. Navigation vers la liste des cabinets ────────────────────────
     await page.getByRole('link', { name: /^cabinets$/i }).click()
@@ -194,26 +202,45 @@ test.describe('Console Super-Admin', () => {
     await expect(page.getByText(/ne sera plus jamais affiché/i)).toBeVisible()
   })
 
-  test('activation de la 2FA : QR code, clé manuelle, refus d’un code invalide', async ({ page }) => {
+  test('la page « Mon compte » ne propose aucune 2FA', async ({ page }) => {
     await seConnecter(page)
     await page.goto('/super-admin/compte')
 
-    await expect(page.getByText('Désactivée', { exact: true })).toBeVisible()
-    await page.getByRole('button', { name: /activer la double authentification/i }).click()
-
-    // Le QR code est rendu dans un canvas, et la clé reste saisissable à la main.
-    await expect(page.locator('canvas.qr')).toBeVisible()
-    await page.getByText(/impossible de scanner/i).click()
-    await expect(page.locator('code.secret')).not.toBeEmpty()
-
-    // Un code erroné est refusé sans invalider le secret en attente.
-    await page.locator('#activate-code').fill('000000')
-    await page.getByRole('button', { name: /confirmer l'activation/i }).click()
-    await expect(page.getByText(/code invalide/i)).toBeVisible()
-    await expect(page.locator('canvas.qr')).toBeVisible()
-
-    await page.getByRole('button', { name: /annuler/i }).click()
+    await expect(page.getByRole('heading', { name: /mot de passe/i })).toBeVisible()
+    await expect(page.getByText(/double authentification/i)).toHaveCount(0)
+    await expect(page.getByRole('button', { name: /activer/i })).toHaveCount(0)
     await expect(page.locator('canvas.qr')).toHaveCount(0)
+  })
+
+  test('la 2FA n’est plus exposée par l’API', async ({ page, request }) => {
+    await seConnecter(page)
+    const jeton = await page.evaluate(() => {
+      const brut = sessionStorage.getItem('super-admin')
+      return brut ? JSON.parse(brut).accessToken : null
+    })
+
+    // Les endpoints retirés doivent renvoyer 404 — pas 401 ni 405, qui
+    // signaleraient une route encore montée.
+    for (const chemin of ['setup', 'activate', 'verify', 'verify-backup', 'disable']) {
+      const reponse = await request.post(`/api/super-admin/auth/totp/${chemin}`, {
+        headers: { Authorization: `Bearer ${jeton}` },
+        data: { code: '000000' },
+        failOnStatusCode: false,
+      })
+      expect(reponse.status(), `/auth/totp/${chemin}`).toBe(404)
+    }
+  })
+
+  test('une ligne du tableau de bord ouvre la fiche du cabinet', async ({ page }) => {
+    await seConnecter(page)
+    await page.goto('/super-admin')
+
+    const ligne = page.getByRole('main').locator('table tbody tr').first()
+    await expect(ligne).toBeVisible()
+    // Le clic porte sur la cellule de statut, donc hors du nom du cabinet :
+    // c'est bien la ligne entière qui doit être cliquable, pas le seul lien.
+    await ligne.locator('td').nth(2).click()
+    await expect(page).toHaveURL(/\/super-admin\/cabinets\/[0-9a-f-]{36}/)
   })
 
   test.afterAll(async ({ browser }) => {

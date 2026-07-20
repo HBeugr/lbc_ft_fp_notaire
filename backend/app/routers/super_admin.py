@@ -30,14 +30,10 @@ from app.core.database import get_shared_db, tenant_session
 from app.core.logging import logger
 from app.core.redis_client import (
     get_login_attempts,
-    get_totp_attempts,
     increment_login_attempts,
-    increment_totp_attempts,
     is_token_revoked,
     reset_login_attempts,
-    reset_totp_attempts,
     revoke_token,
-    TOTP_MAX_ATTEMPTS,
 )
 from app.core.tenant_context import TenantContext, tenant_scope
 from app.models.shared import SuperAdmin, Tenant, TenantAuditLog
@@ -52,10 +48,6 @@ from app.schemas.tenants import (
     SuperAdminLoginResponse,
     SuperAdminOut,
     SuperAdminPasswordChangeRequest,
-    SuperAdminTotpActivateResponse,
-    SuperAdminTotpCodeRequest,
-    SuperAdminTotpSetupResponse,
-    SuperAdminTotpVerifyResponse,
     TenantAdminResetResponse,
     TenantCreateRequest,
     TenantCreateResponse,
@@ -64,7 +56,7 @@ from app.schemas.tenants import (
     TenantStatutRequest,
     TenantUpdateRequest,
 )
-from app.services import tenant_provisioning, totp_service
+from app.services import tenant_provisioning
 from app.services.tenant_provisioning import ProvisioningError
 
 router = APIRouter(prefix="/super-admin", tags=["super-admin"])
@@ -79,18 +71,8 @@ _MAX_LOGIN_ATTEMPTS = 5
 
 # ── Authentification ─────────────────────────────────────────────────────────
 
-async def _resolve_super_admin(
-    token: str,
-    db: AsyncSession,
-    *,
-    allow_totp_pending: bool = False,
-) -> SuperAdmin:
-    """Valide un jeton de portée `platform` et retourne son porteur.
-
-    `allow_totp_pending` n'est vrai que pour les endpoints de vérification 2FA :
-    partout ailleurs, un jeton en attente de TOTP est refusé — sans quoi la
-    seconde étape serait contournable en ignorant simplement l'écran de saisie.
-    """
+async def _resolve_super_admin(token: str, db: AsyncSession) -> SuperAdmin:
+    """Valide un jeton de portée `platform` et retourne son porteur."""
     credentials_exc = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Session invalide ou expirée.",
@@ -113,11 +95,6 @@ async def _resolve_super_admin(
     if jti and await is_token_revoked(jti):
         raise credentials_exc
 
-    if not allow_totp_pending and payload.get("totp_pending"):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN, detail="Vérification 2FA requise."
-        )
-
     admin = await db.get(SuperAdmin, payload.get("sub") or "")
     if admin is None or not admin.is_active:
         raise credentials_exc
@@ -129,14 +106,6 @@ async def get_current_super_admin(
     db: AsyncSession = Depends(get_shared_db),
 ) -> SuperAdmin:
     return await _resolve_super_admin(token, db)
-
-
-async def get_super_admin_totp_pending(
-    token: str = Depends(oauth2_platform),
-    db: AsyncSession = Depends(get_shared_db),
-) -> SuperAdmin:
-    """Porteur d'un jeton encore en attente de validation 2FA."""
-    return await _resolve_super_admin(token, db, allow_totp_pending=True)
 
 
 @router.post("/auth/login", response_model=SuperAdminLoginResponse)
@@ -167,18 +136,9 @@ async def super_admin_login(
 
     await reset_login_attempts(ip, body.email)
 
-    # Étape 2 exigée uniquement si le compte a effectivement activé la 2FA.
-    # Elle est volontairement opt-in : `TOTP_REQUIRED` est désactivé sur
-    # develop, et imposer la 2FA au seul compte d'exploitation transformerait
-    # une erreur de configuration en perte d'accès à toute la plateforme.
-    pending = admin.totp_enabled
-    token = security.create_access_token(
-        admin.id, extra={"scope": _PLATFORM_SCOPE, "totp_pending": pending}
-    )
+    token = security.create_access_token(admin.id, extra={"scope": _PLATFORM_SCOPE})
     return SuperAdminLoginResponse(
-        access_token=token,
-        super_admin=SuperAdminOut.model_validate(admin),
-        totp_pending=pending,
+        access_token=token, super_admin=SuperAdminOut.model_validate(admin)
     )
 
 
@@ -226,145 +186,6 @@ async def super_admin_change_password(
     await db.refresh(stored)
     logger.info("super_admin.password_changed", super_admin_id=admin.id)
     return SuperAdminOut.model_validate(stored)
-
-
-# ── 2FA du compte d'exploitation ─────────────────────────────────────────────
-#
-# Activation à l'initiative du Super-Admin, jamais imposée par la
-# configuration : il n'existe aucun compte au-dessus de lui pour le
-# déverrouiller. C'est aussi pourquoi les codes de secours sont générés en même
-# temps que l'activation, et non proposés après coup.
-
-@router.post("/auth/totp/setup", response_model=SuperAdminTotpSetupResponse)
-async def super_admin_totp_setup(
-    admin: SuperAdmin = Depends(get_current_super_admin),
-) -> SuperAdminTotpSetupResponse:
-    if admin.totp_enabled:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="2FA déjà activée.")
-    secret = totp_service.generate_secret()
-    await totp_service.store_platform_pending_secret(admin.id, secret)
-    return SuperAdminTotpSetupResponse(
-        provisioning_uri=totp_service.platform_provisioning_uri(secret, admin.email)
-    )
-
-
-@router.post("/auth/totp/activate", response_model=SuperAdminTotpActivateResponse)
-async def super_admin_totp_activate(
-    body: SuperAdminTotpCodeRequest,
-    admin: SuperAdmin = Depends(get_current_super_admin),
-    db: AsyncSession = Depends(get_shared_db),
-) -> SuperAdminTotpActivateResponse:
-    if admin.totp_enabled:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="2FA déjà activée.")
-    secret = await totp_service.pop_platform_pending_secret(admin.id)
-    if not secret:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail="Session d'activation expirée."
-        )
-    if not totp_service.verify_code(secret, body.code):
-        # Le secret est remis en attente : une faute de frappe ne doit pas
-        # obliger à rescanner le QR code.
-        await totp_service.store_platform_pending_secret(admin.id, secret)
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Code invalide."
-        )
-
-    plain_codes, hashed_json = totp_service.generate_backup_codes()
-    stored = await db.get(SuperAdmin, admin.id)
-    stored.totp_secret = totp_service.encrypt_platform_secret(secret)
-    stored.totp_enabled = True
-    stored.totp_backup_codes = hashed_json
-    await db.commit()
-    logger.info("super_admin.totp_enabled", super_admin_id=admin.id)
-    return SuperAdminTotpActivateResponse(backup_codes=plain_codes)
-
-
-@router.post("/auth/totp/disable", response_model=SuperAdminOut)
-async def super_admin_totp_disable(
-    body: SuperAdminTotpCodeRequest,
-    admin: SuperAdmin = Depends(get_current_super_admin),
-    db: AsyncSession = Depends(get_shared_db),
-) -> SuperAdminOut:
-    """Désactive la 2FA — un code valide est exigé, pas seulement la session.
-
-    Une session ouverte sur un poste laissé sans surveillance suffirait sinon à
-    retirer la protection.
-    """
-    if not admin.totp_enabled or not admin.totp_secret:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="2FA non activée.")
-    secret = totp_service.decrypt_platform_secret(admin.totp_secret)
-    if not totp_service.verify_code(secret, body.code):
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Code invalide."
-        )
-    stored = await db.get(SuperAdmin, admin.id)
-    stored.totp_enabled = False
-    stored.totp_secret = None
-    stored.totp_backup_codes = None
-    await db.commit()
-    await db.refresh(stored)
-    logger.warning("super_admin.totp_disabled", super_admin_id=admin.id)
-    return SuperAdminOut.model_validate(stored)
-
-
-async def _issue_verified_token(admin: SuperAdmin) -> SuperAdminTotpVerifyResponse:
-    token = security.create_access_token(
-        admin.id, extra={"scope": _PLATFORM_SCOPE, "totp_pending": False}
-    )
-    return SuperAdminTotpVerifyResponse(
-        access_token=token, super_admin=SuperAdminOut.model_validate(admin)
-    )
-
-
-@router.post("/auth/totp/verify", response_model=SuperAdminTotpVerifyResponse)
-async def super_admin_totp_verify(
-    body: SuperAdminTotpCodeRequest,
-    admin: SuperAdmin = Depends(get_super_admin_totp_pending),
-) -> SuperAdminTotpVerifyResponse:
-    if not admin.totp_enabled or not admin.totp_secret:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="2FA non configurée.")
-    if await get_totp_attempts(admin.id) >= TOTP_MAX_ATTEMPTS:
-        raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail="Trop de tentatives. Réessayez plus tard.",
-        )
-    secret = totp_service.decrypt_platform_secret(admin.totp_secret)
-    if not totp_service.verify_code(secret, body.code):
-        await increment_totp_attempts(admin.id)
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Code invalide."
-        )
-    await reset_totp_attempts(admin.id)
-    return await _issue_verified_token(admin)
-
-
-@router.post("/auth/totp/verify-backup", response_model=SuperAdminTotpVerifyResponse)
-async def super_admin_totp_verify_backup(
-    body: SuperAdminTotpCodeRequest,
-    admin: SuperAdmin = Depends(get_super_admin_totp_pending),
-    db: AsyncSession = Depends(get_shared_db),
-) -> SuperAdminTotpVerifyResponse:
-    """Récupération : consomme un code de secours à usage unique."""
-    if not admin.totp_enabled:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="2FA non configurée.")
-    if await get_totp_attempts(admin.id) >= TOTP_MAX_ATTEMPTS:
-        raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail="Trop de tentatives. Réessayez plus tard.",
-        )
-    ok, remaining_json = totp_service.consume_backup_code(admin.totp_backup_codes, body.code)
-    if not ok:
-        await increment_totp_attempts(admin.id)
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Code de secours invalide."
-        )
-    await reset_totp_attempts(admin.id)
-    stored = await db.get(SuperAdmin, admin.id)
-    stored.totp_backup_codes = remaining_json
-    await db.commit()
-    await db.refresh(stored)
-    logger.warning("super_admin.totp_backup_used", super_admin_id=admin.id)
-    return await _issue_verified_token(stored)
 
 
 # ── Gestion des cabinets ─────────────────────────────────────────────────────

@@ -11,31 +11,16 @@ export interface SuperAdminOut {
   first_name: string
   last_name: string
   must_change_password: boolean
-  totp_enabled: boolean
 }
 
 export interface SuperAdminLoginResponse {
   access_token: string
   token_type: string
   super_admin: SuperAdminOut
-  /** Vrai tant que le code TOTP n'a pas été fourni : le jeton n'ouvre alors que /auth/totp/verify*. */
-  totp_pending: boolean
 }
 
-export interface SuperAdminTotpSetup {
-  provisioning_uri: string
-}
 
-/** Codes de secours — retournés une seule fois, à l'activation. */
-export interface SuperAdminTotpActivate {
-  backup_codes: string[]
-}
 
-export interface SuperAdminTotpVerify {
-  access_token: string
-  token_type: string
-  super_admin: SuperAdminOut
-}
 
 export interface TenantOut {
   id: string
@@ -145,32 +130,6 @@ export const superAdminService = {
     return data
   },
 
-  // ── 2FA du compte d'exploitation ─────────────────────────────────────
-
-  async totpSetup(): Promise<SuperAdminTotpSetup> {
-    const { data } = await superAdminApi.post<SuperAdminTotpSetup>('/auth/totp/setup')
-    return data
-  },
-
-  async totpActivate(code: string): Promise<SuperAdminTotpActivate> {
-    const { data } = await superAdminApi.post<SuperAdminTotpActivate>('/auth/totp/activate', { code })
-    return data
-  },
-
-  async totpDisable(code: string): Promise<SuperAdminOut> {
-    const { data } = await superAdminApi.post<SuperAdminOut>('/auth/totp/disable', { code })
-    return data
-  },
-
-  async totpVerify(code: string): Promise<SuperAdminTotpVerify> {
-    const { data } = await superAdminApi.post<SuperAdminTotpVerify>('/auth/totp/verify', { code })
-    return data
-  },
-
-  async totpVerifyBackup(code: string): Promise<SuperAdminTotpVerify> {
-    const { data } = await superAdminApi.post<SuperAdminTotpVerify>('/auth/totp/verify-backup', { code })
-    return data
-  },
 
   async changePassword(currentPassword: string, newPassword: string): Promise<SuperAdminOut> {
     const { data } = await superAdminApi.patch<SuperAdminOut>('/auth/password', {
