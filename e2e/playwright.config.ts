@@ -17,9 +17,10 @@ if (existsSync(envPath)) {
   }
 }
 
-// 2) Source de vérité : les identifiants dev sont dans backend/seed_admin.py (versionné).
-//    On les lit au runtime pour rendre la suite autonome, sans jamais coder de mot de passe.
-//    Lignes du type : ("admin@notaire.local", "Admin", "Système", "admin", "Admin2026!"),
+// 2) Source de vérité : les identifiants dev sont dans backend/seed_platform.py
+//    (versionné, DEMO_USERS). On les lit au runtime pour rendre la suite autonome,
+//    sans jamais coder de mot de passe.
+//    Lignes du type : ("notaire@notaire.local", "Maître", "Dupont", "notaire_principal", "Notaire2026!"),
 const ROLE_TO_PREFIX: Record<string, string> = {
   admin: 'ADMIN',
   notaire_principal: 'NOTAIRE',
@@ -28,7 +29,7 @@ const ROLE_TO_PREFIX: Record<string, string> = {
   declarant_centif: 'DC',
   autre_utilisateur: 'AUTRE',
 }
-const seedPath = resolve(__dirname, '..', 'backend', 'seed_admin.py')
+const seedPath = resolve(__dirname, '..', 'backend', 'seed_platform.py')
 if (existsSync(seedPath)) {
   const seed = readFileSync(seedPath, 'utf8')
   const re = /\(\s*"([^"]+@[^"]+)"\s*,\s*"[^"]*"\s*,\s*"[^"]*"\s*,\s*"([a-z_]+)"\s*,\s*"([^"]+)"\s*\)/g

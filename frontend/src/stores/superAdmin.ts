@@ -22,16 +22,28 @@ export const useSuperAdminStore = defineStore('super-admin', () => {
 
   const accessToken = ref<string | null>(null)
   const superAdmin = ref<SuperAdminOut | null>(null)
+  // Jeton émis mais 2FA non encore validée. Persisté comme le reste : un
+  // rechargement au milieu de l'étape 2 ne doit pas faire passer la session
+  // pour pleinement authentifiée.
+  const totpPending = ref(false)
 
-  const isAuthenticated = computed(() => !!accessToken.value && !!superAdmin.value)
+  // `isAuthenticated` exclut délibérément la session en attente de 2FA : c'est
+  // ce booléen que consulte le garde de route, la seconde étape ne serait
+  // sinon qu'un écran décoratif.
+  const isAuthenticated = computed(
+    () => !!accessToken.value && !!superAdmin.value && !totpPending.value
+  )
+  const isTotpPending = computed(() => !!accessToken.value && totpPending.value)
   const mustChangePassword = computed(() => !!superAdmin.value?.must_change_password)
+  const totpEnabled = computed(() => !!superAdmin.value?.totp_enabled)
   const fullName = computed(() =>
     superAdmin.value ? `${superAdmin.value.first_name} ${superAdmin.value.last_name}` : ''
   )
 
-  function setSession(token: string, admin: SuperAdminOut) {
+  function setSession(token: string, admin: SuperAdminOut, pending = false) {
     accessToken.value = token
     superAdmin.value = admin
+    totpPending.value = pending
   }
 
   function setSuperAdmin(admin: SuperAdminOut) {
@@ -41,6 +53,7 @@ export const useSuperAdminStore = defineStore('super-admin', () => {
   function clearSession() {
     accessToken.value = null
     superAdmin.value = null
+    totpPending.value = false
     try {
       sessionStorage.removeItem('super-admin')
     } catch {
@@ -51,8 +64,11 @@ export const useSuperAdminStore = defineStore('super-admin', () => {
   return {
     accessToken,
     superAdmin,
+    totpPending,
     isAuthenticated,
+    isTotpPending,
     mustChangePassword,
+    totpEnabled,
     fullName,
     setSession,
     setSuperAdmin,
@@ -63,4 +79,4 @@ export const useSuperAdminStore = defineStore('super-admin', () => {
   // `sessionStorage` et non `localStorage` : la console d'exploitation est un
   // outil d'administration, la session doit expirer à la fermeture de l'onglet
   // et le jeton reste ainsi hors de portée des autres onglets (surface XSS réduite).
-}, { persist: { key: 'super-admin', storage: sessionStorage, paths: ['accessToken', 'superAdmin'] } })
+}, { persist: { key: 'super-admin', storage: sessionStorage, paths: ['accessToken', 'superAdmin', 'totpPending'] } })

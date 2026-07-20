@@ -121,6 +121,10 @@ class SuperAdmin(SharedBase):
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     totp_secret: Mapped[str | None] = mapped_column(String(255), nullable=True)
     totp_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # Codes de secours hachés (JSON). Le Super-Admin n'a aucun recours externe :
+    # personne au-dessus de lui ne peut le déverrouiller. Ce sont ses seules clés
+    # de rechange si son téléphone est perdu.
+    totp_backup_codes: Mapped[str | None] = mapped_column(Text, nullable=True)
     must_change_password: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(

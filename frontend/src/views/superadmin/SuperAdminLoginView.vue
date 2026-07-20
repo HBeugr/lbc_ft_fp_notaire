@@ -112,13 +112,19 @@ async function handleSubmit() {
   loading.value = true
   try {
     const data = await superAdminService.login(form.email, form.password)
-    store.setSession(data.access_token, data.super_admin)
-    router.push({ name: 'super-admin-tenants' })
+    store.setSession(data.access_token, data.super_admin, data.totp_pending)
+    // Le garde de route se charge d'orienter ensuite : étape 2FA si le jeton
+    // est en attente, page de compte si le mot de passe initial est en place.
+    router.push({ name: data.totp_pending ? 'super-admin-totp' : 'super-admin-dashboard' })
   } catch (err: any) {
     const status = err?.response?.status
     const detail = err?.response?.data?.detail
     if (status === 401) {
       globalError.value = typeof detail === 'string' ? detail : 'Email ou mot de passe incorrect.'
+    } else if (status === 403) {
+      // Compte désactivé : sans ce cas, le message générique parlait à tort
+      // d'un problème de connexion réseau.
+      globalError.value = typeof detail === 'string' ? detail : 'Ce compte est désactivé.'
     } else if (status === 429) {
       globalError.value = typeof detail === 'string' ? detail : 'Trop de tentatives. Réessayez plus tard.'
     } else {

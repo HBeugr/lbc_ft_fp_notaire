@@ -10,6 +10,15 @@
       </div>
 
       <nav class="sidebar-nav">
+        <RouterLink :to="{ name: 'super-admin-dashboard' }" class="nav-item" active-class="nav-item--active">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="3" y="3" width="7" height="9"/>
+            <rect x="14" y="3" width="7" height="5"/>
+            <rect x="14" y="12" width="7" height="9"/>
+            <rect x="3" y="16" width="7" height="5"/>
+          </svg>
+          <span class="nav-label">Tableau de bord</span>
+        </RouterLink>
         <RouterLink :to="{ name: 'super-admin-tenants' }" class="nav-item" active-class="nav-item--active">
           <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
             <path d="M3 21h18M5 21V7l7-4 7 4v14M9 21v-6h6v6"/>
@@ -24,6 +33,14 @@
             <line x1="16" y1="17" x2="8" y2="17"/>
           </svg>
           <span class="nav-label">Journal d'exploitation</span>
+        </RouterLink>
+        <RouterLink :to="{ name: 'super-admin-account' }" class="nav-item" active-class="nav-item--active">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/>
+            <circle cx="12" cy="7" r="4"/>
+          </svg>
+          <span class="nav-label">Mon compte</span>
+          <span v-if="store.mustChangePassword" class="nav-dot" aria-hidden="true" />
         </RouterLink>
       </nav>
 
@@ -46,14 +63,16 @@
     </aside>
 
     <main class="main-content">
-      <!-- Rappel tant que le mot de passe initial n'a pas été changé -->
-      <div v-if="store.mustChangePassword" class="banner-warning">
+      <!-- Invitation à activer la 2FA. Rappel, pas blocage : le Super-Admin est
+           le seul compte sans recours externe, l'imposer risquerait de fermer
+           la console à son unique détenteur. -->
+      <div v-if="!store.mustChangePassword && !store.totpEnabled" class="banner-info">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/>
-          <line x1="12" y1="9" x2="12" y2="13"/>
-          <line x1="12" y1="17" x2="12.01" y2="17"/>
+          <rect x="3" y="11" width="18" height="11" rx="2"/>
+          <path d="M7 11V7a5 5 0 0110 0v4"/>
         </svg>
-        Votre mot de passe est encore le mot de passe initial. Changez-le dès que possible.
+        <span>La double authentification n'est pas activée sur ce compte.</span>
+        <RouterLink :to="{ name: 'super-admin-account' }" class="banner-action">Activer</RouterLink>
       </div>
       <RouterView />
     </main>
@@ -64,6 +83,7 @@
 import { computed } from 'vue'
 import { RouterLink, RouterView, useRouter } from 'vue-router'
 import { useSuperAdminStore } from '@/stores/superAdmin'
+import { superAdminService } from '@/services/superAdmin'
 
 const router = useRouter()
 const store = useSuperAdminStore()
@@ -74,7 +94,16 @@ const initials = computed(() => {
   return `${a.first_name[0] ?? ''}${a.last_name[0] ?? ''}`.toUpperCase()
 })
 
-function handleLogout() {
+async function handleLogout() {
+  // La révocation serveur d'abord : c'est elle qui invalide réellement le
+  // jeton. Son échec (réseau coupé, serveur down) ne doit pas empêcher la
+  // déconnexion locale — mieux vaut une session fermée côté poste qu'un
+  // utilisateur bloqué connecté parce que le serveur ne répond pas.
+  try {
+    await superAdminService.logout()
+  } catch {
+    // Silencieux par conception, cf. ci-dessus.
+  }
   store.clearSession()
   router.push({ name: 'super-admin-login' })
 }
@@ -164,7 +193,16 @@ function handleLogout() {
 .logout-btn:hover { color: rgba(255, 255, 255, 0.75); background: rgba(255, 255, 255, 0.08); }
 .logout-btn svg { width: 15px; height: 15px; }
 
-.banner-warning {
+/* Pastille sur « Mon compte » tant que le mot de passe initial est en place. */
+.nav-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--color-risk-medium);
+  flex-shrink: 0;
+}
+
+.banner-info {
   display: flex;
   align-items: center;
   gap: 0.5rem;
@@ -176,5 +214,12 @@ function handleLogout() {
   font-size: 0.8125rem;
   margin-bottom: 1.25rem;
 }
-.banner-warning svg { width: 16px; height: 16px; flex-shrink: 0; }
+.banner-info svg { width: 16px; height: 16px; flex-shrink: 0; }
+.banner-action {
+  margin-left: auto;
+  font-weight: 600;
+  color: inherit;
+  text-decoration: underline;
+  white-space: nowrap;
+}
 </style>

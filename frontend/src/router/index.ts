@@ -49,12 +49,25 @@ const router = createRouter({
       meta: { public: true, superAdminPublic: true },
     },
     {
+      // Étape 2 du login. Route publique au sens du garde cabinet, mais
+      // atteignable uniquement avec un jeton en attente de 2FA.
+      path: '/super-admin/2fa',
+      name: 'super-admin-totp',
+      component: () => import('@/views/superadmin/SuperAdminTotpView.vue'),
+      meta: { public: true, superAdminPublic: true, superAdminTotp: true },
+    },
+    {
       path: '/super-admin',
       component: () => import('@/views/superadmin/SuperAdminLayout.vue'),
       meta: { superAdmin: true },
       children: [
         {
           path: '',
+          name: 'super-admin-dashboard',
+          component: () => import('@/views/superadmin/SuperAdminDashboardView.vue'),
+        },
+        {
+          path: 'cabinets',
           name: 'super-admin-tenants',
           component: () => import('@/views/superadmin/TenantsListView.vue'),
         },
@@ -72,6 +85,14 @@ const router = createRouter({
           path: 'journal',
           name: 'super-admin-audit',
           component: () => import('@/views/superadmin/ExploitationAuditView.vue'),
+        },
+        {
+          path: 'compte',
+          name: 'super-admin-account',
+          component: () => import('@/views/superadmin/SuperAdminAccountView.vue'),
+          // Seule route de la console accessible avec un mot de passe encore
+          // à changer : c'est là qu'on le change.
+          meta: { allowMustChange: true },
         },
       ],
     },
@@ -216,11 +237,34 @@ router.beforeEach(async (to) => {
   // ── Console d'exploitation : session totalement indépendante du cabinet ──
   if (to.meta.superAdmin || to.meta.superAdminPublic) {
     const sa = useSuperAdminStore()
+
+    // Étape 2FA : n'a de sens qu'avec un jeton en attente. Déjà authentifié →
+    // la console ; pas de jeton du tout → retour au formulaire.
+    if (to.meta.superAdminTotp) {
+      if (sa.isAuthenticated) return { name: 'super-admin-dashboard' }
+      return sa.isTotpPending ? true : { name: 'super-admin-login' }
+    }
+
     if (to.meta.superAdminPublic) {
-      return sa.isAuthenticated ? { name: 'super-admin-tenants' } : true
+      // Une session bloquée à l'étape 2 ne doit pas repartir du formulaire de
+      // mot de passe : on la renvoie là où elle s'est arrêtée.
+      if (sa.isTotpPending) return { name: 'super-admin-totp' }
+      return sa.isAuthenticated ? { name: 'super-admin-dashboard' } : true
+    }
+
+    if (sa.isTotpPending) {
+      return { name: 'super-admin-totp' }
     }
     if (!sa.isAuthenticated) {
       return { name: 'super-admin-login' }
+    }
+
+    // Mot de passe initial encore en place : la console est verrouillée sur la
+    // page de compte tant qu'il n'est pas changé. Sans ce garde, la bannière
+    // d'avertissement restait purement décorative et le mot de passe de seed
+    // pouvait vivre indéfiniment.
+    if (sa.mustChangePassword && !to.meta.allowMustChange) {
+      return { name: 'super-admin-account' }
     }
     return true
   }

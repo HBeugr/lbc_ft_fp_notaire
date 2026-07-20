@@ -25,9 +25,20 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import branding, security
+from app.core.config import settings
 from app.core.database import get_shared_db, tenant_session
 from app.core.logging import logger
-from app.core.redis_client import get_login_attempts, increment_login_attempts, reset_login_attempts
+from app.core.redis_client import (
+    get_login_attempts,
+    get_totp_attempts,
+    increment_login_attempts,
+    increment_totp_attempts,
+    is_token_revoked,
+    reset_login_attempts,
+    reset_totp_attempts,
+    revoke_token,
+    TOTP_MAX_ATTEMPTS,
+)
 from app.core.tenant_context import TenantContext, tenant_scope
 from app.models.shared import SuperAdmin, Tenant, TenantAuditLog
 from app.models.dossier import Dossier
@@ -36,17 +47,24 @@ from app.schemas.tenants import (
     LogoContraintesOut,
     LogoOut,
     MigrationResultOut,
+    PlatformMetricsOut,
     SuperAdminLoginRequest,
     SuperAdminLoginResponse,
     SuperAdminOut,
     SuperAdminPasswordChangeRequest,
+    SuperAdminTotpActivateResponse,
+    SuperAdminTotpCodeRequest,
+    SuperAdminTotpSetupResponse,
+    SuperAdminTotpVerifyResponse,
+    TenantAdminResetResponse,
     TenantCreateRequest,
     TenantCreateResponse,
     TenantMetricsOut,
     TenantOut,
     TenantStatutRequest,
+    TenantUpdateRequest,
 )
-from app.services import tenant_provisioning
+from app.services import tenant_provisioning, totp_service
 from app.services.tenant_provisioning import ProvisioningError
 
 router = APIRouter(prefix="/super-admin", tags=["super-admin"])
@@ -61,10 +79,18 @@ _MAX_LOGIN_ATTEMPTS = 5
 
 # ── Authentification ─────────────────────────────────────────────────────────
 
-async def get_current_super_admin(
-    token: str = Depends(oauth2_platform),
-    db: AsyncSession = Depends(get_shared_db),
+async def _resolve_super_admin(
+    token: str,
+    db: AsyncSession,
+    *,
+    allow_totp_pending: bool = False,
 ) -> SuperAdmin:
+    """Valide un jeton de portée `platform` et retourne son porteur.
+
+    `allow_totp_pending` n'est vrai que pour les endpoints de vérification 2FA :
+    partout ailleurs, un jeton en attente de TOTP est refusé — sans quoi la
+    seconde étape serait contournable en ignorant simplement l'écran de saisie.
+    """
     credentials_exc = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Session invalide ou expirée.",
@@ -80,10 +106,37 @@ async def get_current_super_admin(
     if payload.get("type") != "access" or payload.get("scope") != _PLATFORM_SCOPE:
         raise credentials_exc
 
+    # Déconnexion explicite : le jeton est dans la liste de révocation jusqu'à
+    # sa date d'expiration. Sans ce contrôle, « se déconnecter » ne serait
+    # qu'un effacement côté navigateur.
+    jti = payload.get("jti")
+    if jti and await is_token_revoked(jti):
+        raise credentials_exc
+
+    if not allow_totp_pending and payload.get("totp_pending"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="Vérification 2FA requise."
+        )
+
     admin = await db.get(SuperAdmin, payload.get("sub") or "")
     if admin is None or not admin.is_active:
         raise credentials_exc
     return admin
+
+
+async def get_current_super_admin(
+    token: str = Depends(oauth2_platform),
+    db: AsyncSession = Depends(get_shared_db),
+) -> SuperAdmin:
+    return await _resolve_super_admin(token, db)
+
+
+async def get_super_admin_totp_pending(
+    token: str = Depends(oauth2_platform),
+    db: AsyncSession = Depends(get_shared_db),
+) -> SuperAdmin:
+    """Porteur d'un jeton encore en attente de validation 2FA."""
+    return await _resolve_super_admin(token, db, allow_totp_pending=True)
 
 
 @router.post("/auth/login", response_model=SuperAdminLoginResponse)
@@ -113,10 +166,42 @@ async def super_admin_login(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Compte désactivé.")
 
     await reset_login_attempts(ip, body.email)
-    token = security.create_access_token(admin.id, extra={"scope": _PLATFORM_SCOPE})
-    return SuperAdminLoginResponse(
-        access_token=token, super_admin=SuperAdminOut.model_validate(admin)
+
+    # Étape 2 exigée uniquement si le compte a effectivement activé la 2FA.
+    # Elle est volontairement opt-in : `TOTP_REQUIRED` est désactivé sur
+    # develop, et imposer la 2FA au seul compte d'exploitation transformerait
+    # une erreur de configuration en perte d'accès à toute la plateforme.
+    pending = admin.totp_enabled
+    token = security.create_access_token(
+        admin.id, extra={"scope": _PLATFORM_SCOPE, "totp_pending": pending}
     )
+    return SuperAdminLoginResponse(
+        access_token=token,
+        super_admin=SuperAdminOut.model_validate(admin),
+        totp_pending=pending,
+    )
+
+
+# `response_model=None` est indispensable ici, contrairement au logout cabinet :
+# ce module active `from __future__ import annotations`, donc `-> None` arrive à
+# FastAPI sous forme de chaîne, qu'il résout en la classe `NoneType`. Cette
+# classe est « truthy », FastAPI en déduit un corps de réponse et refuse le 204.
+@router.post("/auth/logout", status_code=status.HTTP_204_NO_CONTENT, response_model=None)
+async def super_admin_logout(token: str = Depends(oauth2_platform)) -> None:
+    """Révoque le jeton courant côté serveur.
+
+    Sans révocation, un jeton exfiltré resterait valide jusqu'à son expiration
+    quoi que fasse l'utilisateur : la déconnexion ne serait qu'un `clear()` de
+    session côté navigateur. Le TTL de révocation est calé sur la durée de vie
+    du jeton — au-delà, l'entrée n'a plus d'utilité.
+
+    Aucune authentification n'est exigée au-delà du jeton lui-même : présenter
+    un jeton déjà révoqué ou expiré doit rester un succès silencieux, sinon la
+    déconnexion échouerait précisément dans le cas où elle n'a plus d'objet.
+    """
+    jti = security.token_jti(token)
+    if jti:
+        await revoke_token(jti, settings.JWT_ACCESS_TOKEN_EXPIRE_MINUTES * 60)
 
 
 @router.get("/auth/me", response_model=SuperAdminOut)
@@ -139,7 +224,147 @@ async def super_admin_change_password(
     stored.must_change_password = False
     await db.commit()
     await db.refresh(stored)
+    logger.info("super_admin.password_changed", super_admin_id=admin.id)
     return SuperAdminOut.model_validate(stored)
+
+
+# ── 2FA du compte d'exploitation ─────────────────────────────────────────────
+#
+# Activation à l'initiative du Super-Admin, jamais imposée par la
+# configuration : il n'existe aucun compte au-dessus de lui pour le
+# déverrouiller. C'est aussi pourquoi les codes de secours sont générés en même
+# temps que l'activation, et non proposés après coup.
+
+@router.post("/auth/totp/setup", response_model=SuperAdminTotpSetupResponse)
+async def super_admin_totp_setup(
+    admin: SuperAdmin = Depends(get_current_super_admin),
+) -> SuperAdminTotpSetupResponse:
+    if admin.totp_enabled:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="2FA déjà activée.")
+    secret = totp_service.generate_secret()
+    await totp_service.store_platform_pending_secret(admin.id, secret)
+    return SuperAdminTotpSetupResponse(
+        provisioning_uri=totp_service.platform_provisioning_uri(secret, admin.email)
+    )
+
+
+@router.post("/auth/totp/activate", response_model=SuperAdminTotpActivateResponse)
+async def super_admin_totp_activate(
+    body: SuperAdminTotpCodeRequest,
+    admin: SuperAdmin = Depends(get_current_super_admin),
+    db: AsyncSession = Depends(get_shared_db),
+) -> SuperAdminTotpActivateResponse:
+    if admin.totp_enabled:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="2FA déjà activée.")
+    secret = await totp_service.pop_platform_pending_secret(admin.id)
+    if not secret:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Session d'activation expirée."
+        )
+    if not totp_service.verify_code(secret, body.code):
+        # Le secret est remis en attente : une faute de frappe ne doit pas
+        # obliger à rescanner le QR code.
+        await totp_service.store_platform_pending_secret(admin.id, secret)
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Code invalide."
+        )
+
+    plain_codes, hashed_json = totp_service.generate_backup_codes()
+    stored = await db.get(SuperAdmin, admin.id)
+    stored.totp_secret = totp_service.encrypt_platform_secret(secret)
+    stored.totp_enabled = True
+    stored.totp_backup_codes = hashed_json
+    await db.commit()
+    logger.info("super_admin.totp_enabled", super_admin_id=admin.id)
+    return SuperAdminTotpActivateResponse(backup_codes=plain_codes)
+
+
+@router.post("/auth/totp/disable", response_model=SuperAdminOut)
+async def super_admin_totp_disable(
+    body: SuperAdminTotpCodeRequest,
+    admin: SuperAdmin = Depends(get_current_super_admin),
+    db: AsyncSession = Depends(get_shared_db),
+) -> SuperAdminOut:
+    """Désactive la 2FA — un code valide est exigé, pas seulement la session.
+
+    Une session ouverte sur un poste laissé sans surveillance suffirait sinon à
+    retirer la protection.
+    """
+    if not admin.totp_enabled or not admin.totp_secret:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="2FA non activée.")
+    secret = totp_service.decrypt_platform_secret(admin.totp_secret)
+    if not totp_service.verify_code(secret, body.code):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Code invalide."
+        )
+    stored = await db.get(SuperAdmin, admin.id)
+    stored.totp_enabled = False
+    stored.totp_secret = None
+    stored.totp_backup_codes = None
+    await db.commit()
+    await db.refresh(stored)
+    logger.warning("super_admin.totp_disabled", super_admin_id=admin.id)
+    return SuperAdminOut.model_validate(stored)
+
+
+async def _issue_verified_token(admin: SuperAdmin) -> SuperAdminTotpVerifyResponse:
+    token = security.create_access_token(
+        admin.id, extra={"scope": _PLATFORM_SCOPE, "totp_pending": False}
+    )
+    return SuperAdminTotpVerifyResponse(
+        access_token=token, super_admin=SuperAdminOut.model_validate(admin)
+    )
+
+
+@router.post("/auth/totp/verify", response_model=SuperAdminTotpVerifyResponse)
+async def super_admin_totp_verify(
+    body: SuperAdminTotpCodeRequest,
+    admin: SuperAdmin = Depends(get_super_admin_totp_pending),
+) -> SuperAdminTotpVerifyResponse:
+    if not admin.totp_enabled or not admin.totp_secret:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="2FA non configurée.")
+    if await get_totp_attempts(admin.id) >= TOTP_MAX_ATTEMPTS:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Trop de tentatives. Réessayez plus tard.",
+        )
+    secret = totp_service.decrypt_platform_secret(admin.totp_secret)
+    if not totp_service.verify_code(secret, body.code):
+        await increment_totp_attempts(admin.id)
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Code invalide."
+        )
+    await reset_totp_attempts(admin.id)
+    return await _issue_verified_token(admin)
+
+
+@router.post("/auth/totp/verify-backup", response_model=SuperAdminTotpVerifyResponse)
+async def super_admin_totp_verify_backup(
+    body: SuperAdminTotpCodeRequest,
+    admin: SuperAdmin = Depends(get_super_admin_totp_pending),
+    db: AsyncSession = Depends(get_shared_db),
+) -> SuperAdminTotpVerifyResponse:
+    """Récupération : consomme un code de secours à usage unique."""
+    if not admin.totp_enabled:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="2FA non configurée.")
+    if await get_totp_attempts(admin.id) >= TOTP_MAX_ATTEMPTS:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Trop de tentatives. Réessayez plus tard.",
+        )
+    ok, remaining_json = totp_service.consume_backup_code(admin.totp_backup_codes, body.code)
+    if not ok:
+        await increment_totp_attempts(admin.id)
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Code de secours invalide."
+        )
+    await reset_totp_attempts(admin.id)
+    stored = await db.get(SuperAdmin, admin.id)
+    stored.totp_backup_codes = remaining_json
+    await db.commit()
+    await db.refresh(stored)
+    logger.warning("super_admin.totp_backup_used", super_admin_id=admin.id)
+    return await _issue_verified_token(stored)
 
 
 # ── Gestion des cabinets ─────────────────────────────────────────────────────
@@ -195,6 +420,61 @@ async def create_tenant(
         admin_email=result.admin_email,
         admin_temp_password=result.admin_temp_password,
     )
+
+
+@router.patch("/tenants/{tenant_id}", response_model=TenantOut)
+async def update_tenant(
+    tenant_id: str,
+    body: TenantUpdateRequest,
+    admin: SuperAdmin = Depends(get_current_super_admin),
+) -> TenantOut:
+    """Corrige les attributs administratifs d'un cabinet après sa création.
+
+    Sans cet endpoint, une faute de frappe sur le nom ou une erreur de quota
+    était définitive : seul le logo pouvait être repris.
+    """
+    # `exclude_unset` et non `exclude_none` : à défaut, un champ volontairement
+    # remis à vide (téléphone, adresse, agrément) serait silencieusement ignoré.
+    changes = body.model_dump(exclude_unset=True)
+    try:
+        tenant = await tenant_provisioning.update_tenant(
+            tenant_id, changes, super_admin_id=admin.id
+        )
+    except ProvisioningError as exc:
+        message = str(exc)
+        code = (
+            status.HTTP_404_NOT_FOUND
+            if "introuvable" in message
+            else status.HTTP_400_BAD_REQUEST
+        )
+        raise HTTPException(status_code=code, detail=message)
+    return TenantOut.model_validate(tenant)
+
+
+@router.post("/tenants/{tenant_id}/admin-password-reset", response_model=TenantAdminResetResponse)
+async def reset_tenant_admin_password(
+    tenant_id: str,
+    admin: SuperAdmin = Depends(get_current_super_admin),
+) -> TenantAdminResetResponse:
+    """Rétablit l'accès d'un cabinet dont le mot de passe admin est perdu.
+
+    Borné au compte de rôle `admin` du cabinet : l'exploitant rouvre la porte
+    d'entrée, il ne prend pas la main sur les comptes métier. La 2FA de ce
+    compte est également réinitialisée — cf. `reset_tenant_admin_password`.
+    """
+    try:
+        email, temp_password = await tenant_provisioning.reset_tenant_admin_password(
+            tenant_id, super_admin_id=admin.id
+        )
+    except ProvisioningError as exc:
+        message = str(exc)
+        code = (
+            status.HTTP_404_NOT_FOUND
+            if "introuvable" in message
+            else status.HTTP_400_BAD_REQUEST
+        )
+        raise HTTPException(status_code=code, detail=message)
+    return TenantAdminResetResponse(admin_email=email, admin_temp_password=temp_password)
 
 
 async def _set_statut(tenant_id: str, statut: str, motif: str | None, admin_id: str) -> TenantOut:
@@ -276,6 +556,76 @@ async def tenant_metrics(
         utilisateurs_total=total,
         quota_utilisateurs=tenant.max_users,
         dossiers_total=dossiers,
+    )
+
+
+@router.get("/metrics", response_model=PlatformMetricsOut)
+async def platform_metrics(
+    _: SuperAdmin = Depends(get_current_super_admin),
+    db: AsyncSession = Depends(get_shared_db),
+) -> PlatformMetricsOut:
+    """Agrégat plateforme — page d'accueil de la console.
+
+    Le comptage parcourt un schéma après l'autre : il n'existe pas de vue
+    globale en schéma-par-tenant, et c'est précisément l'isolation recherchée.
+    Le coût est linéaire en nombre de cabinets ; à l'échelle d'une chambre
+    notariale nationale, cela reste quelques dizaines de `COUNT(*)`. Si le parc
+    grandissait, le calcul devrait passer en tâche planifiée plutôt qu'être
+    servi à chaud.
+
+    Un cabinet dont le comptage échoue (migration en cours, schéma indisponible)
+    est listé dans `cabinets_injoignables` au lieu de faire échouer la page :
+    la console doit rester utilisable pour réparer précisément ce cabinet-là.
+    """
+    tenants = (
+        await db.execute(select(Tenant).order_by(Tenant.created_at.desc()))
+    ).scalars().all()
+
+    par_statut: dict[str, int] = {}
+    for tenant in tenants:
+        par_statut[tenant.statut] = par_statut.get(tenant.statut, 0) + 1
+
+    utilisateurs_total = 0
+    utilisateurs_actifs = 0
+    dossiers_total = 0
+    injoignables: list[str] = []
+
+    for tenant in tenants:
+        # Un cabinet en `configuration` peut ne pas avoir de schéma exploitable ;
+        # un cabinet archivé n'a plus d'activité à comptabiliser.
+        if tenant.statut == "archive":
+            continue
+        context = TenantContext(
+            id=tenant.id, schema=tenant.schema_name, slug=tenant.slug, nom=tenant.nom_cabinet,
+            statut=tenant.statut, key_salt=tenant.key_salt, totp_required=tenant.totp_required,
+            storage_bucket=tenant.storage_bucket,
+        )
+        try:
+            with tenant_scope(context):
+                async with tenant_session(context) as tdb:
+                    utilisateurs_total += (
+                        await tdb.execute(select(func.count()).select_from(User))
+                    ).scalar_one()
+                    utilisateurs_actifs += (
+                        await tdb.execute(
+                            select(func.count()).select_from(User).where(User.is_active.is_(True))
+                        )
+                    ).scalar_one()
+                    dossiers_total += (
+                        await tdb.execute(select(func.count()).select_from(Dossier))
+                    ).scalar_one()
+        except Exception:
+            logger.warning("platform_metrics.tenant_unreachable", tenant_id=tenant.id)
+            injoignables.append(tenant.nom_cabinet)
+
+    return PlatformMetricsOut(
+        cabinets_total=len(tenants),
+        cabinets_par_statut=par_statut,
+        utilisateurs_total=utilisateurs_total,
+        utilisateurs_actifs=utilisateurs_actifs,
+        dossiers_total=dossiers_total,
+        cabinets_injoignables=injoignables,
+        cabinets_recents=[TenantOut.model_validate(t) for t in tenants[:5]],
     )
 
 

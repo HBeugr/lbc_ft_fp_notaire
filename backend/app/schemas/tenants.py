@@ -21,11 +21,35 @@ class SuperAdminOut(BaseModel):
     first_name: str
     last_name: str
     must_change_password: bool = False
+    totp_enabled: bool = False
 
     model_config = {"from_attributes": True}
 
 
 class SuperAdminLoginResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    super_admin: SuperAdminOut
+    # Vrai tant que le code TOTP n'a pas été fourni. Le jeton émis est alors
+    # « en attente » : il n'ouvre que les endpoints de vérification 2FA.
+    totp_pending: bool = False
+
+
+class SuperAdminTotpSetupResponse(BaseModel):
+    provisioning_uri: str
+
+
+class SuperAdminTotpCodeRequest(BaseModel):
+    code: str = Field(..., min_length=6, max_length=10)
+
+
+class SuperAdminTotpActivateResponse(BaseModel):
+    """Codes de secours — affichés une seule fois, jamais relisibles ensuite."""
+
+    backup_codes: list[str]
+
+
+class SuperAdminTotpVerifyResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
     super_admin: SuperAdminOut
@@ -96,6 +120,39 @@ class TenantCreateResponse(BaseModel):
     admin_temp_password: str
 
 
+class TenantUpdateRequest(BaseModel):
+    """Modification d'un cabinet existant.
+
+    `slug`, `schema_name` et `key_salt` sont volontairement absents : ils sont
+    figés à la création. Le slug nomme le schéma PostgreSQL et le sel dérive la
+    clé de chiffrement — les changer casserait le routage et rendrait les
+    données déjà chiffrées illisibles. Le statut a ses propres endpoints, qui
+    journalisent un motif.
+
+    Tous les champs sont optionnels : seuls ceux transmis sont modifiés.
+    """
+
+    nom_cabinet: str | None = Field(default=None, min_length=2, max_length=255)
+    contact_email: EmailStr | None = None
+    contact_telephone: str | None = Field(default=None, max_length=32)
+    adresse: str | None = None
+    numero_agrement: str | None = Field(default=None, max_length=64)
+    pays: str | None = Field(default=None, min_length=2, max_length=2)
+    totp_required: bool | None = None
+    max_users: int | None = Field(default=None, ge=0)
+
+
+class TenantAdminResetResponse(BaseModel):
+    """Réinitialisation du mot de passe de l'administrateur d'un cabinet.
+
+    Même contrat qu'à la création : le mot de passe n'est retourné qu'ici et
+    n'est stocké nulle part en clair.
+    """
+
+    admin_email: str
+    admin_temp_password: str
+
+
 class TenantStatutRequest(BaseModel):
     motif: str | None = Field(default=None, max_length=1000)
 
@@ -108,6 +165,25 @@ class TenantMetricsOut(BaseModel):
     utilisateurs_total: int
     quota_utilisateurs: int
     dossiers_total: int
+
+
+class PlatformMetricsOut(BaseModel):
+    """Agrégat plateforme — page d'accueil de la console.
+
+    Comme pour les métriques par cabinet, seuls des `COUNT(*)` sont exécutés :
+    l'exploitant voit des volumes, jamais un contenu de dossier.
+    """
+
+    cabinets_total: int
+    cabinets_par_statut: dict[str, int]
+    utilisateurs_total: int
+    utilisateurs_actifs: int
+    dossiers_total: int
+    # Cabinets dont le comptage a échoué (schéma en cours de migration, par ex.).
+    # Exposé plutôt que masqué : un total silencieusement faux est pire qu'un
+    # total annoncé comme partiel.
+    cabinets_injoignables: list[str]
+    cabinets_recents: list[TenantOut]
 
 
 class MigrationResultOut(BaseModel):

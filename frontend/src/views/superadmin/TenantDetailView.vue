@@ -62,8 +62,13 @@
 
       <!-- Informations -->
       <div class="card">
-        <h2 class="card-title">Informations du cabinet</h2>
-        <div class="info-grid">
+        <div class="card-head">
+          <h2 class="card-title">Informations du cabinet</h2>
+          <button v-if="!editing" class="btn-ghost btn-ghost--sm" @click="startEdit">Modifier</button>
+        </div>
+
+        <!-- Lecture -->
+        <div v-if="!editing" class="info-grid">
           <div class="info-row">
             <span class="info-label">Nom</span>
             <span class="info-val">{{ tenant.nom_cabinet }}</span>
@@ -93,11 +98,136 @@
             <span class="info-val">{{ tenant.adresse || '—' }}</span>
           </div>
           <div class="info-row">
+            <span class="info-label">Quota de sièges</span>
+            <span class="info-val">{{ tenant.max_users === 0 ? 'Illimité' : tenant.max_users }}</span>
+          </div>
+          <div class="info-row">
             <span class="info-label">2FA obligatoire</span>
             <span class="info-val">
               <span v-if="tenant.totp_required" class="badge-ok">Oui</span>
               <span v-else class="badge-off">Non</span>
             </span>
+          </div>
+        </div>
+
+        <!-- Édition. `slug` reste en lecture seule : il nomme le schéma
+             PostgreSQL du cabinet, le changer casserait le routage. -->
+        <form v-else class="edit-form" @submit.prevent="submitEdit">
+          <div class="edit-grid">
+            <div class="edit-field">
+              <label for="e-nom" class="edit-label">Nom du cabinet</label>
+              <input id="e-nom" v-model="form.nom_cabinet" type="text" class="edit-input" :disabled="saving" />
+            </div>
+            <div class="edit-field">
+              <label for="e-slug" class="edit-label">Identifiant</label>
+              <input id="e-slug" :value="tenant.slug" type="text" class="edit-input edit-input--locked" disabled />
+              <p class="edit-hint">Figé : il nomme le schéma de base de données du cabinet.</p>
+            </div>
+            <div class="edit-field">
+              <label for="e-pays" class="edit-label">Pays</label>
+              <input id="e-pays" v-model="form.pays" type="text" maxlength="2" class="edit-input" :disabled="saving" />
+            </div>
+            <div class="edit-field">
+              <label for="e-agrement" class="edit-label">N° d'agrément</label>
+              <input id="e-agrement" v-model="form.numero_agrement" type="text" class="edit-input" :disabled="saving" />
+            </div>
+            <div class="edit-field">
+              <label for="e-email" class="edit-label">Email de contact</label>
+              <input id="e-email" v-model="form.contact_email" type="email" class="edit-input" :disabled="saving" />
+            </div>
+            <div class="edit-field">
+              <label for="e-tel" class="edit-label">Téléphone</label>
+              <input id="e-tel" v-model="form.contact_telephone" type="text" class="edit-input" :disabled="saving" />
+            </div>
+            <div class="edit-field edit-field--wide">
+              <label for="e-adresse" class="edit-label">Adresse</label>
+              <input id="e-adresse" v-model="form.adresse" type="text" class="edit-input" :disabled="saving" />
+            </div>
+            <div class="edit-field">
+              <label for="e-quota" class="edit-label">Quota de sièges</label>
+              <input id="e-quota" v-model.number="form.max_users" type="number" min="0" class="edit-input" :disabled="saving" />
+              <p class="edit-hint">0 = illimité.</p>
+            </div>
+            <div class="edit-field">
+              <span class="edit-label">2FA obligatoire</span>
+              <label class="edit-check">
+                <input v-model="form.totp_required" type="checkbox" :disabled="saving" />
+                <span>Imposer la double authentification aux rôles sensibles</span>
+              </label>
+            </div>
+          </div>
+
+          <p v-if="editError" class="alert-error alert-error--inline">{{ editError }}</p>
+
+          <div class="edit-actions">
+            <button type="button" class="btn-ghost" :disabled="saving" @click="cancelEdit">Annuler</button>
+            <button type="submit" class="btn-primary" :disabled="saving">
+              <span v-if="saving" class="spinner" />
+              {{ saving ? 'Enregistrement…' : 'Enregistrer' }}
+            </button>
+          </div>
+        </form>
+      </div>
+
+      <!-- Accès administrateur du cabinet -->
+      <div class="card">
+        <h2 class="card-title">Accès administrateur</h2>
+        <p class="card-desc">
+          Réémet un mot de passe temporaire pour le compte administrateur de ce cabinet. Seul recours
+          quand le mot de passe remis à la création a été perdu — sans lui, personne à l'intérieur du
+          cabinet ne peut ouvrir de session pour réparer.
+        </p>
+        <p class="card-desc card-desc--warn">
+          La double authentification de ce compte est également remise à zéro : rien ne permet de
+          vérifier que le téléphone associé est toujours entre les mêmes mains. Les comptes métier
+          (notaire, conformité, clercs) ne sont pas touchés — ils relèvent de l'admin du cabinet.
+        </p>
+
+        <div v-if="resetResult" class="reset-result">
+          <p class="reset-title">Nouveau mot de passe temporaire</p>
+          <div class="reset-row">
+            <span class="reset-label">Compte</span>
+            <code class="reset-value">{{ resetResult.admin_email }}</code>
+          </div>
+          <div class="reset-row">
+            <span class="reset-label">Mot de passe</span>
+            <code class="reset-value reset-value--secret">{{ resetResult.admin_temp_password }}</code>
+          </div>
+          <p class="reset-warn">
+            Transmettez-le par un canal sûr et notez-le maintenant : il n'est stocké nulle part et ne
+            sera plus jamais affiché.
+          </p>
+          <div class="edit-actions">
+            <button class="btn-ghost" @click="copyResetPassword">{{ copyLabel }}</button>
+            <button class="btn-primary" @click="resetResult = null">J'ai noté</button>
+          </div>
+        </div>
+
+        <button v-else class="btn-ghost" :disabled="resetting" @click="confirmReset = true">
+          <span v-if="resetting" class="spinner spinner--dark" />
+          Réinitialiser le mot de passe administrateur
+        </button>
+
+        <p v-if="resetError" class="alert-error alert-error--inline">{{ resetError }}</p>
+      </div>
+
+      <!-- Confirmation du reset : action irréversible pour le mot de passe en cours. -->
+      <div v-if="confirmReset" class="modal-overlay" @click.self="confirmReset = false">
+        <div class="modal modal--sm" role="dialog" aria-modal="true">
+          <div class="modal-header">
+            <h2 class="modal-title">Réinitialiser l'accès administrateur ?</h2>
+          </div>
+          <p class="confirm-body">
+            Le mot de passe actuel de l'administrateur de <strong>{{ tenant.nom_cabinet }}</strong>
+            cessera immédiatement de fonctionner, et sa double authentification sera désactivée.
+            L'action est journalisée.
+          </p>
+          <div class="modal-actions" style="padding:0 1.5rem 1.5rem;">
+            <button class="btn-ghost-modal" @click="confirmReset = false">Annuler</button>
+            <button class="btn-danger" :disabled="resetting" @click="handleReset">
+              <span v-if="resetting" class="spinner" />
+              Réinitialiser
+            </button>
           </div>
         </div>
       </div>
@@ -212,13 +342,15 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, reactive } from 'vue'
 import { RouterLink, useRoute } from 'vue-router'
 import {
   superAdminService,
   TENANT_STATUT_LABELS,
   type TenantOut,
   type TenantMetrics,
+  type TenantAdminReset,
+  type TenantUpdatePayload,
   type LogoContraintes,
 } from '@/services/superAdmin'
 import { useObjectUrl } from '@/composables/useObjectUrl'
@@ -235,6 +367,163 @@ const submitting = ref(false)
 
 const motifAction = ref<'suspend' | 'archive' | null>(null)
 const motif = ref('')
+
+// ── Édition des informations ─────────────────────────────────────────
+const editing = ref(false)
+const saving = ref(false)
+const editError = ref('')
+const form = reactive({
+  nom_cabinet: '',
+  contact_email: '',
+  contact_telephone: '',
+  adresse: '',
+  numero_agrement: '',
+  pays: '',
+  totp_required: false,
+  max_users: 0,
+})
+
+function startEdit() {
+  if (!tenant.value) return
+  editError.value = ''
+  // Les champs nuls deviennent des chaînes vides : un `null` dans un `<input>`
+  // afficherait littéralement « null ».
+  form.nom_cabinet = tenant.value.nom_cabinet
+  form.contact_email = tenant.value.contact_email
+  form.contact_telephone = tenant.value.contact_telephone ?? ''
+  form.adresse = tenant.value.adresse ?? ''
+  form.numero_agrement = tenant.value.numero_agrement ?? ''
+  form.pays = tenant.value.pays
+  form.totp_required = tenant.value.totp_required
+  form.max_users = tenant.value.max_users
+  editing.value = true
+}
+
+function cancelEdit() {
+  editing.value = false
+  editError.value = ''
+}
+
+/** Chaîne vide → `null` : l'API distingue « champ vidé » de « champ absent ». */
+function ouNull(valeur: string): string | null {
+  const v = valeur.trim()
+  return v === '' ? null : v
+}
+
+async function submitEdit() {
+  if (!tenant.value) return
+  editError.value = ''
+
+  if (!form.nom_cabinet.trim() || form.nom_cabinet.trim().length < 2) {
+    editError.value = 'Le nom du cabinet est requis (2 caractères minimum).'
+    return
+  }
+  if (!form.contact_email.trim()) {
+    editError.value = "L'email de contact est requis."
+    return
+  }
+  if (form.pays.trim().length !== 2) {
+    editError.value = 'Le pays doit être un code à 2 lettres (ex. CI).'
+    return
+  }
+
+  // PATCH partiel : on ne transmet que les champs réellement modifiés. Envoyer
+  // le formulaire entier reviendrait à faire revalider par l'API des valeurs
+  // que l'utilisateur n'a pas touchées — un cabinet dont l'email de contact est
+  // hérité d'un import ou d'un seed (domaine `.local`, par exemple) deviendrait
+  // alors impossible à modifier, même pour changer son seul numéro de téléphone.
+  const actuel = tenant.value
+  const payload: TenantUpdatePayload = {}
+
+  const nom = form.nom_cabinet.trim()
+  if (nom !== actuel.nom_cabinet) payload.nom_cabinet = nom
+
+  const email = form.contact_email.trim()
+  if (email !== actuel.contact_email) payload.contact_email = email
+
+  const pays = form.pays.trim().toUpperCase()
+  if (pays !== actuel.pays) payload.pays = pays
+
+  const tel = ouNull(form.contact_telephone)
+  if (tel !== actuel.contact_telephone) payload.contact_telephone = tel
+
+  const adresse = ouNull(form.adresse)
+  if (adresse !== actuel.adresse) payload.adresse = adresse
+
+  const agrement = ouNull(form.numero_agrement)
+  if (agrement !== actuel.numero_agrement) payload.numero_agrement = agrement
+
+  if (form.totp_required !== actuel.totp_required) payload.totp_required = form.totp_required
+
+  const quota = Number(form.max_users) || 0
+  if (quota !== actuel.max_users) payload.max_users = quota
+
+  // Rien à envoyer : l'API refuse une modification vide, autant fermer.
+  if (Object.keys(payload).length === 0) {
+    editing.value = false
+    return
+  }
+
+  saving.value = true
+  try {
+    tenant.value = await superAdminService.updateTenant(tenantId, payload)
+    editing.value = false
+  } catch (err: any) {
+    editError.value = messageDe(err, "L'enregistrement a échoué.")
+  } finally {
+    saving.value = false
+  }
+}
+
+// ── Réinitialisation de l'accès administrateur ───────────────────────
+const confirmReset = ref(false)
+const resetting = ref(false)
+const resetError = ref('')
+const resetResult = ref<TenantAdminReset | null>(null)
+const copyLabel = ref('Copier le mot de passe')
+
+async function handleReset() {
+  resetError.value = ''
+  resetting.value = true
+  try {
+    resetResult.value = await superAdminService.resetTenantAdminPassword(tenantId)
+    confirmReset.value = false
+  } catch (err: any) {
+    resetError.value = messageDe(err, 'La réinitialisation a échoué.')
+    confirmReset.value = false
+  } finally {
+    resetting.value = false
+  }
+}
+
+async function copyResetPassword() {
+  if (!resetResult.value) return
+  try {
+    await navigator.clipboard.writeText(resetResult.value.admin_temp_password)
+    copyLabel.value = 'Copié'
+  } catch {
+    copyLabel.value = 'Copie impossible'
+  }
+  window.setTimeout(() => (copyLabel.value = 'Copier le mot de passe'), 2000)
+}
+
+/** Aplatit les trois formes d'erreur FastAPI en une phrase lisible. */
+function messageDe(err: any, fallback: string): string {
+  const detail = err?.response?.data?.detail
+  if (typeof detail === 'string') return detail
+  if (Array.isArray(detail) && detail.length) {
+    return detail
+      .map((item: any) => {
+        const champ = Array.isArray(item?.loc) ? item.loc.slice(1).join('.') : ''
+        const msg = (item?.msg ?? '').replace(/^Value error,\s*/, '')
+        return champ ? `${champ} : ${msg}` : msg
+      })
+      .filter(Boolean)
+      .join(' · ')
+  }
+  if (!err?.response) return 'Serveur injoignable. Vérifiez votre connexion.'
+  return fallback
+}
 
 const quotaLabel = computed(() => {
   const q = metrics.value?.quota_utilisateurs
@@ -504,7 +793,75 @@ async function handleMotifConfirm() {
   border: 2px solid rgba(255,255,255,0.3); border-top-color: #fff;
   border-radius: 50%; animation: spin 0.7s linear infinite; flex-shrink: 0;
 }
+.spinner--dark { border-color: var(--color-border); border-top-color: var(--color-text-secondary); }
 @keyframes spin { to { transform: rotate(360deg); } }
+
+/* ── Édition des informations ── */
+.card-head { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
+.card-head .card-title { margin-bottom: 1rem; }
+.btn-ghost--sm { padding: 0.375rem 0.75rem; font-size: 0.75rem; }
+.card-desc--warn { color: var(--color-risk-medium); }
+
+.btn-primary {
+  display: inline-flex; align-items: center; gap: 0.4375rem;
+  padding: 0.5rem 1rem; background: var(--color-btn-primary); color: #fff;
+  border: 1px solid transparent; border-radius: 7px;
+  font-size: 0.875rem; font-weight: 600; cursor: pointer;
+}
+.btn-primary:hover:not(:disabled) { background: var(--color-btn-primary-hover); }
+.btn-primary:disabled { opacity: 0.6; cursor: not-allowed; }
+
+.edit-form { display: flex; flex-direction: column; gap: 1.25rem; }
+.edit-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 1rem;
+}
+.edit-field { display: flex; flex-direction: column; gap: 0.3125rem; }
+.edit-field--wide { grid-column: 1 / -1; }
+.edit-label { font-size: 0.8125rem; font-weight: 500; color: var(--color-text-primary); }
+.edit-input {
+  padding: 0.5rem 0.6875rem; border: 1px solid var(--color-border); border-radius: 7px;
+  font-size: 0.875rem; color: var(--color-text-primary); background: #fff;
+  outline: none; font-family: inherit; width: 100%;
+}
+.edit-input:focus { border-color: var(--color-sidebar-bg); box-shadow: 0 0 0 3px rgba(201,162,39,0.12); }
+.edit-input--locked { background: var(--color-bg-page); color: var(--color-text-muted); cursor: not-allowed; }
+.edit-input:disabled { opacity: 0.65; }
+.edit-hint { font-size: 0.6875rem; color: var(--color-text-muted); margin: 0; line-height: 1.45; }
+.edit-check {
+  display: flex; align-items: flex-start; gap: 0.5rem;
+  font-size: 0.8125rem; color: var(--color-text-secondary); line-height: 1.45;
+}
+.edit-check input { margin-top: 2px; flex-shrink: 0; }
+.edit-actions { display: flex; justify-content: flex-end; gap: 0.625rem; align-items: center; }
+.alert-error--inline { margin: 0; }
+
+/* ── Réinitialisation de l'accès administrateur ── */
+.reset-result {
+  border: 1px solid var(--color-accent-gold);
+  border-radius: 8px;
+  padding: 1rem 1.125rem;
+  background: rgba(201, 162, 39, 0.05);
+  display: flex; flex-direction: column; gap: 0.625rem;
+}
+.reset-title { font-size: 0.8125rem; font-weight: 700; color: var(--color-text-primary); margin: 0; }
+.reset-row { display: flex; align-items: baseline; gap: 0.75rem; flex-wrap: wrap; }
+.reset-label {
+  font-size: 0.75rem; color: var(--color-text-muted);
+  min-width: 96px; flex-shrink: 0;
+}
+.reset-value {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.8125rem; color: var(--color-text-primary);
+  background: #fff; border: 1px solid var(--color-border);
+  border-radius: 5px; padding: 0.25rem 0.5rem; word-break: break-all;
+}
+.reset-value--secret { font-weight: 700; letter-spacing: 0.02em; }
+.reset-warn {
+  font-size: 0.75rem; color: var(--color-risk-medium);
+  margin: 0; line-height: 1.5;
+}
 
 /* ── Logo du cabinet ── */
 .logo-row { display: flex; align-items: flex-start; gap: 1.25rem; flex-wrap: wrap; }

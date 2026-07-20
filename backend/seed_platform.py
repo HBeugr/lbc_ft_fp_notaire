@@ -38,8 +38,13 @@ DEMO_USERS = [
 
 async def seed_super_admin() -> tuple[str, str | None]:
     """Crée le compte d'exploitation s'il n'existe pas encore."""
-    email = os.environ.get("SUPER_ADMIN_EMAIL", "superadmin@plateforme.local").strip().lower()
-    password = os.environ.get("SUPER_ADMIN_PASSWORD", "SuperAdmin2026!")
+    # Défauts alignés sur le back-office CCI immobilier, à la demande de
+    # l'exploitant : un seul couple d'identifiants à retenir pour ses projets.
+    # Ce sont des valeurs de développement — `must_change_password` ci-dessous
+    # impose leur remplacement à la première connexion, et la console reste
+    # verrouillée sur la page de compte tant que ce n'est pas fait.
+    email = os.environ.get("SUPER_ADMIN_EMAIL", "admin@cci.ci").strip().lower()
+    password = os.environ.get("SUPER_ADMIN_PASSWORD", "ChangeMoi2026!")
 
     async with shared_session() as db:
         existing = (
