@@ -169,14 +169,25 @@ async def test_notaire_principal_cannot_reset_admin_password(client, db):
     assert r.status_code == 403  # un NP ne peut pas détourner un compte admin
 
 
-async def test_admin_can_still_create_admin(client, db):
+async def test_admin_ne_cree_pas_de_compte_admin(client, db):
+    """L'Admin de cabinet gère tous les rôles SAUF « admin ».
+
+    Ce test affirmait l'inverse (`test_admin_can_still_create_admin`) : il
+    garantissait qu'un durcissement visant le Notaire Principal n'avait pas
+    débordé sur l'Admin. Le contrat a changé volontairement — le compte
+    administrateur est désormais posé au seul provisionnement du cabinet, par
+    la console plateforme, qui reste le point d'entrée tracé hors du cabinet.
+
+    La couverture du cas nominal (les 5 autres rôles restent créables) vit dans
+    `test_cdc_modules_7_8_9.py::test_adm01_admin_ne_fabrique_pas_de_pair_administrateur`.
+    """
     admin = await create_user(db, role="admin")
     payload = {
         "email": f"real-admin-{uuid.uuid4().hex[:8]}@test.ci", "first_name": "R", "last_name": "A",
         "role": "admin", "password": "TestPass123!",
     }
     r = await client.post("/api/users", headers=auth_headers(admin), json=payload)
-    assert r.status_code == 201, r.text
+    assert r.status_code == 403, r.text
 
 
 # ── Admin — mot de passe temporaire ─────────────────────────────────────────────
