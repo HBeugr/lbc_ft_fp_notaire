@@ -31,6 +31,36 @@ class SuperAdminLoginResponse(BaseModel):
     super_admin: SuperAdminOut
 
 
+class SuperAdminListItem(BaseModel):
+    """Un exploitant vu depuis la console — jamais son empreinte de mot de passe."""
+
+    id: str
+    email: str
+    first_name: str
+    last_name: str
+    is_active: bool
+    must_change_password: bool = False
+    created_at: datetime | None = None
+
+    model_config = {"from_attributes": True}
+
+
+class SuperAdminCreateRequest(BaseModel):
+    email: EmailStr = Field(..., max_length=255)
+    first_name: str = Field(..., min_length=1, max_length=100)
+    last_name: str = Field(..., min_length=1, max_length=100)
+    password: str = Field(..., min_length=12)
+
+    @field_validator("password")
+    @classmethod
+    def _strong(cls, v: str) -> str:
+        return validate_password_strength(v)
+
+
+class SuperAdminStatusRequest(BaseModel):
+    is_active: bool
+
+
 class SuperAdminPasswordChangeRequest(BaseModel):
     current_password: str
     new_password: str = Field(..., min_length=12)
@@ -39,6 +69,44 @@ class SuperAdminPasswordChangeRequest(BaseModel):
     @classmethod
     def _strong(cls, v: str) -> str:
         return validate_password_strength(v)
+
+
+# Rôles cabinet ouverts au pré-provisionnement. `admin` en est exclu : il est
+# créé séparément, et en autoriser un second ici brouillerait la question de
+# savoir quel compte l'exploitant peut réinitialiser.
+_ROLES_PROVISIONNABLES = {
+    "notaire_principal",
+    "responsable_conformite",
+    "clercs",
+    "declarant_centif",
+    "autre_utilisateur",
+}
+
+
+class TenantUserSpec(BaseModel):
+    """Un utilisateur à pré-créer dans le cabinet, mot de passe auto-généré."""
+
+    email: EmailStr = Field(..., max_length=255)
+    first_name: str = Field(..., min_length=1, max_length=100)
+    last_name: str = Field(..., min_length=1, max_length=100)
+    role: str
+
+    @field_validator("role")
+    @classmethod
+    def _role_connu(cls, v: str) -> str:
+        if v not in _ROLES_PROVISIONNABLES:
+            raise ValueError(
+                "Rôle inconnu ou non provisionnable à la création : " + v
+            )
+        return v
+
+
+class ProvisionedUser(BaseModel):
+    """Compte pré-créé — le mot de passe n'est lisible qu'ici, une seule fois."""
+
+    email: str
+    role: str
+    temp_password: str
 
 
 class TenantCreateRequest(BaseModel):
@@ -61,6 +129,9 @@ class TenantCreateRequest(BaseModel):
     totp_required: bool = True
     # 0 = illimité. Support d'un futur plan tarifaire.
     max_users: int = Field(default=0, ge=0)
+    # Collaborateurs pré-créés en même temps que le cabinet. Évite à l'admin
+    # de tout ressaisir à l'ouverture ; facultatif.
+    utilisateurs: list[TenantUserSpec] = Field(default_factory=list)
 
 
 class TenantOut(BaseModel):
@@ -94,6 +165,9 @@ class TenantCreateResponse(BaseModel):
     tenant: TenantOut
     admin_email: str
     admin_temp_password: str
+    # Comptes pré-créés, avec leurs mots de passe temporaires. Même contrat que
+    # celui de l'admin : affichés une fois, stockés nulle part en clair.
+    utilisateurs: list[ProvisionedUser] = Field(default_factory=list)
 
 
 class TenantUpdateRequest(BaseModel):

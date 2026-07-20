@@ -25,7 +25,7 @@ import sys
 import unicodedata
 import uuid
 from pathlib import Path
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError
@@ -50,11 +50,20 @@ class ProvisioningError(Exception):
 
 
 @dataclass
+class ProvisionedUserResult:
+    email: str
+    role: str
+    temp_password: str
+
+
+@dataclass
 class ProvisionedTenant:
     tenant: Tenant
     admin_email: str
     # Mot de passe temporaire : affiché UNE fois à l'exploitant, jamais stocké en clair.
     admin_temp_password: str
+    # Collaborateurs pré-créés, même contrat sur leurs mots de passe.
+    utilisateurs: list[ProvisionedUserResult] = field(default_factory=list)
 
 
 def slugify(value: str) -> str:
@@ -120,6 +129,7 @@ async def provision_tenant(
     adresse: str | None = None,
     totp_required: bool = True,
     max_users: int = 0,
+    utilisateurs: list[dict] | None = None,
     super_admin_id: str | None = None,
 ) -> ProvisionedTenant:
     """Crée un cabinet de bout en bout et retourne ses accès initiaux."""
@@ -140,6 +150,16 @@ async def provision_tenant(
             await db.execute(select(TenantUser).where(TenantUser.email == admin_email))
         ).scalar_one_or_none():
             raise ProvisioningError(f"L'adresse « {admin_email} » est déjà rattachée à un cabinet.")
+
+        # Même contrainte pour les collaborateurs pré-créés. Vérifié ICI, avant
+        # toute création : découvrir le conflit après le CREATE SCHEMA
+        # obligerait à défaire un cabinet entier pour une faute de frappe.
+        for spec in (utilisateurs or []):
+            email_u = str(spec["email"]).strip().lower()
+            if (
+                await db.execute(select(TenantUser).where(TenantUser.email == email_u))
+            ).scalar_one_or_none():
+                raise ProvisioningError(f"L'adresse « {email_u} » est déjà rattachée à un cabinet.")
 
         # L'identifiant est généré ici et non laissé au défaut de colonne : le nom
         # du schéma en dérive, et il faut donc le connaître avant l'INSERT.
@@ -202,13 +222,44 @@ async def provision_tenant(
                     must_change_password=True,
                 )
                 db.add(admin)
+
+                # Collaborateurs pré-créés. Dans la MÊME transaction que
+                # l'admin : un cabinet à moitié peuplé serait plus difficile à
+                # rattraper qu'un provisioning entièrement rejoué.
+                comptes: list[tuple[User, str]] = []
+                for spec in (utilisateurs or []):
+                    email_u = str(spec["email"]).strip().lower()
+                    if email_u == admin_email or any(u.email == email_u for u, _ in comptes):
+                        raise ProvisioningError(
+                            f"L'adresse « {email_u} » est en double dans le formulaire."
+                        )
+                    mdp = _generate_temp_password()
+                    membre = User(
+                        email=email_u,
+                        hashed_password=security.hash_password(mdp),
+                        first_name=spec["first_name"],
+                        last_name=spec["last_name"],
+                        role=spec["role"],
+                        is_active=True,
+                        must_change_password=True,
+                    )
+                    db.add(membre)
+                    comptes.append((membre, mdp))
+
                 await db.commit()
                 await db.refresh(admin)
                 admin_id = admin.id
+                for membre, _ in comptes:
+                    await db.refresh(membre)
+                provisionnes = [
+                    (u.email, u.role, u.id, mdp) for u, mdp in comptes
+                ]
 
         # Inscription à l'annuaire : c'est ce qui rend le login possible.
         async with shared_session() as db:
             db.add(TenantUser(email=admin_email, tenant_id=tenant.id, user_id=admin_id))
+            for email_u, _role, user_id, _mdp in provisionnes:
+                db.add(TenantUser(email=email_u, tenant_id=tenant.id, user_id=user_id))
             db.add(TenantAuditLog(
                 tenant_id=tenant.id,
                 super_admin_id=super_admin_id,
@@ -229,7 +280,15 @@ async def provision_tenant(
 
     tenant_resolver.invalidate()
     logger.info("tenant.provisioned", tenant_id=tenant.id, slug=slug, schema=schema)
-    return ProvisionedTenant(tenant=tenant, admin_email=admin_email, admin_temp_password=temp_password)
+    return ProvisionedTenant(
+        tenant=tenant,
+        admin_email=admin_email,
+        admin_temp_password=temp_password,
+        utilisateurs=[
+            ProvisionedUserResult(email=e, role=r, temp_password=m)
+            for e, r, _uid, m in provisionnes
+        ],
+    )
 
 
 async def update_tenant(

@@ -44,9 +44,13 @@ from app.schemas.tenants import (
     LogoOut,
     MigrationResultOut,
     PlatformMetricsOut,
+    ProvisionedUser,
     SuperAdminLoginRequest,
     SuperAdminLoginResponse,
+    SuperAdminCreateRequest,
+    SuperAdminListItem,
     SuperAdminOut,
+    SuperAdminStatusRequest,
     SuperAdminPasswordChangeRequest,
     TenantAdminResetResponse,
     TenantCreateRequest,
@@ -188,6 +192,115 @@ async def super_admin_change_password(
     return SuperAdminOut.model_validate(stored)
 
 
+# ── Gestion des comptes d'exploitation ───────────────────────────────────────
+#
+# Jusqu'ici le seul moyen d'ajouter un exploitant était d'exécuter
+# `seed_platform.py` sur le serveur : impraticable, et sans trace. Ces
+# endpoints n'ouvrent aucune donnée de cabinet — ils n'administrent que
+# l'annuaire `shared.super_admins`.
+
+@router.get("/admins", response_model=list[SuperAdminListItem])
+async def list_super_admins(
+    _: SuperAdmin = Depends(get_current_super_admin),
+    db: AsyncSession = Depends(get_shared_db),
+) -> list[SuperAdminListItem]:
+    rows = (
+        await db.execute(select(SuperAdmin).order_by(SuperAdmin.created_at.asc()))
+    ).scalars().all()
+    return [SuperAdminListItem.model_validate(a) for a in rows]
+
+
+@router.post("/admins", response_model=SuperAdminListItem, status_code=status.HTTP_201_CREATED)
+async def create_super_admin(
+    body: SuperAdminCreateRequest,
+    admin: SuperAdmin = Depends(get_current_super_admin),
+    db: AsyncSession = Depends(get_shared_db),
+) -> SuperAdminListItem:
+    """Crée un exploitant. Son mot de passe est posé par un tiers : il devra
+    le remplacer à la première connexion."""
+    email = body.email.strip().lower()
+    existe = (
+        await db.execute(select(SuperAdmin).where(SuperAdmin.email == email))
+    ).scalar_one_or_none()
+    if existe is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail="Ce super-admin existe déjà."
+        )
+
+    nouveau = SuperAdmin(
+        email=email,
+        hashed_password=security.hash_password(body.password),
+        first_name=body.first_name.strip(),
+        last_name=body.last_name.strip(),
+        is_active=True,
+        must_change_password=True,
+    )
+    db.add(nouveau)
+    db.add(TenantAuditLog(
+        tenant_id=None,
+        super_admin_id=admin.id,
+        action="super_admin.created",
+        detail=f"Compte d'exploitation créé pour {email}.",
+    ))
+    await db.commit()
+    await db.refresh(nouveau)
+    logger.info("super_admin.created", by=admin.id, email=email)
+    return SuperAdminListItem.model_validate(nouveau)
+
+
+@router.patch("/admins/{admin_id}", response_model=SuperAdminListItem)
+async def set_super_admin_status(
+    admin_id: str,
+    body: SuperAdminStatusRequest,
+    admin: SuperAdmin = Depends(get_current_super_admin),
+    db: AsyncSession = Depends(get_shared_db),
+) -> SuperAdminListItem:
+    """Active ou désactive un exploitant.
+
+    Se désactiver soi-même est refusé : avec un seul compte, l'opération
+    fermerait la console à tout le monde sans aucun moyen de revenir en
+    arrière autrement qu'en base.
+    """
+    if not body.is_active and admin_id == admin.id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Impossible de désactiver son propre compte.",
+        )
+
+    cible = await db.get(SuperAdmin, admin_id)
+    if cible is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Super-admin introuvable."
+        )
+
+    # Dernier compte actif : le désactiver rendrait la console inaccessible.
+    if not body.is_active:
+        actifs = (
+            await db.execute(
+                select(func.count()).select_from(SuperAdmin).where(SuperAdmin.is_active.is_(True))
+            )
+        ).scalar_one()
+        if actifs <= 1:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="C'est le dernier compte actif : le désactiver fermerait la console.",
+            )
+
+    cible.is_active = body.is_active
+    db.add(TenantAuditLog(
+        tenant_id=None,
+        super_admin_id=admin.id,
+        action="super_admin.activated" if body.is_active else "super_admin.deactivated",
+        detail=f"Compte {cible.email}.",
+    ))
+    await db.commit()
+    await db.refresh(cible)
+    logger.warning(
+        "super_admin.status_changed", by=admin.id, target=cible.email, active=body.is_active
+    )
+    return SuperAdminListItem.model_validate(cible)
+
+
 # ── Gestion des cabinets ─────────────────────────────────────────────────────
 
 @router.get("/tenants", response_model=list[TenantOut])
@@ -231,6 +344,7 @@ async def create_tenant(
             adresse=body.adresse,
             totp_required=body.totp_required,
             max_users=body.max_users,
+            utilisateurs=[u.model_dump() for u in body.utilisateurs],
             super_admin_id=admin.id,
         )
     except ProvisioningError as exc:
@@ -240,6 +354,10 @@ async def create_tenant(
         tenant=TenantOut.model_validate(result.tenant),
         admin_email=result.admin_email,
         admin_temp_password=result.admin_temp_password,
+        utilisateurs=[
+            ProvisionedUser(email=u.email, role=u.role, temp_password=u.temp_password)
+            for u in result.utilisateurs
+        ],
     )
 
 

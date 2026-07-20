@@ -13,6 +13,24 @@ export interface SuperAdminOut {
   must_change_password: boolean
 }
 
+/** Un exploitant vu depuis la console de gestion des comptes. */
+export interface SuperAdminListItem {
+  id: string
+  email: string
+  first_name: string
+  last_name: string
+  is_active: boolean
+  must_change_password: boolean
+  created_at: string | null
+}
+
+export interface SuperAdminCreatePayload {
+  email: string
+  first_name: string
+  last_name: string
+  password: string
+}
+
 export interface SuperAdminLoginResponse {
   access_token: string
   token_type: string
@@ -42,6 +60,21 @@ export interface TenantOut {
   logo_updated_at: string | null
 }
 
+/** Un collaborateur à pré-créer avec le cabinet. `admin` n'est pas un rôle valide ici. */
+export interface TenantUserSpec {
+  email: string
+  first_name: string
+  last_name: string
+  role: string
+}
+
+/** Compte pré-créé — le mot de passe n'est lisible qu'une fois, à la création. */
+export interface ProvisionedUser {
+  email: string
+  role: string
+  temp_password: string
+}
+
 export interface TenantCreatePayload {
   nom_cabinet: string
   contact_email: string
@@ -55,13 +88,15 @@ export interface TenantCreatePayload {
   adresse?: string
   totp_required?: boolean
   max_users?: number
+  utilisateurs?: TenantUserSpec[]
 }
 
-/** Le mot de passe temporaire n'est renvoyé qu'ici, une seule fois. */
+/** Les mots de passe temporaires ne sont renvoyés qu'ici, une seule fois. */
 export interface TenantCreateResponse {
   tenant: TenantOut
   admin_email: string
   admin_temp_password: string
+  utilisateurs: ProvisionedUser[]
 }
 
 /** Champs modifiables après création — slug, schéma et sel de chiffrement sont figés. */
@@ -130,6 +165,23 @@ export const superAdminService = {
     return data
   },
 
+
+  // ── Comptes d'exploitation ───────────────────────────────────────────
+
+  async listAdmins(): Promise<SuperAdminListItem[]> {
+    const { data } = await superAdminApi.get<SuperAdminListItem[]>('/admins')
+    return data
+  },
+
+  async createAdmin(payload: SuperAdminCreatePayload): Promise<SuperAdminListItem> {
+    const { data } = await superAdminApi.post<SuperAdminListItem>('/admins', payload)
+    return data
+  },
+
+  async setAdminActive(id: string, isActive: boolean): Promise<SuperAdminListItem> {
+    const { data } = await superAdminApi.patch<SuperAdminListItem>(`/admins/${id}`, { is_active: isActive })
+    return data
+  },
 
   async changePassword(currentPassword: string, newPassword: string): Promise<SuperAdminOut> {
     const { data } = await superAdminApi.patch<SuperAdminOut>('/auth/password', {

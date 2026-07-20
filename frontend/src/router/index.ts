@@ -79,6 +79,11 @@ const router = createRouter({
           component: () => import('@/views/superadmin/ExploitationAuditView.vue'),
         },
         {
+          path: 'super-admins',
+          name: 'super-admin-admins',
+          component: () => import('@/views/superadmin/SuperAdminsView.vue'),
+        },
+        {
           path: 'compte',
           name: 'super-admin-account',
           component: () => import('@/views/superadmin/SuperAdminAccountView.vue'),

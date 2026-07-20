@@ -141,6 +141,31 @@
         </div>
       </section>
 
+      <!-- Collaborateurs pré-créés -->
+      <section class="section">
+        <h2 class="section-title">Collaborateurs <span class="section-hint">(facultatif)</span></h2>
+        <p class="section-desc">
+          Comptes créés en même temps que le cabinet, avec un mot de passe temporaire affiché une
+          seule fois. L'administrateur pourra en ajouter d'autres depuis son espace.
+        </p>
+
+        <div v-for="(u, i) in form.utilisateurs" :key="i" class="collab-row">
+          <input v-model="u.first_name" type="text" class="field-input" placeholder="Prénom" />
+          <input v-model="u.last_name" type="text" class="field-input" placeholder="Nom" />
+          <input v-model="u.email" type="email" class="field-input" placeholder="email@cabinet.ci" />
+          <select v-model="u.role" class="field-input">
+            <option v-for="r in ROLES_COLLABORATEUR" :key="r.value" :value="r.value">{{ r.label }}</option>
+          </select>
+          <button type="button" class="btn-retirer" title="Retirer cette ligne" @click="form.utilisateurs.splice(i, 1)">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+        </div>
+
+        <button type="button" class="btn-ghost btn-ghost--sm" @click="ajouterCollaborateur">
+          + Ajouter un collaborateur
+        </button>
+      </section>
+
       <div v-if="formError" class="alert-error">{{ formError }}</div>
 
       <div class="form-footer">
@@ -205,9 +230,25 @@
                 <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
               </button>
             </div>
+
+            <div v-if="created.utilisateurs.length" class="collab-recap">
+              <p class="collab-recap-title">
+                Collaborateurs créés ({{ created.utilisateurs.length }})
+              </p>
+              <table class="collab-table">
+                <tbody>
+                  <tr v-for="u in created.utilisateurs" :key="u.email">
+                    <td class="collab-td-mail">{{ u.email }}</td>
+                    <td class="collab-td-role">{{ libelleRole(u.role) }}</td>
+                    <td><code class="collab-td-pwd">{{ u.temp_password }}</code></td>
+                  </tr>
+                </tbody>
+              </table>
+              <button class="btn-ghost btn-ghost--sm" @click="copierTout">{{ labelCopieTout }}</button>
+            </div>
           </div>
           <div class="modal-actions" style="padding:0 1.5rem 1.5rem;">
-            <button class="btn-primary" @click="finish">J'ai noté le mot de passe</button>
+            <button class="btn-primary" @click="finish">J'ai noté les mots de passe</button>
           </div>
         </div>
       </div>
@@ -238,6 +279,7 @@ const form = reactive({
   admin_email: '',
   admin_first_name: '',
   admin_last_name: '',
+  utilisateurs: [] as { first_name: string; last_name: string; email: string; role: string }[],
   totp_required: true,
   max_users: 0,
 })
@@ -302,6 +344,41 @@ onMounted(async () => {
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 
+// `admin` est absent : il est créé par les champs dédiés ci-dessus, et l'API
+// refuse un second administrateur à la création.
+const ROLES_COLLABORATEUR = [
+  { value: 'notaire_principal', label: 'Notaire principal' },
+  { value: 'responsable_conformite', label: 'Responsable conformité' },
+  { value: 'clercs', label: 'Clerc' },
+  { value: 'declarant_centif', label: 'Déclarant CENTIF' },
+  { value: 'autre_utilisateur', label: 'Autre utilisateur' },
+]
+
+function libelleRole(valeur: string): string {
+  return ROLES_COLLABORATEUR.find((r) => r.value === valeur)?.label ?? valeur
+}
+
+function ajouterCollaborateur() {
+  form.utilisateurs.push({ first_name: '', last_name: '', email: '', role: 'clercs' })
+}
+
+const labelCopieTout = ref('Copier tous les identifiants')
+
+async function copierTout() {
+  if (!created.value) return
+  const lignes = [
+    `${created.value.admin_email}\tadmin\t${created.value.admin_temp_password}`,
+    ...created.value.utilisateurs.map((u) => `${u.email}\t${u.role}\t${u.temp_password}`),
+  ]
+  try {
+    await navigator.clipboard.writeText(lignes.join('\n'))
+    labelCopieTout.value = 'Copié'
+  } catch {
+    labelCopieTout.value = 'Copie impossible'
+  }
+  window.setTimeout(() => (labelCopieTout.value = 'Copier tous les identifiants'), 2000)
+}
+
 function validate(): boolean {
   Object.keys(fe).forEach(k => { (fe as Record<string, string>)[k] = '' })
   let ok = true
@@ -312,6 +389,24 @@ function validate(): boolean {
   else if (!EMAIL_RE.test(form.admin_email)) { fe.admin_email = 'Adresse invalide.'; ok = false }
   if (!form.admin_first_name) { fe.admin_first_name = 'Requis.'; ok = false }
   if (!form.admin_last_name) { fe.admin_last_name = 'Requis.'; ok = false }
+
+  // Lignes collaborateur : le formulaire les valide avant l'envoi, sinon le
+  // rejet n'arriverait qu'après la création du schéma côté serveur.
+  const vus = new Set<string>([form.admin_email.trim().toLowerCase()])
+  form.utilisateurs.forEach((u, i) => {
+    const mail = u.email.trim().toLowerCase()
+    if (!u.first_name.trim() || !u.last_name.trim() || !mail) {
+      formError.value = `Collaborateur ${i + 1} : prénom, nom et email sont requis.`
+      ok = false
+    } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(mail)) {
+      formError.value = `Collaborateur ${i + 1} : adresse email invalide.`
+      ok = false
+    } else if (vus.has(mail)) {
+      formError.value = `L'adresse « ${mail} » apparaît deux fois.`
+      ok = false
+    }
+    vus.add(mail)
+  })
   return ok
 }
 
@@ -328,6 +423,12 @@ async function handleSubmit() {
       admin_email: form.admin_email,
       admin_first_name: form.admin_first_name,
       admin_last_name: form.admin_last_name,
+      utilisateurs: form.utilisateurs.map((u) => ({
+        first_name: u.first_name.trim(),
+        last_name: u.last_name.trim(),
+        email: u.email.trim().toLowerCase(),
+        role: u.role,
+      })),
       pays: form.pays || 'CI',
       totp_required: form.totp_required,
       max_users: form.max_users || 0,
@@ -416,6 +517,47 @@ function finish() {
 }
 
 .section { display: flex; flex-direction: column; gap: 0.875rem; }
+.section-hint { font-weight: 400; font-size: 0.8125rem; color: var(--color-text-muted); }
+
+/* Lignes collaborateur : grille alignée, qui retombe en colonne sur mobile. */
+.collab-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1.6fr 1.2fr auto;
+  gap: 0.5rem;
+  align-items: center;
+  margin-bottom: 0.5rem;
+}
+@media (max-width: 760px) { .collab-row { grid-template-columns: 1fr; } }
+.btn-retirer {
+  display: flex; align-items: center; justify-content: center;
+  width: 32px; height: 32px; flex-shrink: 0;
+  border: 1px solid var(--color-border); border-radius: 7px;
+  background: #fff; color: var(--color-text-muted); cursor: pointer;
+}
+.btn-retirer:hover { border-color: var(--color-risk-high); color: var(--color-risk-high); }
+.btn-retirer svg { width: 14px; height: 14px; }
+.btn-ghost--sm { padding: 0.375rem 0.75rem; font-size: 0.75rem; }
+
+/* Récapitulatif des comptes pré-créés, dans la modale de succès. */
+.collab-recap { margin-top: 1.25rem; border-top: 1px solid var(--color-border); padding-top: 1rem; }
+.collab-recap-title {
+  font-size: 0.8125rem; font-weight: 600; color: var(--color-text-primary); margin: 0 0 0.625rem;
+}
+.collab-table { width: 100%; border-collapse: collapse; margin-bottom: 0.75rem; }
+.collab-table td {
+  padding: 0.375rem 0.5rem 0.375rem 0;
+  border-bottom: 1px solid var(--color-border);
+  font-size: 0.75rem; vertical-align: middle;
+}
+.collab-table tr:last-child td { border-bottom: none; }
+.collab-td-mail { color: var(--color-text-primary); }
+.collab-td-role { color: var(--color-text-muted); white-space: nowrap; }
+.collab-td-pwd {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-weight: 700; color: var(--color-text-primary);
+  background: var(--color-bg-page); border-radius: 4px; padding: 0.125rem 0.375rem;
+}
+
 .section-title {
   font-size: 0.75rem; font-weight: 600; color: var(--color-text-secondary);
   text-transform: uppercase; letter-spacing: 0.04em; margin: 0;
