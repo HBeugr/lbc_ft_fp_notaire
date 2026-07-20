@@ -11,8 +11,8 @@
  */
 import { test, expect, type Page } from '@playwright/test'
 
-const EMAIL = process.env.SUPER_ADMIN_EMAIL || 'admin@cci.ci'
-const PWD = process.env.SUPER_ADMIN_PASSWORD || 'ChangeMoi2026!'
+const EMAIL = process.env.SUPER_ADMIN_EMAIL || 'superadmin@lbcft.com'
+const PWD = process.env.SUPER_ADMIN_PASSWORD || 'superAdmin_2026!'
 
 // Mot de passe conforme à la politique (12+, majuscule, minuscule, chiffre,
 // spécial). Le test le remet ensuite à sa valeur d'origine pour rester rejouable.
