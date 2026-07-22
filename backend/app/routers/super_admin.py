@@ -1,0 +1,960 @@
+"""Console d'exploitation de la plateforme — Super-Admin.
+
+Ce router administre des **cabinets**, jamais leurs données. C'est la
+traduction technique d'une exigence de conformité : l'exploitant de la
+plateforme héberge des dossiers LBC/FT sans pouvoir les consulter (Art. 63,
+confidentialité CENTIF).
+
+L'étanchéité repose sur trois choix cumulés, pas sur la seule interface :
+
+1. Les comptes Super-Admin vivent dans `shared.super_admins` et n'existent dans
+   aucun schéma cabinet — ils ne peuvent donc pas obtenir de session métier.
+2. Leurs jetons portent `scope=platform` et **aucun** claim `tid` ; le
+   middleware refuse toute requête métier sans cabinet identifié.
+3. Les endpoints ci-dessous n'ouvrent que des sessions `shared`, à deux
+   exceptions explicites et bornées : le comptage de volumétrie et les
+   migrations, qui ne lisent aucun contenu.
+"""
+from __future__ import annotations
+
+from datetime import datetime, timezone
+
+from fastapi import APIRouter, Depends, File, HTTPException, Request, Response, UploadFile, status
+from fastapi.security import OAuth2PasswordBearer
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core import branding, security
+from app.core.config import settings
+from app.core.database import get_shared_db, tenant_session
+from app.core.logging import logger
+from app.core.redis_client import (
+    get_login_attempts,
+    increment_login_attempts,
+    is_token_revoked,
+    reset_login_attempts,
+    revoke_token,
+)
+from app.core.tenant_context import TenantContext, tenant_scope
+from app.models.shared import SuperAdmin, Tenant, TenantAuditLog
+from app.models.dossier import Dossier
+from app.models.user import User
+from app.schemas.tenants import (
+    LogoContraintesOut,
+    LogoOut,
+    MigrationResultOut,
+    PlatformMetricsOut,
+    ConsoleCapabilities,
+    ProvisionedUser,
+    RoleInfo,
+    TenantUserOut,
+    TenantUserPasswordResetResponse,
+    TenantUserRoleRequest,
+    TenantUserStatusRequest,
+    SuperAdminLoginRequest,
+    SuperAdminLoginResponse,
+    SuperAdminCreateRequest,
+    SuperAdminListItem,
+    SuperAdminOut,
+    SuperAdminStatusRequest,
+    SuperAdminPasswordChangeRequest,
+    TenantAdminResetResponse,
+    TenantCreateRequest,
+    TenantCreateResponse,
+    TenantMetricsOut,
+    TenantOut,
+    TenantStatutRequest,
+    TenantUpdateRequest,
+)
+from app.services import tenant_provisioning
+from app.services.tenant_provisioning import ProvisioningError
+
+router = APIRouter(prefix="/super-admin", tags=["super-admin"])
+
+# Endpoint de jeton distinct de celui des cabinets : les deux populations
+# n'ont ni le même magasin de comptes ni la même portée.
+oauth2_platform = OAuth2PasswordBearer(tokenUrl="/api/super-admin/auth/login")
+
+_PLATFORM_SCOPE = "platform"
+_MAX_LOGIN_ATTEMPTS = 5
+
+
+# ── Authentification ─────────────────────────────────────────────────────────
+
+async def _resolve_super_admin(token: str, db: AsyncSession) -> SuperAdmin:
+    """Valide un jeton de portée `platform` et retourne son porteur."""
+    credentials_exc = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Session invalide ou expirée.",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    try:
+        payload = security.decode_token(token)
+    except Exception:
+        raise credentials_exc
+
+    # Un jeton de cabinet ne doit jamais ouvrir la console d'exploitation, et
+    # réciproquement : la portée est vérifiée explicitement.
+    if payload.get("type") != "access" or payload.get("scope") != _PLATFORM_SCOPE:
+        raise credentials_exc
+
+    # Déconnexion explicite : le jeton est dans la liste de révocation jusqu'à
+    # sa date d'expiration. Sans ce contrôle, « se déconnecter » ne serait
+    # qu'un effacement côté navigateur.
+    jti = payload.get("jti")
+    if jti and await is_token_revoked(jti):
+        raise credentials_exc
+
+    admin = await db.get(SuperAdmin, payload.get("sub") or "")
+    if admin is None or not admin.is_active:
+        raise credentials_exc
+    return admin
+
+
+async def get_current_super_admin(
+    token: str = Depends(oauth2_platform),
+    db: AsyncSession = Depends(get_shared_db),
+) -> SuperAdmin:
+    return await _resolve_super_admin(token, db)
+
+
+@router.post("/auth/login", response_model=SuperAdminLoginResponse)
+async def super_admin_login(
+    body: SuperAdminLoginRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_shared_db),
+) -> SuperAdminLoginResponse:
+    ip = request.client.host if request.client else "unknown"
+    if await get_login_attempts(ip, body.email) >= _MAX_LOGIN_ATTEMPTS:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Trop de tentatives. Réessayez dans 15 minutes.",
+        )
+
+    admin = (
+        await db.execute(select(SuperAdmin).where(SuperAdmin.email == body.email.strip().lower()))
+    ).scalar_one_or_none()
+
+    if admin is None or not security.verify_password(body.password, admin.hashed_password):
+        await increment_login_attempts(ip, body.email)
+        logger.warning("super_admin.login_failed", email=body.email, ip=ip)
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="Email ou mot de passe incorrect."
+        )
+    if not admin.is_active:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Compte désactivé.")
+
+    await reset_login_attempts(ip, body.email)
+
+    token = security.create_access_token(admin.id, extra={"scope": _PLATFORM_SCOPE})
+    return SuperAdminLoginResponse(
+        access_token=token, super_admin=SuperAdminOut.model_validate(admin)
+    )
+
+
+# `response_model=None` est indispensable ici, contrairement au logout cabinet :
+# ce module active `from __future__ import annotations`, donc `-> None` arrive à
+# FastAPI sous forme de chaîne, qu'il résout en la classe `NoneType`. Cette
+# classe est « truthy », FastAPI en déduit un corps de réponse et refuse le 204.
+@router.post("/auth/logout", status_code=status.HTTP_204_NO_CONTENT, response_model=None)
+async def super_admin_logout(token: str = Depends(oauth2_platform)) -> None:
+    """Révoque le jeton courant côté serveur.
+
+    Sans révocation, un jeton exfiltré resterait valide jusqu'à son expiration
+    quoi que fasse l'utilisateur : la déconnexion ne serait qu'un `clear()` de
+    session côté navigateur. Le TTL de révocation est calé sur la durée de vie
+    du jeton — au-delà, l'entrée n'a plus d'utilité.
+
+    Aucune authentification n'est exigée au-delà du jeton lui-même : présenter
+    un jeton déjà révoqué ou expiré doit rester un succès silencieux, sinon la
+    déconnexion échouerait précisément dans le cas où elle n'a plus d'objet.
+    """
+    jti = security.token_jti(token)
+    if jti:
+        await revoke_token(jti, settings.JWT_ACCESS_TOKEN_EXPIRE_MINUTES * 60)
+
+
+@router.get("/auth/me", response_model=SuperAdminOut)
+async def super_admin_me(admin: SuperAdmin = Depends(get_current_super_admin)) -> SuperAdminOut:
+    return SuperAdminOut.model_validate(admin)
+
+
+@router.patch("/auth/password", response_model=SuperAdminOut)
+async def super_admin_change_password(
+    body: SuperAdminPasswordChangeRequest,
+    admin: SuperAdmin = Depends(get_current_super_admin),
+    db: AsyncSession = Depends(get_shared_db),
+) -> SuperAdminOut:
+    if not security.verify_password(body.current_password, admin.hashed_password):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Mot de passe actuel incorrect."
+        )
+    stored = await db.get(SuperAdmin, admin.id)
+    stored.hashed_password = security.hash_password(body.new_password)
+    stored.must_change_password = False
+    await db.commit()
+    await db.refresh(stored)
+    logger.info("super_admin.password_changed", super_admin_id=admin.id)
+    return SuperAdminOut.model_validate(stored)
+
+
+# ── Gestion des utilisateurs d'un cabinet ────────────────────────────────────
+#
+# DÉSACTIVÉ PAR DÉFAUT (`SUPER_ADMIN_TENANT_USERS`). Ces endpoints sont les
+# seuls de ce router à ouvrir une session cabinet sur autre chose qu'un
+# `COUNT(*)` : ils lisent et modifient des comptes nominatifs, ce que
+# l'étanchéité décrite en tête de module exclut par principe.
+#
+# Ils existent parce que l'exploitation le demande, derrière un interrupteur
+# fermé : l'ouvrir est une décision juridique (Art. 63), pas un réglage.
+# Même activés, ils ne donnent accès à AUCUN dossier, KYC ou DOS.
+
+def _gestion_utilisateurs_activee() -> None:
+    if not settings.SUPER_ADMIN_TENANT_USERS:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="La gestion des utilisateurs de cabinet est désactivée sur cette instance.",
+        )
+
+
+async def _contexte_cabinet(tenant_id: str, db: AsyncSession) -> TenantContext:
+    tenant = await db.get(Tenant, tenant_id)
+    if tenant is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Cabinet introuvable.")
+    return TenantContext(
+        id=tenant.id, schema=tenant.schema_name, slug=tenant.slug, nom=tenant.nom_cabinet,
+        statut=tenant.statut, key_salt=tenant.key_salt, totp_required=tenant.totp_required,
+        storage_bucket=tenant.storage_bucket,
+    )
+
+
+@router.get("/capabilities", response_model=ConsoleCapabilities)
+async def console_capabilities(
+    _: SuperAdmin = Depends(get_current_super_admin),
+) -> ConsoleCapabilities:
+    return ConsoleCapabilities(
+        gestion_utilisateurs_cabinet=settings.SUPER_ADMIN_TENANT_USERS
+    )
+
+
+@router.get("/tenants/{tenant_id}/users", response_model=list[TenantUserOut])
+async def list_tenant_users(
+    tenant_id: str,
+    _: SuperAdmin = Depends(get_current_super_admin),
+    db: AsyncSession = Depends(get_shared_db),
+) -> list[TenantUserOut]:
+    _gestion_utilisateurs_activee()
+    context = await _contexte_cabinet(tenant_id, db)
+    with tenant_scope(context):
+        async with tenant_session(context) as tdb:
+            rows = (
+                await tdb.execute(select(User).order_by(User.created_at.asc()))
+            ).scalars().all()
+            return [TenantUserOut.model_validate(u) for u in rows]
+
+
+@router.patch("/tenants/{tenant_id}/users/{user_id}/role", response_model=TenantUserOut)
+async def set_tenant_user_role(
+    tenant_id: str,
+    user_id: str,
+    body: TenantUserRoleRequest,
+    admin: SuperAdmin = Depends(get_current_super_admin),
+    db: AsyncSession = Depends(get_shared_db),
+) -> TenantUserOut:
+    _gestion_utilisateurs_activee()
+    context = await _contexte_cabinet(tenant_id, db)
+    with tenant_scope(context):
+        async with tenant_session(context) as tdb:
+            membre = await tdb.get(User, user_id)
+            if membre is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND, detail="Utilisateur introuvable."
+                )
+            # Retirer le dernier admin fermerait le cabinet à lui-même.
+            if membre.role == "admin" and body.role != "admin":
+                admins = (
+                    await tdb.execute(
+                        select(func.count()).select_from(User)
+                        .where(User.role == "admin", User.is_active.is_(True))
+                    )
+                ).scalar_one()
+                if admins <= 1:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="C'est le dernier administrateur du cabinet.",
+                    )
+            membre.role = body.role
+            await tdb.commit()
+            await tdb.refresh(membre)
+            resultat = TenantUserOut.model_validate(membre)
+
+    db.add(TenantAuditLog(
+        tenant_id=tenant_id, super_admin_id=admin.id,
+        action="tenant.user.role_changed",
+        detail=f"{resultat.email} → {body.role}.",
+    ))
+    await db.commit()
+    return resultat
+
+
+@router.patch("/tenants/{tenant_id}/users/{user_id}/status", response_model=TenantUserOut)
+async def set_tenant_user_status(
+    tenant_id: str,
+    user_id: str,
+    body: TenantUserStatusRequest,
+    admin: SuperAdmin = Depends(get_current_super_admin),
+    db: AsyncSession = Depends(get_shared_db),
+) -> TenantUserOut:
+    _gestion_utilisateurs_activee()
+    context = await _contexte_cabinet(tenant_id, db)
+    with tenant_scope(context):
+        async with tenant_session(context) as tdb:
+            membre = await tdb.get(User, user_id)
+            if membre is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND, detail="Utilisateur introuvable."
+                )
+            if not body.is_active and membre.role == "admin":
+                admins = (
+                    await tdb.execute(
+                        select(func.count()).select_from(User)
+                        .where(User.role == "admin", User.is_active.is_(True))
+                    )
+                ).scalar_one()
+                if admins <= 1:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="C'est le dernier administrateur actif du cabinet.",
+                    )
+            membre.is_active = body.is_active
+            await tdb.commit()
+            await tdb.refresh(membre)
+            resultat = TenantUserOut.model_validate(membre)
+
+    db.add(TenantAuditLog(
+        tenant_id=tenant_id, super_admin_id=admin.id,
+        action="tenant.user.activated" if body.is_active else "tenant.user.deactivated",
+        detail=resultat.email,
+    ))
+    await db.commit()
+    return resultat
+
+
+@router.post(
+    "/tenants/{tenant_id}/users/{user_id}/password-reset",
+    response_model=TenantUserPasswordResetResponse,
+)
+async def reset_tenant_user_password(
+    tenant_id: str,
+    user_id: str,
+    admin: SuperAdmin = Depends(get_current_super_admin),
+    db: AsyncSession = Depends(get_shared_db),
+) -> TenantUserPasswordResetResponse:
+    """Réémet un mot de passe temporaire, et remet la 2FA à zéro.
+
+    Même raisonnement que pour l'admin du cabinet : rien ne permet à
+    l'exploitant de vérifier que le téléphone associé est toujours entre les
+    mêmes mains, et conserver le secret TOTP transformerait la
+    réinitialisation en verrou permanent.
+    """
+    _gestion_utilisateurs_activee()
+    context = await _contexte_cabinet(tenant_id, db)
+    mdp = tenant_provisioning._generate_temp_password()
+    with tenant_scope(context):
+        async with tenant_session(context) as tdb:
+            membre = await tdb.get(User, user_id)
+            if membre is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND, detail="Utilisateur introuvable."
+                )
+            membre.hashed_password = security.hash_password(mdp)
+            membre.must_change_password = True
+            membre.totp_enabled = False
+            membre.totp_secret = None
+            membre.totp_backup_codes = None
+            await tdb.commit()
+            email = membre.email
+
+    db.add(TenantAuditLog(
+        tenant_id=tenant_id, super_admin_id=admin.id,
+        action="tenant.user.password_reset",
+        detail=f"Mot de passe et 2FA réinitialisés pour {email}.",
+    ))
+    await db.commit()
+    logger.warning("tenant.user.password_reset", tenant_id=tenant_id, email=email, by=admin.id)
+    return TenantUserPasswordResetResponse(email=email, temp_password=mdp)
+
+
+# ── Matrice des rôles cabinet (lecture seule) ────────────────────────────────
+#
+# Décrit ce que chaque rôle ouvre à l'intérieur d'un cabinet. L'exploitant ne
+# peut ni modifier ces rôles ni voir qui les porte : c'est une aide au
+# provisionnement, pas un accès aux comptes.
+#
+# Le contenu reflète les règles réellement appliquées (gardes de route et
+# `AssignedFilter` de `core/rbac.py`) : une description qui divergerait du code
+# induirait l'exploitant en erreur au moment de choisir un rôle.
+
+_MATRICE_ROLES: list[RoleInfo] = [
+    RoleInfo(key="admin", label="Administrateur", capabilities=[
+        "Paramétrage du cabinet et gestion des utilisateurs",
+        "Matrice de risque, sanctions, registres et journal d'audit",
+        "Accès à l'ensemble des modules",
+    ]),
+    RoleInfo(key="notaire_principal", label="Notaire principal", capabilities=[
+        "Validation et clôture des dossiers",
+        "Supervision de tous les dossiers du cabinet",
+        "Initiation d'une déclaration de soupçon (DOS)",
+        "Paramétrage du cabinet",
+    ]),
+    RoleInfo(key="responsable_conformite", label="Responsable conformité", capabilities=[
+        "Analyse du risque et traitement des alertes",
+        "Rédaction et validation des DOS",
+        "Réévaluation périodique des KYC",
+        "Rapports de conformité",
+    ]),
+    RoleInfo(key="clercs", label="Clerc", capabilities=[
+        "Saisie des KYC et collecte des pièces",
+        "Signalement d'une suspicion",
+        "Accès limité aux SEULS dossiers qui lui sont assignés",
+    ]),
+    RoleInfo(key="declarant_centif", label="Déclarant CENTIF", capabilities=[
+        "Transmission des déclarations vers la CENTIF",
+        "Consultation des dossiers concernés",
+    ]),
+    RoleInfo(key="autre_utilisateur", label="Autre utilisateur", capabilities=[
+        "Accès restreint : tableau de bord et consultation",
+        "Aucune gestion des utilisateurs ni du paramétrage",
+    ]),
+]
+
+
+@router.get("/roles", response_model=list[RoleInfo])
+async def list_roles(_: SuperAdmin = Depends(get_current_super_admin)) -> list[RoleInfo]:
+    return _MATRICE_ROLES
+
+
+# ── Gestion des comptes d'exploitation ───────────────────────────────────────
+#
+# Jusqu'ici le seul moyen d'ajouter un exploitant était d'exécuter
+# `seed_platform.py` sur le serveur : impraticable, et sans trace. Ces
+# endpoints n'ouvrent aucune donnée de cabinet — ils n'administrent que
+# l'annuaire `shared.super_admins`.
+
+@router.get("/admins", response_model=list[SuperAdminListItem])
+async def list_super_admins(
+    _: SuperAdmin = Depends(get_current_super_admin),
+    db: AsyncSession = Depends(get_shared_db),
+) -> list[SuperAdminListItem]:
+    rows = (
+        await db.execute(select(SuperAdmin).order_by(SuperAdmin.created_at.asc()))
+    ).scalars().all()
+    return [SuperAdminListItem.model_validate(a) for a in rows]
+
+
+@router.post("/admins", response_model=SuperAdminListItem, status_code=status.HTTP_201_CREATED)
+async def create_super_admin(
+    body: SuperAdminCreateRequest,
+    admin: SuperAdmin = Depends(get_current_super_admin),
+    db: AsyncSession = Depends(get_shared_db),
+) -> SuperAdminListItem:
+    """Crée un exploitant. Son mot de passe est posé par un tiers : il devra
+    le remplacer à la première connexion."""
+    email = body.email.strip().lower()
+    existe = (
+        await db.execute(select(SuperAdmin).where(SuperAdmin.email == email))
+    ).scalar_one_or_none()
+    if existe is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail="Ce super-admin existe déjà."
+        )
+
+    nouveau = SuperAdmin(
+        email=email,
+        hashed_password=security.hash_password(body.password),
+        first_name=body.first_name.strip(),
+        last_name=body.last_name.strip(),
+        is_active=True,
+        must_change_password=True,
+    )
+    db.add(nouveau)
+    db.add(TenantAuditLog(
+        tenant_id=None,
+        super_admin_id=admin.id,
+        action="super_admin.created",
+        detail=f"Compte d'exploitation créé pour {email}.",
+    ))
+    await db.commit()
+    await db.refresh(nouveau)
+    logger.info("super_admin.created", by=admin.id, email=email)
+    return SuperAdminListItem.model_validate(nouveau)
+
+
+@router.patch("/admins/{admin_id}", response_model=SuperAdminListItem)
+async def set_super_admin_status(
+    admin_id: str,
+    body: SuperAdminStatusRequest,
+    admin: SuperAdmin = Depends(get_current_super_admin),
+    db: AsyncSession = Depends(get_shared_db),
+) -> SuperAdminListItem:
+    """Active ou désactive un exploitant.
+
+    Se désactiver soi-même est refusé : avec un seul compte, l'opération
+    fermerait la console à tout le monde sans aucun moyen de revenir en
+    arrière autrement qu'en base.
+    """
+    if not body.is_active and admin_id == admin.id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Impossible de désactiver son propre compte.",
+        )
+
+    cible = await db.get(SuperAdmin, admin_id)
+    if cible is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Super-admin introuvable."
+        )
+
+    # Dernier compte actif : le désactiver rendrait la console inaccessible.
+    if not body.is_active:
+        actifs = (
+            await db.execute(
+                select(func.count()).select_from(SuperAdmin).where(SuperAdmin.is_active.is_(True))
+            )
+        ).scalar_one()
+        if actifs <= 1:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="C'est le dernier compte actif : le désactiver fermerait la console.",
+            )
+
+    cible.is_active = body.is_active
+    db.add(TenantAuditLog(
+        tenant_id=None,
+        super_admin_id=admin.id,
+        action="super_admin.activated" if body.is_active else "super_admin.deactivated",
+        detail=f"Compte {cible.email}.",
+    ))
+    await db.commit()
+    await db.refresh(cible)
+    logger.warning(
+        "super_admin.status_changed", by=admin.id, target=cible.email, active=body.is_active
+    )
+    return SuperAdminListItem.model_validate(cible)
+
+
+# ── Gestion des cabinets ─────────────────────────────────────────────────────
+
+@router.get("/tenants", response_model=list[TenantOut])
+async def list_tenants(
+    _: SuperAdmin = Depends(get_current_super_admin),
+    db: AsyncSession = Depends(get_shared_db),
+) -> list[TenantOut]:
+    rows = (await db.execute(select(Tenant).order_by(Tenant.created_at.desc()))).scalars().all()
+    return [TenantOut.model_validate(t) for t in rows]
+
+
+@router.get("/tenants/{tenant_id}", response_model=TenantOut)
+async def get_tenant(
+    tenant_id: str,
+    _: SuperAdmin = Depends(get_current_super_admin),
+    db: AsyncSession = Depends(get_shared_db),
+) -> TenantOut:
+    tenant = await db.get(Tenant, tenant_id)
+    if tenant is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Cabinet introuvable.")
+    return TenantOut.model_validate(tenant)
+
+
+@router.post("/tenants", response_model=TenantCreateResponse, status_code=status.HTTP_201_CREATED)
+async def create_tenant(
+    body: TenantCreateRequest,
+    admin: SuperAdmin = Depends(get_current_super_admin),
+) -> TenantCreateResponse:
+    """Provisionne un cabinet : schéma, migrations, clé, stockage, compte admin."""
+    try:
+        result = await tenant_provisioning.provision_tenant(
+            nom_cabinet=body.nom_cabinet,
+            contact_email=body.contact_email,
+            admin_email=body.admin_email,
+            admin_first_name=body.admin_first_name,
+            admin_last_name=body.admin_last_name,
+            slug=body.slug,
+            numero_agrement=body.numero_agrement,
+            pays=body.pays,
+            contact_telephone=body.contact_telephone,
+            adresse=body.adresse,
+            totp_required=body.totp_required,
+            max_users=body.max_users,
+            utilisateurs=[u.model_dump() for u in body.utilisateurs],
+            super_admin_id=admin.id,
+        )
+    except ProvisioningError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+
+    return TenantCreateResponse(
+        tenant=TenantOut.model_validate(result.tenant),
+        admin_email=result.admin_email,
+        admin_temp_password=result.admin_temp_password,
+        utilisateurs=[
+            ProvisionedUser(email=u.email, role=u.role, temp_password=u.temp_password)
+            for u in result.utilisateurs
+        ],
+    )
+
+
+@router.patch("/tenants/{tenant_id}", response_model=TenantOut)
+async def update_tenant(
+    tenant_id: str,
+    body: TenantUpdateRequest,
+    admin: SuperAdmin = Depends(get_current_super_admin),
+) -> TenantOut:
+    """Corrige les attributs administratifs d'un cabinet après sa création.
+
+    Sans cet endpoint, une faute de frappe sur le nom ou une erreur de quota
+    était définitive : seul le logo pouvait être repris.
+    """
+    # `exclude_unset` et non `exclude_none` : à défaut, un champ volontairement
+    # remis à vide (téléphone, adresse, agrément) serait silencieusement ignoré.
+    changes = body.model_dump(exclude_unset=True)
+    try:
+        tenant = await tenant_provisioning.update_tenant(
+            tenant_id, changes, super_admin_id=admin.id
+        )
+    except ProvisioningError as exc:
+        message = str(exc)
+        code = (
+            status.HTTP_404_NOT_FOUND
+            if "introuvable" in message
+            else status.HTTP_400_BAD_REQUEST
+        )
+        raise HTTPException(status_code=code, detail=message)
+    return TenantOut.model_validate(tenant)
+
+
+@router.post("/tenants/{tenant_id}/admin-password-reset", response_model=TenantAdminResetResponse)
+async def reset_tenant_admin_password(
+    tenant_id: str,
+    admin: SuperAdmin = Depends(get_current_super_admin),
+) -> TenantAdminResetResponse:
+    """Rétablit l'accès d'un cabinet dont le mot de passe admin est perdu.
+
+    Borné au compte de rôle `admin` du cabinet : l'exploitant rouvre la porte
+    d'entrée, il ne prend pas la main sur les comptes métier. La 2FA de ce
+    compte est également réinitialisée — cf. `reset_tenant_admin_password`.
+    """
+    try:
+        email, temp_password = await tenant_provisioning.reset_tenant_admin_password(
+            tenant_id, super_admin_id=admin.id
+        )
+    except ProvisioningError as exc:
+        message = str(exc)
+        code = (
+            status.HTTP_404_NOT_FOUND
+            if "introuvable" in message
+            else status.HTTP_400_BAD_REQUEST
+        )
+        raise HTTPException(status_code=code, detail=message)
+    return TenantAdminResetResponse(admin_email=email, admin_temp_password=temp_password)
+
+
+async def _set_statut(tenant_id: str, statut: str, motif: str | None, admin_id: str) -> TenantOut:
+    try:
+        tenant = await tenant_provisioning.set_tenant_statut(
+            tenant_id, statut, motif=motif, super_admin_id=admin_id
+        )
+    except ProvisioningError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+    return TenantOut.model_validate(tenant)
+
+
+@router.post("/tenants/{tenant_id}/activate", response_model=TenantOut)
+async def activate_tenant(
+    tenant_id: str, admin: SuperAdmin = Depends(get_current_super_admin)
+) -> TenantOut:
+    """Met le cabinet en production — ses utilisateurs peuvent se connecter."""
+    return await _set_statut(tenant_id, "production", None, admin.id)
+
+
+@router.post("/tenants/{tenant_id}/suspend", response_model=TenantOut)
+async def suspend_tenant(
+    tenant_id: str,
+    body: TenantStatutRequest,
+    admin: SuperAdmin = Depends(get_current_super_admin),
+) -> TenantOut:
+    """Coupe l'accès sans toucher aux données (conservation Art. 23 préservée)."""
+    return await _set_statut(tenant_id, "suspendu", body.motif, admin.id)
+
+
+@router.post("/tenants/{tenant_id}/archive", response_model=TenantOut)
+async def archive_tenant(
+    tenant_id: str,
+    body: TenantStatutRequest,
+    admin: SuperAdmin = Depends(get_current_super_admin),
+) -> TenantOut:
+    """Archive le cabinet.
+
+    Le schéma et ses données sont **conservés** : la suppression physique reste
+    interdite avant 10 ans (Art. 23, Art. 197). L'archivage ne fait que fermer
+    définitivement l'accès applicatif.
+    """
+    return await _set_statut(tenant_id, "archive", body.motif, admin.id)
+
+
+@router.get("/tenants/{tenant_id}/metrics", response_model=TenantMetricsOut)
+async def tenant_metrics(
+    tenant_id: str,
+    _: SuperAdmin = Depends(get_current_super_admin),
+    db: AsyncSession = Depends(get_shared_db),
+) -> TenantMetricsOut:
+    """Volumétrie d'un cabinet — pour le dimensionnement et les quotas.
+
+    Seuls des `COUNT(*)` sont exécutés : aucun contenu de dossier n'est lu ni
+    retourné. C'est la limite exacte de ce que l'exploitant peut voir.
+    """
+    tenant = await db.get(Tenant, tenant_id)
+    if tenant is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Cabinet introuvable.")
+
+    context = TenantContext(
+        id=tenant.id, schema=tenant.schema_name, slug=tenant.slug, nom=tenant.nom_cabinet,
+        statut=tenant.statut, key_salt=tenant.key_salt, totp_required=tenant.totp_required,
+        storage_bucket=tenant.storage_bucket,
+    )
+    with tenant_scope(context):
+        async with tenant_session(context) as tdb:
+            total = (await tdb.execute(select(func.count()).select_from(User))).scalar_one()
+            actifs = (
+                await tdb.execute(
+                    select(func.count()).select_from(User).where(User.is_active.is_(True))
+                )
+            ).scalar_one()
+            dossiers = (await tdb.execute(select(func.count()).select_from(Dossier))).scalar_one()
+
+    return TenantMetricsOut(
+        tenant_id=tenant_id,
+        utilisateurs_actifs=actifs,
+        utilisateurs_total=total,
+        quota_utilisateurs=tenant.max_users,
+        dossiers_total=dossiers,
+    )
+
+
+@router.get("/metrics", response_model=PlatformMetricsOut)
+async def platform_metrics(
+    _: SuperAdmin = Depends(get_current_super_admin),
+    db: AsyncSession = Depends(get_shared_db),
+) -> PlatformMetricsOut:
+    """Agrégat plateforme — page d'accueil de la console.
+
+    Le comptage parcourt un schéma après l'autre : il n'existe pas de vue
+    globale en schéma-par-tenant, et c'est précisément l'isolation recherchée.
+    Le coût est linéaire en nombre de cabinets ; à l'échelle d'une chambre
+    notariale nationale, cela reste quelques dizaines de `COUNT(*)`. Si le parc
+    grandissait, le calcul devrait passer en tâche planifiée plutôt qu'être
+    servi à chaud.
+
+    Un cabinet dont le comptage échoue (migration en cours, schéma indisponible)
+    est listé dans `cabinets_injoignables` au lieu de faire échouer la page :
+    la console doit rester utilisable pour réparer précisément ce cabinet-là.
+    """
+    tenants = (
+        await db.execute(select(Tenant).order_by(Tenant.created_at.desc()))
+    ).scalars().all()
+
+    par_statut: dict[str, int] = {}
+    for tenant in tenants:
+        par_statut[tenant.statut] = par_statut.get(tenant.statut, 0) + 1
+
+    utilisateurs_total = 0
+    utilisateurs_actifs = 0
+    dossiers_total = 0
+    injoignables: list[str] = []
+
+    for tenant in tenants:
+        # Un cabinet en `configuration` peut ne pas avoir de schéma exploitable ;
+        # un cabinet archivé n'a plus d'activité à comptabiliser.
+        if tenant.statut == "archive":
+            continue
+        context = TenantContext(
+            id=tenant.id, schema=tenant.schema_name, slug=tenant.slug, nom=tenant.nom_cabinet,
+            statut=tenant.statut, key_salt=tenant.key_salt, totp_required=tenant.totp_required,
+            storage_bucket=tenant.storage_bucket,
+        )
+        try:
+            with tenant_scope(context):
+                async with tenant_session(context) as tdb:
+                    utilisateurs_total += (
+                        await tdb.execute(select(func.count()).select_from(User))
+                    ).scalar_one()
+                    utilisateurs_actifs += (
+                        await tdb.execute(
+                            select(func.count()).select_from(User).where(User.is_active.is_(True))
+                        )
+                    ).scalar_one()
+                    dossiers_total += (
+                        await tdb.execute(select(func.count()).select_from(Dossier))
+                    ).scalar_one()
+        except Exception:
+            logger.warning("platform_metrics.tenant_unreachable", tenant_id=tenant.id)
+            injoignables.append(tenant.nom_cabinet)
+
+    return PlatformMetricsOut(
+        cabinets_total=len(tenants),
+        cabinets_par_statut=par_statut,
+        utilisateurs_total=utilisateurs_total,
+        utilisateurs_actifs=utilisateurs_actifs,
+        dossiers_total=dossiers_total,
+        cabinets_injoignables=injoignables,
+        cabinets_recents=[TenantOut.model_validate(t) for t in tenants[:5]],
+    )
+
+
+@router.post("/tenants/migrate", response_model=MigrationResultOut)
+async def migrate_tenants(
+    admin: SuperAdmin = Depends(get_current_super_admin),
+) -> MigrationResultOut:
+    """Rejoue les migrations métier sur tous les cabinets.
+
+    En schéma-par-tenant, `alembic upgrade head` ne suffit plus au déploiement :
+    chaque schéma porte sa propre table de versions. Cet endpoint boucle sur
+    l'annuaire et remonte le résultat cabinet par cabinet — un échec isolé
+    n'interrompt pas les autres.
+    """
+    results = await tenant_provisioning.migrate_all_tenants()
+    logger.info("tenants.migrated", super_admin_id=admin.id, results=results)
+    return MigrationResultOut(resultats=results)
+
+
+@router.get("/audit", response_model=list[dict])
+async def exploitation_audit(
+    _: SuperAdmin = Depends(get_current_super_admin),
+    db: AsyncSession = Depends(get_shared_db),
+    limit: int = 100,
+) -> list[dict]:
+    """Journal d'exploitation — distinct de l'audit métier, qui reste dans les cabinets."""
+    rows = (
+        await db.execute(
+            select(TenantAuditLog).order_by(TenantAuditLog.created_at.desc()).limit(min(limit, 500))
+        )
+    ).scalars().all()
+    return [
+        {
+            "id": r.id,
+            "tenant_id": r.tenant_id,
+            "super_admin_id": r.super_admin_id,
+            "action": r.action,
+            "detail": r.detail,
+            "created_at": r.created_at.isoformat() if r.created_at else None,
+        }
+        for r in rows
+    ]
+
+
+# ── Logo d'un cabinet (exploitation) ─────────────────────────────────────────
+#
+# Le Super-Admin peut poser ou remplacer le logo d'un cabinet — typiquement à la
+# création, quand le cabinet n'a encore aucun utilisateur pour le faire lui-même.
+# C'est une donnée d'identité visuelle, pas une donnée métier : y toucher ne
+# rompt pas l'aveuglement de l'exploitant aux dossiers.
+
+
+def _contexte_de(tenant: Tenant) -> TenantContext:
+    return TenantContext(
+        id=tenant.id, schema=tenant.schema_name, slug=tenant.slug, nom=tenant.nom_cabinet,
+        statut=tenant.statut, key_salt=tenant.key_salt, totp_required=tenant.totp_required,
+        storage_bucket=tenant.storage_bucket,
+    )
+
+
+@router.get("/logo/contraintes", response_model=LogoContraintesOut)
+async def super_admin_logo_contraintes(
+    _: SuperAdmin = Depends(get_current_super_admin),
+) -> LogoContraintesOut:
+    return LogoContraintesOut(**branding.contraintes())
+
+
+@router.get("/tenants/{tenant_id}/logo")
+async def super_admin_get_logo(
+    tenant_id: str,
+    _: SuperAdmin = Depends(get_current_super_admin),
+    db: AsyncSession = Depends(get_shared_db),
+) -> Response:
+    tenant = await db.get(Tenant, tenant_id)
+    if tenant is None or not tenant.logo_key:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Aucun logo défini.")
+    contexte = _contexte_de(tenant)
+    try:
+        contenu = branding.lire_logo(contexte, tenant.logo_key)
+    except Exception:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Logo introuvable dans le stockage."
+        )
+    return Response(
+        content=contenu,
+        media_type=tenant.logo_content_type or "image/png",
+        headers={"Cache-Control": "private, max-age=300"},
+    )
+
+
+@router.put("/tenants/{tenant_id}/logo", response_model=LogoOut)
+async def super_admin_upload_logo(
+    tenant_id: str,
+    file: UploadFile = File(...),
+    admin: SuperAdmin = Depends(get_current_super_admin),
+    db: AsyncSession = Depends(get_shared_db),
+) -> LogoOut:
+    tenant = await db.get(Tenant, tenant_id)
+    if tenant is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Cabinet introuvable.")
+
+    contenu = await file.read()
+    try:
+        content_type, extension, largeur, hauteur = branding.valider_logo(
+            contenu, file.content_type
+        )
+    except branding.LogoInvalide as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))
+
+    contexte = _contexte_de(tenant)
+    tenant.logo_key = branding.enregistrer_logo(contexte, contenu, content_type, extension)
+    tenant.logo_content_type = content_type
+    tenant.logo_updated_at = datetime.now(timezone.utc)
+    db.add(TenantAuditLog(
+        tenant_id=tenant_id, super_admin_id=admin.id, action="tenant.logo.updated",
+        detail=f"{largeur}×{hauteur} px, {content_type}",
+    ))
+    await db.commit()
+    await db.refresh(tenant)
+
+    return LogoOut(
+        logo_updated_at=tenant.logo_updated_at,
+        largeur=largeur, hauteur=hauteur, content_type=content_type,
+    )
+
+
+# `response_model=None` est explicite à dessein : ce module active
+# `from __future__ import annotations`, donc l'annotation `-> None` arrive à
+# FastAPI sous forme de chaîne, qu'il résout en `NoneType` et prend alors pour un
+# modèle de réponse — incompatible avec un 204, qui interdit tout corps.
+@router.delete(
+    "/tenants/{tenant_id}/logo",
+    status_code=status.HTTP_204_NO_CONTENT,
+    response_model=None,
+)
+async def super_admin_delete_logo(
+    tenant_id: str,
+    admin: SuperAdmin = Depends(get_current_super_admin),
+    db: AsyncSession = Depends(get_shared_db),
+) -> None:
+    tenant = await db.get(Tenant, tenant_id)
+    if tenant is None or not tenant.logo_key:
+        return
+    branding.supprimer_logo(_contexte_de(tenant), tenant.logo_key)
+    tenant.logo_key = None
+    tenant.logo_content_type = None
+    tenant.logo_updated_at = None
+    db.add(TenantAuditLog(
+        tenant_id=tenant_id, super_admin_id=admin.id, action="tenant.logo.removed",
+    ))
+    await db.commit()

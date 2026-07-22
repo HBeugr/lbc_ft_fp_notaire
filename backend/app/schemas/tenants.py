@@ -1,0 +1,344 @@
+"""Schémas d'exploitation de la plateforme (console Super-Admin).
+
+Aucun de ces schémas n'expose de donnée métier LBC/FT : le Super-Admin
+administre des cabinets, pas des dossiers.
+"""
+from datetime import datetime
+
+from pydantic import BaseModel, EmailStr, Field, field_validator
+
+from app.core.password_policy import validate_password_strength
+
+
+class SuperAdminLoginRequest(BaseModel):
+    email: str
+    password: str
+
+
+class SuperAdminOut(BaseModel):
+    id: str
+    email: str
+    first_name: str
+    last_name: str
+    must_change_password: bool = False
+
+    model_config = {"from_attributes": True}
+
+
+class SuperAdminLoginResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    super_admin: SuperAdminOut
+
+
+class SuperAdminListItem(BaseModel):
+    """Un exploitant vu depuis la console — jamais son empreinte de mot de passe."""
+
+    id: str
+    email: str
+    first_name: str
+    last_name: str
+    is_active: bool
+    must_change_password: bool = False
+    created_at: datetime | None = None
+
+    model_config = {"from_attributes": True}
+
+
+class SuperAdminCreateRequest(BaseModel):
+    email: EmailStr = Field(..., max_length=255)
+    first_name: str = Field(..., min_length=1, max_length=100)
+    last_name: str = Field(..., min_length=1, max_length=100)
+    password: str = Field(..., min_length=12)
+
+    @field_validator("password")
+    @classmethod
+    def _strong(cls, v: str) -> str:
+        return validate_password_strength(v)
+
+
+class SuperAdminStatusRequest(BaseModel):
+    is_active: bool
+
+
+class SuperAdminPasswordChangeRequest(BaseModel):
+    current_password: str
+    new_password: str = Field(..., min_length=12)
+
+    @field_validator("new_password")
+    @classmethod
+    def _strong(cls, v: str) -> str:
+        return validate_password_strength(v)
+
+
+# Rôles cabinet ouverts au pré-provisionnement. `admin` en est exclu : il est
+# créé séparément, et en autoriser un second ici brouillerait la question de
+# savoir quel compte l'exploitant peut réinitialiser.
+_ROLES_PROVISIONNABLES = {
+    "notaire_principal",
+    "responsable_conformite",
+    "clercs",
+    "declarant_centif",
+    "autre_utilisateur",
+}
+
+
+class TenantUserSpec(BaseModel):
+    """Un utilisateur à pré-créer dans le cabinet, mot de passe auto-généré."""
+
+    email: EmailStr = Field(..., max_length=255)
+    first_name: str = Field(..., min_length=1, max_length=100)
+    last_name: str = Field(..., min_length=1, max_length=100)
+    role: str
+
+    @field_validator("role")
+    @classmethod
+    def _role_connu(cls, v: str) -> str:
+        if v not in _ROLES_PROVISIONNABLES:
+            raise ValueError(
+                "Rôle inconnu ou non provisionnable à la création : " + v
+            )
+        return v
+
+
+class ProvisionedUser(BaseModel):
+    """Compte pré-créé — le mot de passe n'est lisible qu'ici, une seule fois."""
+
+    email: str
+    role: str
+    temp_password: str
+
+
+class TenantCreateRequest(BaseModel):
+    """Formulaire de création d'un cabinet.
+
+    Le compte administrateur est créé dans la foulée : sans lui, le cabinet
+    serait un schéma vide auquel personne ne pourrait se connecter.
+    """
+
+    nom_cabinet: str = Field(..., min_length=2, max_length=255)
+    contact_email: EmailStr
+    admin_email: EmailStr
+    admin_first_name: str = Field(..., min_length=1, max_length=100)
+    admin_last_name: str = Field(..., min_length=1, max_length=100)
+    slug: str | None = Field(default=None, max_length=64)
+    numero_agrement: str | None = Field(default=None, max_length=64)
+    pays: str = Field(default="CI", min_length=2, max_length=2)
+    contact_telephone: str | None = Field(default=None, max_length=32)
+    adresse: str | None = None
+    totp_required: bool = True
+    # 0 = illimité. Support d'un futur plan tarifaire.
+    max_users: int = Field(default=0, ge=0)
+    # Collaborateurs pré-créés en même temps que le cabinet. Évite à l'admin
+    # de tout ressaisir à l'ouverture ; facultatif.
+    utilisateurs: list[TenantUserSpec] = Field(default_factory=list)
+
+
+class TenantOut(BaseModel):
+    id: str
+    slug: str
+    nom_cabinet: str
+    statut: str
+    pays: str
+    contact_email: str
+    contact_telephone: str | None = None
+    adresse: str | None = None
+    numero_agrement: str | None = None
+    totp_required: bool
+    max_users: int
+    motif_suspension: str | None = None
+    logo_updated_at: datetime | None = None
+    created_at: datetime | None = None
+    activated_at: datetime | None = None
+    suspended_at: datetime | None = None
+
+    model_config = {"from_attributes": True}
+
+
+class TenantCreateResponse(BaseModel):
+    """Réponse de provisioning.
+
+    `admin_temp_password` n'est retourné qu'ici, à la création : il n'est stocké
+    nulle part en clair et ne peut plus être relu ensuite.
+    """
+
+    tenant: TenantOut
+    admin_email: str
+    admin_temp_password: str
+    # Comptes pré-créés, avec leurs mots de passe temporaires. Même contrat que
+    # celui de l'admin : affichés une fois, stockés nulle part en clair.
+    utilisateurs: list[ProvisionedUser] = Field(default_factory=list)
+
+
+class TenantUpdateRequest(BaseModel):
+    """Modification d'un cabinet existant.
+
+    `slug`, `schema_name` et `key_salt` sont volontairement absents : ils sont
+    figés à la création. Le slug nomme le schéma PostgreSQL et le sel dérive la
+    clé de chiffrement — les changer casserait le routage et rendrait les
+    données déjà chiffrées illisibles. Le statut a ses propres endpoints, qui
+    journalisent un motif.
+
+    Tous les champs sont optionnels : seuls ceux transmis sont modifiés.
+    """
+
+    nom_cabinet: str | None = Field(default=None, min_length=2, max_length=255)
+    contact_email: EmailStr | None = None
+    contact_telephone: str | None = Field(default=None, max_length=32)
+    adresse: str | None = None
+    numero_agrement: str | None = Field(default=None, max_length=64)
+    pays: str | None = Field(default=None, min_length=2, max_length=2)
+    totp_required: bool | None = None
+    max_users: int | None = Field(default=None, ge=0)
+
+
+class TenantAdminResetResponse(BaseModel):
+    """Réinitialisation du mot de passe de l'administrateur d'un cabinet.
+
+    Même contrat qu'à la création : le mot de passe n'est retourné qu'ici et
+    n'est stocké nulle part en clair.
+    """
+
+    admin_email: str
+    admin_temp_password: str
+
+
+class TenantStatutRequest(BaseModel):
+    motif: str | None = Field(default=None, max_length=1000)
+
+
+class TenantMetricsOut(BaseModel):
+    """Métriques d'exploitation — volumétrie uniquement, jamais de contenu."""
+
+    tenant_id: str
+    utilisateurs_actifs: int
+    utilisateurs_total: int
+    quota_utilisateurs: int
+    dossiers_total: int
+
+
+class PlatformMetricsOut(BaseModel):
+    """Agrégat plateforme — page d'accueil de la console.
+
+    Comme pour les métriques par cabinet, seuls des `COUNT(*)` sont exécutés :
+    l'exploitant voit des volumes, jamais un contenu de dossier.
+    """
+
+    cabinets_total: int
+    cabinets_par_statut: dict[str, int]
+    utilisateurs_total: int
+    utilisateurs_actifs: int
+    dossiers_total: int
+    # Cabinets dont le comptage a échoué (schéma en cours de migration, par ex.).
+    # Exposé plutôt que masqué : un total silencieusement faux est pire qu'un
+    # total annoncé comme partiel.
+    cabinets_injoignables: list[str]
+    cabinets_recents: list[TenantOut]
+
+
+class ConsoleCapabilities(BaseModel):
+    """Ce que cette instance de console autorise.
+
+    Permet à l'interface de ne pas proposer une action que l'API refusera :
+    un bouton qui échoue systématiquement est pire que pas de bouton.
+    """
+
+    gestion_utilisateurs_cabinet: bool
+
+
+class TenantUserOut(BaseModel):
+    """Un collaborateur d'un cabinet, vu depuis la console d'exploitation.
+
+    Volontairement pauvre : identité, rôle, état du compte. Aucun rattachement
+    à un dossier, aucune donnée de conformité.
+    """
+
+    id: str
+    email: str
+    first_name: str
+    last_name: str
+    role: str
+    is_active: bool
+    totp_enabled: bool = False
+    must_change_password: bool = False
+    created_at: datetime | None = None
+
+    model_config = {"from_attributes": True}
+
+
+class TenantUserRoleRequest(BaseModel):
+    role: str
+
+    @field_validator("role")
+    @classmethod
+    def _role_connu(cls, v: str) -> str:
+        if v not in _ROLES_PROVISIONNABLES and v != "admin":
+            raise ValueError("Rôle inconnu : " + v)
+        return v
+
+
+class TenantUserStatusRequest(BaseModel):
+    is_active: bool
+
+
+class TenantUserPasswordResetResponse(BaseModel):
+    """Mot de passe temporaire — affiché une seule fois, stocké nulle part en clair."""
+
+    email: str
+    temp_password: str
+
+
+class RoleInfo(BaseModel):
+    """Un rôle cabinet et ce qu'il ouvre. Lecture seule : la console d'exploitation
+    décrit les rôles, elle ne les modifie pas."""
+
+    key: str
+    label: str
+    capabilities: list[str]
+
+
+class MigrationResultOut(BaseModel):
+    resultats: dict[str, str]
+
+
+class TenantContextOut(BaseModel):
+    """Cabinet de la session courante — alimente le branding et le portier côté client."""
+
+    id: str
+    slug: str
+    nom_cabinet: str
+    statut: str
+    totp_required: bool
+    max_users: int
+    # Identité du cabinet, affichée dans « Mon cabinet ». Ce sont des données
+    # d'en-tête, pas des données de conformité : les exposer à ses propres
+    # utilisateurs ne rompt aucun cloisonnement.
+    pays: str
+    numero_agrement: str | None = None
+    # Horodatage du logo : sert de « cache-buster » côté interface, pour qu'un
+    # changement de logo soit visible immédiatement sans vider le cache navigateur.
+    logo_updated_at: datetime | None = None
+
+    model_config = {"from_attributes": True}
+
+
+class LogoOut(BaseModel):
+    """Résultat d'un envoi de logo."""
+
+    logo_updated_at: datetime | None = None
+    largeur: int
+    hauteur: int
+    content_type: str
+
+
+class LogoContraintesOut(BaseModel):
+    """Contraintes d'image, affichées AVANT l'envoi.
+
+    Les exposer évite à l'utilisateur de découvrir la règle par un refus.
+    """
+
+    formats: list[str]
+    taille_max_octets: int
+    dimension_min_px: int
+    dimension_max_px: int
+    ratio_max: float

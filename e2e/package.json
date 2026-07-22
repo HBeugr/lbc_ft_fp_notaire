@@ -1,0 +1,13 @@
+{
+  "name": "notaire-e2e",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Tests E2E (Playwright, API) — chaîne d'assignation notaire",
+  "scripts": {
+    "test": "playwright test",
+    "test:report": "playwright show-report"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.48.0"
+  }
+}

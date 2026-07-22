@@ -1,0 +1,295 @@
+@import "tailwindcss";
+
+/* ============================================================
+   LBC/FT/FP Design System — Tokens CSS
+   Source: projet de référence LBCFT conformité
+   NE PAS MODIFIER sans validation design
+   ============================================================ */
+
+:root {
+  /* Structure */
+  --color-sidebar-bg: #1b2b4b;
+  --color-sidebar-darker: #0f1624;
+  --color-accent-gold: #c9a227;
+  --color-bg-page: #f4f6f9;
+  --color-bg-card: #ffffff;
+  --color-border: #e5e7eb;
+
+  /* Texte */
+  --color-text-primary: #1e293b;
+  --color-text-secondary: #64748b;
+  --color-text-muted: #94a3b8;
+
+  /* Risques — VERROUILLÉ (NFR-8 / FR-7) */
+  --color-risk-low: #16a34a;
+  --color-risk-low-bg: #dcfce7;
+  --color-risk-medium: #d97706;
+  --color-risk-medium-bg: #fef3c7;
+  --color-risk-high: #dc2626;
+  --color-risk-high-bg: #fee2e2;
+
+  /* Statuts dossiers */
+  --color-status-brouillon: #64748b;
+  --color-status-brouillon-bg: #f1f5f9;
+  --color-status-en-analyse: #2563eb;
+  --color-status-en-analyse-bg: #dbeafe;
+  --color-status-valide: #16a34a;
+  --color-status-valide-bg: #dcfce7;
+  --color-status-vigilance: #d97706;
+  --color-status-vigilance-bg: #fef3c7;
+  --color-status-complements: #7c3aed;
+  --color-status-complements-bg: #ede9fe;
+  --color-status-bloque: #dc2626;
+  --color-status-bloque-bg: #fee2e2;
+  --color-status-traite: #0891b2;
+  --color-status-traite-bg: #e0f2fe;
+  --color-status-cloture: #9ca3af;
+  --color-status-cloture-bg: #f9fafb;
+
+  /* Boutons */
+  --color-btn-primary: #1b2b4b;
+  --color-btn-primary-hover: #243750;
+  --color-btn-accent: #c9a227;
+}
+
+/* Base */
+* {
+  box-sizing: border-box;
+}
+
+body {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--color-text-primary);
+  background-color: var(--color-bg-page);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Sidebar layout */
+.app-layout {
+  display: flex;
+  min-height: 100vh;
+}
+
+.sidebar {
+  width: 240px;
+  min-height: 100vh;
+  background: var(--color-sidebar-bg);
+  position: fixed;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+}
+
+.main-content {
+  margin-left: 240px;
+  flex: 1;
+  padding: 2rem;
+}
+
+/* Cards */
+.card {
+  background: var(--color-bg-card);
+  border-radius: 8px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  padding: 1.5rem;
+}
+
+/* Risk badges — palette verrouillée */
+.badge-risk-faible {
+  color: var(--color-risk-low);
+  background: var(--color-risk-low-bg);
+  border-radius: 12px;
+  padding: 2px 10px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.badge-risk-moyen {
+  color: var(--color-risk-medium);
+  background: var(--color-risk-medium-bg);
+  border-radius: 12px;
+  padding: 2px 10px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.badge-risk-eleve {
+  color: var(--color-risk-high);
+  background: var(--color-risk-high-bg);
+  border-radius: 12px;
+  padding: 2px 10px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+/* Inputs */
+input, select, textarea {
+  background: #f1f5f9;
+  border: 1.5px solid transparent;
+  border-radius: 8px;
+  padding: 0.5rem 0.75rem;
+  font-size: 14px;
+  transition: border-color 0.15s, box-shadow 0.15s;
+  width: 100%;
+}
+
+input:focus, select:focus, textarea:focus {
+  outline: none;
+  border-color: var(--color-accent-gold);
+  box-shadow: 0 0 0 3px rgba(201, 162, 39, 0.12);
+}
+
+/* Mobile header (hidden on desktop) */
+.mobile-header {
+  display: none;
+}
+
+/* Sidebar backdrop (mobile only) */
+.sidebar-backdrop {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  z-index: 45;
+}
+
+.fade-enter-active,
+.fade-leave-active {
+  transition: opacity 0.2s ease;
+}
+
+.fade-enter-from,
+.fade-leave-to {
+  opacity: 0;
+}
+
+/* ── Responsive ────────────────────────────────────────────── */
+@media (max-width: 768px) {
+  .mobile-header {
+    display: flex;
+    align-items: center;
+    gap: 0.875rem;
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 56px;
+    background: var(--color-sidebar-bg);
+    padding: 0 1rem;
+    z-index: 40;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+  }
+
+  .mobile-header .burger-btn {
+    background: none;
+    border: none;
+    cursor: pointer;
+    color: rgba(255, 255, 255, 0.8);
+    display: flex;
+    align-items: center;
+    padding: 4px;
+    border-radius: 6px;
+    transition: background 0.12s, color 0.12s;
+  }
+
+  .mobile-header .burger-btn:hover {
+    background: rgba(255, 255, 255, 0.1);
+    color: #fff;
+  }
+
+  .mobile-logo-title {
+    font-size: 0.9375rem;
+    font-weight: 700;
+    color: #fff;
+    letter-spacing: 0.02em;
+  }
+
+  .sidebar-backdrop {
+    display: block;
+  }
+
+  .sidebar {
+    transform: translateX(-100%);
+    transition: transform 0.25s ease;
+    z-index: 50;
+  }
+
+  .sidebar.sidebar--open {
+    transform: translateX(0);
+  }
+
+  .main-content {
+    margin-left: 0;
+    padding: 1rem;
+    padding-top: calc(56px + 1rem);
+  }
+
+  /* Tables — allow horizontal scroll on mobile */
+  .table-card {
+    overflow-x: auto !important;
+  }
+}
+
+/* Small phones */
+@media (max-width: 480px) {
+  .page-header {
+    flex-direction: column;
+    gap: 0.75rem;
+    align-items: flex-start !important;
+  }
+
+  .filter-bar {
+    flex-wrap: wrap;
+  }
+
+  .filter-search {
+    min-width: unset !important;
+    width: 100%;
+  }
+
+  .form-row {
+    grid-template-columns: 1fr !important;
+  }
+
+  .kpi-grid {
+    grid-template-columns: 1fr 1fr !important;
+  }
+}
+
+/* Buttons */
+.btn-primary {
+  background: var(--color-btn-primary);
+  color: #ffffff;
+  border: none;
+  border-radius: 8px;
+  padding: 0.5rem 1.25rem;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.btn-primary:hover {
+  background: var(--color-btn-primary-hover);
+}
+
+.btn-primary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn-accent {
+  background: var(--color-btn-accent);
+  color: #ffffff;
+  border: none;
+  border-radius: 8px;
+  padding: 0.5rem 1.25rem;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+}

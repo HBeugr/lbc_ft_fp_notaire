@@ -1,0 +1,8 @@
+# Dépendances de la reprise de données MySQL → PostgreSQL (scripts/migrate_mysql_to_tenant.py).
+#
+# Volontairement séparées de requirements.txt : lire du MySQL est une opération
+# ponctuelle de bascule, pas une capacité du produit. L'image applicative ne doit
+# pas embarquer de pilote vers un moteur que la plateforme n'utilise plus.
+#
+#   pip install -r requirements-migration.txt
+pymysql==1.1.1

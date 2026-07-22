@@ -1,0 +1,46 @@
+# =============================================================================
+# Surcharge DÉVELOPPEMENT — à combiner avec docker-compose.yml
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+#
+# Expose les ports d'infrastructure sur l'hôte, décalés pour ne pas entrer en
+# conflit avec une instance locale ni avec les autres verticaux tournant sur la
+# même machine. Le vertical assujetti occupe déjà 5433 (PostgreSQL), 6380
+# (Redis) et 9010/9011 (MinIO) : les valeurs ci-dessous s'en écartent afin que
+# les deux piles puissent tourner en parallèle.
+# =============================================================================
+services:
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    ports:
+      - "4000:80"
+    networks:
+      - default
+
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.dev
+    volumes:
+      - ./backend:/app
+    ports:
+      - "9000:8000"
+    environment:
+      - APP_ENV=development
+
+  db:
+    # PostgreSQL 16 — 5434 côté hôte, 5432 dans le conteneur.
+    # Connexion locale :
+    #   psql -h 127.0.0.1 -p 5434 -U notaire_user -d notaire_lbcft
+    ports:
+      - "5434:5432"
+
+  redis:
+    ports:
+      - "6389:6379"
+
+  storage:
+    ports:
+      - "9020:9000"
+      - "9021:9001"
