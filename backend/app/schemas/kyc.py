@@ -410,7 +410,10 @@ class DossierCreate(BaseModel):
     nb_parties: int = 1
 
 
-class DossierTransactionRequest(BaseModel):
+# _BlankToNone : un champ vidé côté UI (input number effacé, select non choisi)
+# arrive en "" et casserait la validation float/Literal → 422 « Erreur de
+# sauvegarde ». On retombe sur None comme pour les schémas KYC.
+class DossierTransactionRequest(_BlankToNone):
     montant_tranche: Literal["moins_15m", "plus_15m"] | None = None
     montant_transaction: float | None = Field(None, ge=0)
     mode_paiement: Literal["especes", "cheque", "virement", "mix", "paiement_tiers", "autre"] | None = None

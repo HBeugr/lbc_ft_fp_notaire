@@ -13,6 +13,10 @@
         <h1 class="page-title">Formulaire KYC — Personne Physique</h1>
         <p class="page-subtitle">Identification et évaluation du risque client notarial</p>
       </div>
+      <button class="btn-ghost" @click="router.push({ name: 'kyc-detail', params: { id: dossierId } })">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="btn-icon"><polyline points="15 18 9 12 15 6"/></svg>
+        Retour
+      </button>
     </div>
 
     <div v-if="loading" class="card loading-card">Chargement…</div>
@@ -476,7 +480,15 @@ const errors      = ref<Record<string, string>>({})
 // dans le 1er cas (ex. « Client sur liste de sanctions — dossier bloqué »).
 function setSaveError(e: any): void {
   const detail = e?.response?.data?.detail
-  saveErrorMsg.value = (e?.response?.status === 422 && typeof detail === 'string') ? detail : ''
+  // detail STRING = blocage métier (ex. sanctions T3) ; detail ARRAY = validation
+  // Pydantic ; sinon message réseau. On affiche toujours une cause exploitable.
+  if (typeof detail === 'string') {
+    saveErrorMsg.value = detail
+  } else if (Array.isArray(detail)) {
+    saveErrorMsg.value = detail.map((d: any) => d?.msg).filter(Boolean).join(' · ')
+  } else {
+    saveErrorMsg.value = e?.message || ''
+  }
   saveStatus.value = 'error'
 }
 
@@ -653,7 +665,11 @@ async function saveSection(): Promise<void> {
   if (currentStep.value === 6) {
     await dossiersService.saveTransaction(dossierId, {
       montant_tranche: transaction.montant_tranche || undefined,
-      montant_transaction: transaction.montant_transaction ?? undefined,
+      // v-model.number renvoie '' quand le champ est vidé : on n'envoie le
+      // montant que si c'est un nombre fini, sinon 422 côté backend.
+      montant_transaction: typeof transaction.montant_transaction === 'number' && Number.isFinite(transaction.montant_transaction)
+        ? transaction.montant_transaction
+        : undefined,
       mode_paiement: transaction.mode_paiement || undefined,
     })
   }
@@ -715,7 +731,7 @@ async function finish() {
 <style scoped>
 .pp-page { max-width: 860px; display: flex; flex-direction: column; gap: 1.25rem; }
 
-.page-header { margin-bottom: 0; }
+.page-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; margin-bottom: 0; }
 .breadcrumb { display: flex; align-items: center; gap: 0.25rem; margin-bottom: 0.25rem; }
 .breadcrumb-link { background: none; border: none; cursor: pointer; font-size: 0.8125rem; color: var(--color-text-secondary); padding: 0; }
 .breadcrumb-link:hover { color: var(--color-sidebar-bg); }
