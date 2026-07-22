@@ -10,11 +10,14 @@ services:
     build:
       context: .
       dockerfile: frontend/Dockerfile
-    # Pas de port hôte en production : l'accès public passe par un domaine
-    # HTTPS routé via Traefik sur `dokploy-network` (Dokploy → Domains →
-    # service `frontend`, port conteneur 80). Le développement republie
-    # 4000:80 via docker-compose.dev.yml, ce qui permet dev + prod sur le
-    # même VPS sans collision de ports.
+    # Port hôte de PRODUCTION. Le VPS n'a pas de domaine : l'accès se fait en
+    # http://<VPS>:8082 (le port 80 est déjà occupé par le vertical assujetti,
+    # 8081 par sa préproduction). La dev REMPLACE ce mapping par 4000:80 via
+    # `ports: !override` dans docker-compose.dev.yml → dev (4000) et prod (8082)
+    # cohabitent sur le même VPS sans collision. L'API reste interne (le nginx
+    # du frontend proxifie /api → api:8000).
+    ports:
+      - "8082:80"
     depends_on:
       api:
         condition: service_healthy
