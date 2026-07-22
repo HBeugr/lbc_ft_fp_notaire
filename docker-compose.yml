@@ -11,13 +11,14 @@ services:
       context: .
       dockerfile: frontend/Dockerfile
     # Port hôte de PRODUCTION. Le VPS n'a pas de domaine : l'accès se fait en
-    # http://<VPS>:8082 (le port 80 est déjà occupé par le vertical assujetti,
-    # 8081 par sa préproduction). La dev REMPLACE ce mapping par 4000:80 via
-    # `ports: !override` dans docker-compose.dev.yml → dev (4000) et prod (8082)
+    # http://<VPS>:8084. Les ports 80/443 (Traefik), 8081/8082/8083 sont déjà
+    # occupés par les autres verticaux (assujetti, comptabilité, immo) → 8084
+    # est le premier libre. La dev REMPLACE ce mapping par 4000:80 via
+    # `ports: !override` dans docker-compose.dev.yml → dev (4000) et prod (8084)
     # cohabitent sur le même VPS sans collision. L'API reste interne (le nginx
     # du frontend proxifie /api → api:8000).
     ports:
-      - "8082:80"
+      - "8084:80"
     depends_on:
       api:
         condition: service_healthy
