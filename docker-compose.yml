@@ -10,8 +10,11 @@ services:
     build:
       context: .
       dockerfile: frontend/Dockerfile
-    ports:
-      - "4000:80"
+    # Pas de port hôte en production : l'accès public passe par un domaine
+    # HTTPS routé via Traefik sur `dokploy-network` (Dokploy → Domains →
+    # service `frontend`, port conteneur 80). Le développement republie
+    # 4000:80 via docker-compose.dev.yml, ce qui permet dev + prod sur le
+    # même VPS sans collision de ports.
     depends_on:
       api:
         condition: service_healthy
@@ -24,8 +27,10 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
-    ports:
-      - "9000:8000"
+    # Aucun port hôte en production : l'API n'est jointe que par le nginx du
+    # frontend, en interne (`proxy_pass http://api:8000/api/`). L'exposer
+    # publierait /api sans TLS ni frontal. Le développement republie 9000:8000
+    # via docker-compose.dev.yml pour le debug local.
     env_file: .env
     environment:
       # Ces deux valeurs sont IMPOSÉES ici plutôt que laissées à la configuration
