@@ -13,7 +13,10 @@ services:
     build:
       context: .
       dockerfile: frontend/Dockerfile
-    ports:
+    # !override REMPLACE le port de prod (8082:80) hérité de docker-compose.yml
+    # au lieu de le concaténer — sans quoi la dev capterait aussi 8082 et
+    # entrerait en collision avec la prod sur le même VPS.
+    ports: !override
       - "4000:80"
     networks:
       - default
