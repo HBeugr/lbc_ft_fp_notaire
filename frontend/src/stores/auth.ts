@@ -50,6 +50,26 @@ export interface TenantMe {
   logo_updated_at: string | null
 }
 
+/**
+ * Lit le claim `totp_pending` d'un jeton d'accès (JWT). Une session dont la 2FA
+ * n'est pas encore validée porte ce claim à `true` : elle NE doit PAS être
+ * traitée comme authentifiée (sinon un retour navigateur vers /login retombe sur
+ * la redirection « déjà connecté » → dashboard, contournant le second facteur).
+ * Décodage tolérant : tout jeton illisible est considéré non-pending.
+ */
+function decodeTotpPending(token: string | null): boolean {
+  if (!token) return false
+  try {
+    const part = token.split('.')[1]
+    if (!part) return false
+    let b64 = part.replace(/-/g, '+').replace(/_/g, '/')
+    b64 += '='.repeat((4 - (b64.length % 4)) % 4)
+    return JSON.parse(atob(b64))?.totp_pending === true
+  } catch {
+    return false
+  }
+}
+
 export const useAuthStore = defineStore('auth', () => {
   const accessToken = ref<string | null>(null)
   const user = ref<UserInfo | null>(null)
@@ -65,6 +85,8 @@ export const useAuthStore = defineStore('auth', () => {
   }
 
   const isAuthenticated = computed(() => !!accessToken.value && !!user.value)
+  // Session identifiée mais dont le 2e facteur n'est pas encore saisi.
+  const totpPending = computed(() => decodeTotpPending(accessToken.value))
   const role = computed(() => user.value?.role ?? null)
   const mustChangePassword = computed(() => !!user.value?.must_change_password)
 
@@ -248,6 +270,7 @@ export const useAuthStore = defineStore('auth', () => {
     tenant,
     tenantMessage,
     isAuthenticated,
+    totpPending,
     mustChangePassword,
     role,
     isSupervisor,

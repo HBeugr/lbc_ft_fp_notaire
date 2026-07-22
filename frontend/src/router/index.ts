@@ -255,6 +255,15 @@ router.beforeEach(async (to) => {
 
   await auth.bootstrapReady
 
+  // Session en attente de validation 2FA : le jeton d'accès porte le claim
+  // `totp_pending`. Tant que le code n'est pas saisi, la session n'est PAS
+  // authentifiée — on la maintient sur la page de vérification. Sans ce garde, un
+  // simple retour navigateur vers /login retombait sur la redirection « déjà
+  // connecté » → dashboard, contournant le second facteur (Art. 29).
+  if (auth.totpPending) {
+    return to.name === '2fa-verify' ? true : { name: '2fa-verify' }
+  }
+
   // Redirect authenticated users away from login
   if (to.name === 'login' && auth.isAuthenticated) {
     if (auth.mustChangePassword) return { name: 'change-password' }
