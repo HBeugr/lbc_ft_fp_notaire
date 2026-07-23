@@ -10,15 +10,16 @@ services:
     build:
       context: .
       dockerfile: frontend/Dockerfile
-    # Port hôte de PRODUCTION. Le VPS n'a pas de domaine : l'accès se fait en
-    # http://<VPS>:8084. Les ports 80/443 (Traefik), 8081/8082/8083 sont déjà
-    # occupés par les autres verticaux (assujetti, comptabilité, immo) → 8084
-    # est le premier libre. La dev REMPLACE ce mapping par 4000:80 via
-    # `ports: !override` dans docker-compose.dev.yml → dev (4000) et prod (8084)
-    # cohabitent sur le même VPS sans collision. L'API reste interne (le nginx
-    # du frontend proxifie /api → api:8000).
+    # Port hôte PARAMÉTRABLE par stack. Les stacks Dokploy dev ET prod buildent
+    # toutes deux sur CE fichier (Dokploy ne lit pas docker-compose.dev.yml), donc
+    # un port codé en dur les met en collision sur le même VPS. Chaque stack fixe
+    # donc FRONTEND_HOST_PORT dans ses variables d'env :
+    #   · prod → FRONTEND_HOST_PORT=8085   (http://<VPS>:8085)
+    #   · dev  → laissée au défaut 8084
+    # (80/443 = Traefik, 8081/8082/8083 = autres verticaux, déjà pris.)
+    # L'API reste interne : le nginx du frontend proxifie /api → api:8000.
     ports:
-      - "8084:80"
+      - "${FRONTEND_HOST_PORT:-8084}:80"
     depends_on:
       api:
         condition: service_healthy
