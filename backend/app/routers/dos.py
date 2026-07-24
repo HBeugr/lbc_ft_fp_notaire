@@ -33,7 +33,7 @@ _DELAI_ACCUSE_JOURS = 15
 
 
 async def require_dos_access(user: User = Depends(get_current_user)) -> User:
-    if user.role not in _DOS_ACCESS_ROLES:
+    if not user.a_role(*_DOS_ACCESS_ROLES):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Accès réservé aux acteurs de la déclaration (Art. 63).",
@@ -241,7 +241,7 @@ async def valider_dos(
     db: AsyncSession = Depends(get_db),
 ) -> DosOut:
     """Validation conformité par le Responsable Conformité (1re validation, Art. 100)."""
-    if current_user.role not in ("responsable_conformite", "admin"):
+    if not current_user.a_role("responsable_conformite", "admin"):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Validation réservée au Responsable Conformité.")
     dos = await _get_dos_or_404(db, dos_id)
     if dos.statut not in ("en_validation", "soumis"):
@@ -267,7 +267,7 @@ async def transmettre_dos(
 ) -> DosOut:
     """Autorisation finale + transmission CENTIF par le Notaire Principal (DG, Art. 100).
     Le signataire doit être distinct du Responsable Conformité ayant validé."""
-    if current_user.role not in ("notaire_principal", "admin"):
+    if not current_user.a_role("notaire_principal", "admin"):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Transmission réservée au Notaire Principal.")
     dos = await _get_dos_or_404(db, dos_id)
     if dos.statut != "validee_rc":
@@ -442,7 +442,7 @@ async def export_dos_pdf(
     db: AsyncSession = Depends(get_db),
 ) -> Response:
     """Export PDF du DOS (DOS-05) — reserve a l'Admin et au Notaire Principal (Art. 63)."""
-    if current_user.role not in ("admin", "notaire_principal"):
+    if not current_user.a_role("admin", "notaire_principal"):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="L'export PDF d'une DOS est reserve au Notaire Principal et a l'Administrateur.",

@@ -85,7 +85,7 @@ def _require_registre_access(reg_id: str, actor: User) -> None:
     reg = REGISTRE_DEFS.get(reg_id)
     if not reg:
         raise HTTPException(status_code=404, detail="Registre inconnu.")
-    if actor.role not in _roles_autorises(reg):
+    if not actor.a_role(*_roles_autorises(reg)):
         raise HTTPException(status_code=403, detail="Accès non autorisé à ce registre.")
 
 
@@ -211,7 +211,7 @@ async def list_registres(current_user: User = Depends(get_current_user)) -> dict
     for key, reg in REGISTRE_DEFS.items():
         # Même règle que `_require_registre_access` : la liste ne doit pas révéler
         # l'existence de registres que l'appelant n'a pas le droit de consulter.
-        if current_user.role not in _roles_autorises(reg):
+        if not current_user.a_role(*_roles_autorises(reg)):
             continue
         visible[key] = {"id": key, "label": reg["label"], "confidential": reg.get("confidential", False)}
     return {"registres": list(visible.values())}

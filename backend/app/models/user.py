@@ -1,7 +1,17 @@
 import uuid
-from sqlalchemy import String, Boolean, Enum as SAEnum, DateTime, Text, func
+from sqlalchemy import String, Boolean, Enum as SAEnum, DateTime, JSON, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
 from app.core.database import Base
+
+# Rôles reconnus. `role` porte le rôle PRINCIPAL (affichage, audit, en-tête des
+# rapports) ; `roles_extra` porte les rôles cumulés.
+ROLES_CONNUS = (
+    "admin", "notaire_principal", "responsable_conformite",
+    "clercs", "declarant_centif", "autre_utilisateur",
+)
+
+# Rôles de supervision : vue transversale + 2FA exigée (Art. 29).
+ROLES_SUPERVISEURS = ("admin", "notaire_principal", "responsable_conformite")
 
 
 class User(Base):
@@ -24,6 +34,10 @@ class User(Base):
         ),
         nullable=False,
     )
+    # Rôles CUMULÉS en plus de `role`. Une même personne (donc un même email, qui
+    # reste la clé de connexion) peut porter plusieurs casquettes sans dupliquer
+    # de compte — cas courant en petite étude. NULL/[] = un seul rôle.
+    roles_extra: Mapped[list | None] = mapped_column(JSON, nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     totp_secret: Mapped[str | None] = mapped_column(String(255), nullable=True)
     totp_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
@@ -40,8 +54,28 @@ class User(Base):
         return f"{self.first_name} {self.last_name}"
 
     @property
+    def roles(self) -> tuple[str, ...]:
+        """Tous les rôles détenus : le principal d'abord, puis les cumulés."""
+        extra = [r for r in (self.roles_extra or []) if r in ROLES_CONNUS]
+        return tuple(dict.fromkeys([self.role, *extra]))
+
+    def a_role(self, *candidats) -> bool:
+        """True si l'utilisateur détient AU MOINS UN des rôles demandés.
+
+        Point de passage unique des autorisations : tester `role` directement
+        ignorerait silencieusement le cumul.
+        """
+        attendus: set[str] = set()
+        for c in candidats:
+            if isinstance(c, str):
+                attendus.add(c)
+            else:
+                attendus.update(c)
+        return not attendus.isdisjoint(self.roles)
+
+    @property
     def is_supervisor(self) -> bool:
-        return self.role in ("admin", "notaire_principal", "responsable_conformite")
+        return self.a_role(*ROLES_SUPERVISEURS)
 
     @property
     def requires_2fa(self) -> bool:
@@ -58,4 +92,4 @@ class User(Base):
         required = tenant.totp_required if tenant is not None else settings.TOTP_REQUIRED
         if not required:
             return False
-        return self.role in ("admin", "notaire_principal", "responsable_conformite")
+        return self.a_role(*ROLES_SUPERVISEURS)

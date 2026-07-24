@@ -172,7 +172,7 @@ async def create_dossier(
         type_operation=body.type_operation,
         type_operation_detail=body.type_operation_detail,
         created_by=current_user.id,
-        assigned_to=current_user.id if current_user.role == "clercs" else None,
+        assigned_to=current_user.id if current_user.a_role("clercs") else None,
     )
     ip = request.client.host if request.client else "unknown"
     await audit_repo.log(
@@ -206,9 +206,9 @@ async def list_assignables(
         if not u.is_active:
             continue
         if u.id == current_user.id:
-            if current_user.role in _SELF_ASSIGN_ROLES:
+            if current_user.a_role(*_SELF_ASSIGN_ROLES):
                 out.append(AssignableUserOut(id=u.id, full_name=u.full_name, role=u.role))
-        elif u.role in targets:
+        elif u.a_role(*targets):
             out.append(AssignableUserOut(id=u.id, full_name=u.full_name, role=u.role))
     return out
 
@@ -333,16 +333,16 @@ async def assign_dossier(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Utilisateur invalide.")
     # Validation chaîne d'assignation (CDC §4.3) — l'Admin reste libre.
     is_self_assign = target_user.id == current_user.id
-    if current_user.role != "admin":
+    if not current_user.a_role("admin"):
         if is_self_assign:
-            if current_user.role not in _SELF_ASSIGN_ROLES:
+            if not current_user.a_role(*_SELF_ASSIGN_ROLES):
                 raise HTTPException(
                     status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                     detail="Votre rôle ne permet pas l'auto-assignation ; routez ce dossier vers un Responsable Conformité ou un Déclarant CENTIF.",
                 )
         else:
             targets = _next_level_roles(current_user.role)
-            if target_user.role not in targets:
+            if not target_user.a_role(*targets):
                 allowed = ", ".join(sorted(targets)) if targets else "personne"
                 raise HTTPException(
                     status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -390,10 +390,10 @@ async def change_statut(
         )
     # 2. RBAC par paire (from, to)
     allowed_roles = _TRANSITION_ROLES.get((dossier.statut, new_statut), frozenset())
-    if current_user.role not in allowed_roles:
+    if not current_user.a_role(*allowed_roles):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Votre rôle ne permet pas cette transition.")
     # 3. WRK-09 — un dossier PPE (Trigger T1, Art. 29) ne peut être validé que par le Notaire Principal
-    if new_statut == "valide" and dossier.trigger_actif == "T1" and current_user.role != "notaire_principal":
+    if new_statut == "valide" and dossier.trigger_actif == "T1" and not current_user.a_role("notaire_principal"):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Dossier PPE (Trigger T1, Art. 29) — la validation requiert le Notaire Principal (WRK-09).",

@@ -118,7 +118,7 @@ async def signaler_alerte_interne(
     db: AsyncSession = Depends(get_db),
 ) -> AlerteOut:
     """Un clerc signale une suspicion au Responsable Conformité (CDC — Art. 29)."""
-    if current_user.role not in _SIGNALEUR_ROLES:
+    if not current_user.a_role(*_SIGNALEUR_ROLES):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Accès réservé aux clercs et à l'administrateur.",
@@ -160,7 +160,7 @@ async def mes_signalements(
     db: AsyncSession = Depends(get_db),
 ) -> list[AlerteOut]:
     """Retourne les signalements internes émis par l'utilisateur courant."""
-    if current_user.role not in _SIGNALEUR_ROLES:
+    if not current_user.a_role(*_SIGNALEUR_ROLES):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Accès réservé aux clercs.")
     items = await alertes_repo.list_by_signaleur(db, signaleur_id=current_user.id)
     return [AlerteOut.from_orm_safe(a) for a in items]

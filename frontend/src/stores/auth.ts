@@ -9,6 +9,9 @@ export interface UserInfo {
   first_name: string
   last_name: string
   role: string
+  /** Tous les rôles détenus (principal en tête). Le cumul ouvre des écrans que le
+   *  seul rôle principal masquerait. Optionnel : jeton émis avant le cumul. */
+  roles?: string[]
   is_active: boolean
   totp_enabled: boolean
   requires_2fa: boolean
@@ -90,8 +93,18 @@ export const useAuthStore = defineStore('auth', () => {
   const role = computed(() => user.value?.role ?? null)
   const mustChangePassword = computed(() => !!user.value?.must_change_password)
 
+  /** Rôles effectifs : repli sur le rôle principal si le back n'a pas envoyé `roles`. */
+  const roles = computed<string[]>(() =>
+    user.value ? (user.value.roles?.length ? user.value.roles : [user.value.role]) : []
+  )
+
+  /** True si l'utilisateur détient AU MOINS UN des rôles demandés, cumul compris. */
+  function aRole(...candidats: string[]): boolean {
+    return candidats.some(r => roles.value.includes(r))
+  }
+
   const isSupervisor = computed(() =>
-    ['admin', 'notaire_principal', 'responsable_conformite'].includes(user.value?.role ?? '')
+    aRole('admin', 'notaire_principal', 'responsable_conformite')
   )
 
   const tenantName = computed(() => tenant.value?.nom ?? null)
@@ -293,5 +306,7 @@ export const useAuthStore = defineStore('auth', () => {
     fetchMe,
     silentRefresh,
     fetchTenant,
+    roles,
+    aRole,
   }
 }, { persist: { paths: ['user', 'tenant'] } })
