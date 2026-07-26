@@ -39,7 +39,7 @@ async def get_assigned_filter(
 def require_roles(roles: list[str]):
     """Factory — lève 403 si le rôle de l'utilisateur n'est pas dans `roles`."""
     def _check(user: User = Depends(get_current_user)) -> User:
-        if user.role not in roles:
+        if not user.a_role(*roles):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Accès non autorisé pour votre rôle.",

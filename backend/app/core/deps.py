@@ -78,7 +78,7 @@ async def get_current_user_for_password_change(
 
 
 async def require_admin(user: User = Depends(get_current_user)) -> User:
-    if user.role != "admin":
+    if not user.a_role("admin"):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Accès réservé aux administrateurs.")
     return user
 
@@ -98,7 +98,7 @@ async def require_user_manager(user: User = Depends(get_current_user)) -> User:
     pas : c'était une permission trop large, donc un défaut de séparation des
     fonctions.
     """
-    if user.role != "admin":
+    if not user.a_role("admin"):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Gestion des utilisateurs réservée à l'Administrateur (ADM-01, Art. 12).")
     return user
 
@@ -110,7 +110,7 @@ async def require_log_reader(user: User = Depends(get_current_user)) -> User:
     Clercs n'ont pas accès aux logs. `require_rc` était utilisé ici, ce qui
     laissait passer le Responsable Conformité — permission trop large.
     """
-    if user.role not in ("admin", "notaire_principal"):
+    if not user.a_role("admin", "notaire_principal"):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Consultation des journaux réservée à l'Administrateur et au Notaire Principal (ADM-06).",
@@ -125,6 +125,6 @@ async def require_supervisor(user: User = Depends(get_current_user)) -> User:
 
 
 async def require_rc(user: User = Depends(get_current_user)) -> User:
-    if user.role not in ("admin", "notaire_principal", "responsable_conformite"):
+    if not user.a_role("admin", "notaire_principal", "responsable_conformite"):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Accès réservé au Responsable Conformité.")
     return user

@@ -44,7 +44,7 @@ class AutorisationOut(BaseModel):
 
 
 def _require_notaire_principal(user: User) -> None:
-    if user.role != "notaire_principal":
+    if not user.a_role("notaire_principal"):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="WRK-09 est réservé exclusivement au Notaire Principal (non délégable).",

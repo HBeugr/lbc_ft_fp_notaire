@@ -6,6 +6,7 @@ export interface UserOut {
   first_name: string
   last_name: string
   role: string
+  roles: string[]
   is_active: boolean
   totp_enabled: boolean
   requires_2fa: boolean
@@ -18,12 +19,14 @@ export interface UserCreatePayload {
   first_name: string
   last_name: string
   role: string
+  roles_extra?: string[]
 }
 
 export interface UserUpdatePayload {
   first_name?: string
   last_name?: string
   role?: string
+  roles_extra?: string[]
   is_active?: boolean
 }
 

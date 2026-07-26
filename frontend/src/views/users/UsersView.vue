@@ -39,7 +39,10 @@
                 <p class="user-email">{{ u.email }}</p>
               </div>
             </td>
-            <td><span class="role-tag">{{ ROLE_LABELS[u.role] ?? u.role }}</span></td>
+            <td>
+                <span class="role-tag">{{ ROLE_LABELS[u.role] ?? u.role }}</span>
+                <span v-for="rc in rolesCumules(u)" :key="rc" class="role-tag role-tag--cumul">{{ ROLE_LABELS[rc] ?? rc }}</span>
+              </td>
             <td>
               <span v-if="u.totp_enabled" class="badge-ok">Activé</span>
               <span v-else class="badge-off">Non activé</span>
@@ -132,6 +135,19 @@
                 <option v-for="(label, key) in availableRoles" :key="key" :value="key">{{ label }}</option>
               </select>
               <p v-if="fe.role" class="field-error">{{ fe.role }}</p>
+            </div>
+
+            <div class="field-group">
+              <label class="field-label">
+                Rôles supplémentaires
+                <span class="field-hint">(un seul compte / email cumule plusieurs casquettes)</span>
+              </label>
+              <div class="roles-cumul">
+                <label v-for="(label, key) in rolesCumulables" :key="key" class="role-check">
+                  <input type="checkbox" :value="key" v-model="form.roles_extra" />
+                  <span>{{ label }}</span>
+                </label>
+              </div>
             </div>
 
             <div class="field-group">
@@ -281,6 +297,17 @@ const canManageUsers = computed(() => auth.user?.role === 'admin' || auth.user?.
 // Seule exception : l'édition d'un compte qui est DÉJÀ administrateur. Sans lui
 // réinjecter son rôle, le `select` s'afficherait vide alors que `form.role` vaut
 // toujours « admin » — l'écran mentirait sur l'état réel du compte.
+// Rôles proposables en cumul : jamais « admin », jamais le rôle principal déjà choisi.
+const rolesCumulables = computed(() =>
+  Object.fromEntries(Object.entries(ROLE_LABELS).filter(([k]) => k !== 'admin' && k !== form.role))
+)
+function rolesCumules(u: UserOut): string[] {
+  return (u.roles ?? []).filter(r => r !== u.role)
+}
+function cumulSaisi(): string[] {
+  return form.roles_extra.filter(r => r !== form.role)
+}
+
 const availableRoles = computed(() => {
   const conserverAdmin = modal.mode === 'edit' && form.role === 'admin'
   return Object.fromEntries(
@@ -328,7 +355,7 @@ const total = ref(0)
 const search = ref('')
 
 const modal = reactive({ open: false, mode: 'create' as 'create' | 'edit', userId: '' })
-const form = reactive({ first_name: '', last_name: '', email: '', role: '', password: '' })
+const form = reactive({ first_name: '', last_name: '', email: '', role: '', password: '', roles_extra: [] as string[] })
 const fe = reactive({ first_name: '', last_name: '', email: '', role: '', password: '' })
 const formError = ref('')
 const submitting = ref(false)
@@ -363,7 +390,7 @@ async function loadUsers() {
 onMounted(() => loadUsers())
 
 function resetForm() {
-  Object.assign(form, { first_name: '', last_name: '', email: '', role: '', password: '' })
+  Object.assign(form, { first_name: '', last_name: '', email: '', role: '', password: '', roles_extra: [] })
   Object.assign(fe,   { first_name: '', last_name: '', email: '', role: '', password: '' })
   formError.value = ''
 }
@@ -372,7 +399,7 @@ function openCreate() { resetForm(); modal.mode = 'create'; modal.open = true }
 
 function openEdit(u: UserOut) {
   resetForm()
-  Object.assign(form, { first_name: u.first_name, last_name: u.last_name, email: u.email, role: u.role, password: '' })
+  Object.assign(form, { first_name: u.first_name, last_name: u.last_name, email: u.email, role: u.role, password: '', roles_extra: rolesCumules(u) })
   modal.mode = 'edit'; modal.userId = u.id; modal.open = true
 }
 
@@ -397,10 +424,10 @@ async function handleSubmit() {
   formError.value = ''; submitting.value = true
   try {
     if (modal.mode === 'create') {
-      const created = await usersService.create({ email: form.email, password: form.password, first_name: form.first_name, last_name: form.last_name, role: form.role })
+      const created = await usersService.create({ email: form.email, password: form.password, first_name: form.first_name, last_name: form.last_name, role: form.role, roles_extra: cumulSaisi() })
       users.value.unshift(created); total.value++
     } else {
-      const payload: Record<string, string> = { first_name: form.first_name, last_name: form.last_name, role: form.role }
+      const payload: Record<string, any> = { first_name: form.first_name, last_name: form.last_name, role: form.role, roles_extra: cumulSaisi() }
       const updated = await usersService.update(modal.userId, payload)
       const idx = users.value.findIndex(u => u.id === modal.userId)
       if (idx !== -1) users.value[idx] = updated
@@ -580,4 +607,9 @@ function closeResetPwd() {
 .perms-section-title { font-size: 0.75rem; font-weight: 600; color: var(--color-text-secondary); text-transform: uppercase; letter-spacing: 0.04em; margin: 0 0 0.5rem; }
 .perms-list { margin: 0; padding-left: 1.25rem; display: flex; flex-direction: column; gap: 0.3rem; }
 .perms-list li { font-size: 0.8125rem; color: var(--color-text-primary); }
+
+.roles-cumul { display: flex; flex-wrap: wrap; gap: .5rem .9rem; }
+.role-check { display: inline-flex; align-items: center; gap: .35rem; font-size: .85rem; cursor: pointer; user-select: none; }
+.role-check input { cursor: pointer; }
+.role-tag--cumul { margin-left: .3rem; opacity: .75; border-style: dashed; }
 </style>

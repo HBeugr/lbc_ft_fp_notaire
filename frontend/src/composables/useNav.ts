@@ -88,7 +88,7 @@ export function useNav() {
     ALL_NAV.filter(item => {
       const key = KEY_MAP[item.to]
       const allowed = ROLE_ACCESS[key]
-      return allowed && auth.user && (allowed as string[]).includes(auth.user.role)
+      return !!allowed && !!auth.user && (allowed as string[]).some(r => auth.roles.includes(r))
     }).map(item => {
       let out = item
       // Badge compteur d'alertes (temps réel via SSE)
@@ -97,9 +97,9 @@ export function useNav() {
       }
       // Badge « ! » — pondérations de scoring modifiées
       if (notif.hasPendingWeightsUpdate) {
-        const role = auth.user?.role
-        if (item.to === 'settings' && role === 'notaire_principal') out = { ...out, badge: '!' }
-        if (item.to === 'risk-matrix' && role === 'responsable_conformite') out = { ...out, badge: '!' }
+        const aRole = (...r: string[]) => r.some(x => auth.roles.includes(x))
+        if (item.to === 'settings' && aRole('notaire_principal')) out = { ...out, badge: '!' }
+        if (item.to === 'risk-matrix' && aRole('responsable_conformite')) out = { ...out, badge: '!' }
       }
       return out
     })

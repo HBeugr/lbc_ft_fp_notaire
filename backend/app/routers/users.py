@@ -55,10 +55,10 @@ async def create_user(
     # compromis se dupliquerait un accès complet sans qu'aucun contrôle externe
     # au cabinet n'en soit informé.
     #
-    # La condition précédente (`and admin.role != "admin"`) était inatteignable :
+    # La condition précédente (`and not admin.a_role("admin")`) était inatteignable :
     # `require_user_manager` impose déjà `role == "admin"`. C'était un résidu de
     # l'époque où le Notaire Principal gérait aussi les comptes.
-    if body.role == "admin":
+    if body.role == "admin" or "admin" in body.roles_extra:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="La création d'un compte administrateur relève de la console plateforme.",
@@ -74,6 +74,7 @@ async def create_user(
         first_name=body.first_name,
         last_name=body.last_name,
         role=body.role,
+        roles_extra=[r for r in body.roles_extra if r != body.role] or None,
         hashed_password=hashed,
         must_change_password=body.must_change_password,
     )
@@ -102,7 +103,7 @@ async def get_user(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> UserOut:
-    if current_user.role != "admin" and current_user.id != user_id:
+    if not current_user.a_role("admin") and current_user.id != user_id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Accès refusé.")
     target = await user_repo.get_by_id(db, user_id)
     if not target:
@@ -123,7 +124,7 @@ async def update_user(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Utilisateur introuvable.")
     # Même verrou qu'à la création : sans lui, la règle se contournerait en deux
     # temps — créer un clerc, puis le promouvoir administrateur.
-    if body.role == "admin" and target.role != "admin":
+    if (body.role == "admin" or "admin" in (body.roles_extra or [])) and not target.a_role("admin"):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="La promotion au rôle administrateur relève de la console plateforme.",

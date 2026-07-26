@@ -90,6 +90,9 @@ class TenantUserSpec(BaseModel):
     first_name: str = Field(..., min_length=1, max_length=100)
     last_name: str = Field(..., min_length=1, max_length=100)
     role: str
+    # Rôles cumulés dès l'onboarding — une même personne (un seul email) porte
+    # plusieurs casquettes. Cas courant en petite étude.
+    roles_extra: list[str] = Field(default_factory=list)
 
     @field_validator("role")
     @classmethod
@@ -99,6 +102,14 @@ class TenantUserSpec(BaseModel):
                 "Rôle inconnu ou non provisionnable à la création : " + v
             )
         return v
+
+    @field_validator("roles_extra")
+    @classmethod
+    def _cumul_connu(cls, v: list[str]) -> list[str]:
+        for r in v:
+            if r not in _ROLES_PROVISIONNABLES:
+                raise ValueError("Rôle cumulé inconnu ou non provisionnable : " + r)
+        return list(dict.fromkeys(v))  # dédoublonnage, ordre préservé
 
 
 class ProvisionedUser(BaseModel):
@@ -258,6 +269,9 @@ class TenantUserOut(BaseModel):
     first_name: str
     last_name: str
     role: str
+    # Tous les rôles détenus (principal en tête). Toujours renseigné → la console
+    # affiche le cumul sans avoir à recalculer.
+    roles: list[str] = []
     is_active: bool
     totp_enabled: bool = False
     must_change_password: bool = False
@@ -268,6 +282,9 @@ class TenantUserOut(BaseModel):
 
 class TenantUserRoleRequest(BaseModel):
     role: str
+    # Rôles cumulés en plus du principal. `None` = ne pas toucher au cumul
+    # existant (rétro-compatible : l'ancien front n'envoie que `role`).
+    roles_extra: list[str] | None = None
 
     @field_validator("role")
     @classmethod
@@ -275,6 +292,16 @@ class TenantUserRoleRequest(BaseModel):
         if v not in _ROLES_PROVISIONNABLES and v != "admin":
             raise ValueError("Rôle inconnu : " + v)
         return v
+
+    @field_validator("roles_extra")
+    @classmethod
+    def _cumul_connu(cls, v: list[str] | None) -> list[str] | None:
+        if v is None:
+            return v
+        for r in v:
+            if r not in _ROLES_PROVISIONNABLES and r != "admin":
+                raise ValueError("Rôle cumulé inconnu : " + r)
+        return list(dict.fromkeys(v))
 
 
 class TenantUserStatusRequest(BaseModel):

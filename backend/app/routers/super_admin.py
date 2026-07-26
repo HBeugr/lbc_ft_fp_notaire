@@ -284,6 +284,10 @@ async def set_tenant_user_role(
                         detail="C'est le dernier administrateur du cabinet.",
                     )
             membre.role = body.role
+            # Cumul de rôles : `None` = inchangé (rétro-compat). Le principal est
+            # retiré du cumul pour ne pas dupliquer la colonne.
+            if body.roles_extra is not None:
+                membre.roles_extra = [r for r in body.roles_extra if r != body.role] or None
             await tdb.commit()
             await tdb.refresh(membre)
             resultat = TenantUserOut.model_validate(membre)

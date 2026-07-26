@@ -54,7 +54,7 @@ async def revoke_user_sessions(
     target = await user_repo.get_by_id(db, user_id)
     if not target:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Utilisateur introuvable.")
-    if admin.role != "admin" and target.role == "admin":
+    if not admin.a_role("admin") and target.a_role("admin"):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Seul un administrateur peut gérer un compte administrateur.")
     await revoke_all_user_tokens(user_id, ttl_seconds=_REVOKE_TTL)
     ip = request.client.host if request.client else "unknown"
@@ -80,7 +80,7 @@ async def reset_user_password(
     target = await user_repo.get_by_id(db, user_id)
     if not target:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Utilisateur introuvable.")
-    if admin.role != "admin" and target.role == "admin":
+    if not admin.a_role("admin") and target.a_role("admin"):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Seul un administrateur peut gérer un compte administrateur.")
     hashed = security.hash_password(body.new_password)
     await user_repo.update(db, target, hashed_password=hashed, must_change_password=body.must_change_password)
@@ -109,7 +109,7 @@ async def reset_user_password_temporary(
     target = await user_repo.get_by_id(db, user_id)
     if not target:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Utilisateur introuvable.")
-    if admin.role != "admin" and target.role == "admin":
+    if not admin.a_role("admin") and target.a_role("admin"):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Seul un administrateur peut gérer un compte administrateur.")
     temp = _generate_temp_password()
     hashed = security.hash_password(temp)
@@ -138,7 +138,7 @@ async def disable_user_totp(
     target = await user_repo.get_by_id(db, user_id)
     if not target:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Utilisateur introuvable.")
-    if admin.role != "admin" and target.role == "admin":
+    if not admin.a_role("admin") and target.a_role("admin"):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Seul un administrateur peut gérer un compte administrateur.")
     if not target.totp_enabled:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="2FA non activé pour cet utilisateur.")

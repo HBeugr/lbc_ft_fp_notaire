@@ -19,6 +19,10 @@ class UserOut(BaseModel):
     first_name: str
     last_name: str
     role: str
+    # Tous les rôles détenus (principal en tête). Sans ce champ, le
+    # frontend filtrerait ses menus sur le seul rôle principal et masquerait
+    # les écrans pourtant ouverts par le cumul.
+    roles: list[str] = []
     is_active: bool
     totp_enabled: bool
     requires_2fa: bool
