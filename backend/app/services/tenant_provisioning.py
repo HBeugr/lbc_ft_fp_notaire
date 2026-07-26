@@ -234,12 +234,15 @@ async def provision_tenant(
                             f"L'adresse « {email_u} » est en double dans le formulaire."
                         )
                     mdp = _generate_temp_password()
+                    # Le principal n'a pas à figurer aussi dans le cumul.
+                    cumul = [r for r in (spec.get("roles_extra") or []) if r != spec["role"]]
                     membre = User(
                         email=email_u,
                         hashed_password=security.hash_password(mdp),
                         first_name=spec["first_name"],
                         last_name=spec["last_name"],
                         role=spec["role"],
+                        roles_extra=cumul or None,
                         is_active=True,
                         must_change_password=True,
                     )
