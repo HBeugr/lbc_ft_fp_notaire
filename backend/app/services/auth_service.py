@@ -81,7 +81,7 @@ async def refresh_access_token(db: AsyncSession, refresh_token: str) -> tuple[st
 
     if jti and await is_token_revoked(jti):
         raise AuthError("Session révoquée.", "revoked")
-    if user_id and await is_user_globally_revoked(user_id):
+    if user_id and await is_user_globally_revoked(user_id, payload.get("iat")):
         raise AuthError("Session révoquée.", "revoked")
 
     user = await user_repo.get_by_id(db, user_id)

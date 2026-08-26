@@ -20,12 +20,16 @@ def verify_password(plain: str, hashed: str) -> bool:
 
 
 def create_access_token(subject: str, extra: dict[str, Any] | None = None) -> str:
-    expire = datetime.now(timezone.utc) + timedelta(
-        minutes=settings.JWT_ACCESS_TOKEN_EXPIRE_MINUTES
-    )
+    now = datetime.now(timezone.utc)
+    expire = now + timedelta(minutes=settings.JWT_ACCESS_TOKEN_EXPIRE_MINUTES)
     payload: dict[str, Any] = {
         "sub": subject,
         "exp": expire,
+        # Instant d'émission — indispensable à la révocation globale par
+        # horodatage (cf. `redis_client.is_user_globally_revoked`) : sans lui,
+        # impossible de distinguer une session ouverte AVANT la révocation
+        # d'une session ouverte APRÈS, et l'on bannit le compte entier.
+        "iat": now.timestamp(),
         "type": "access",
         "jti": secrets.token_urlsafe(16),
     }
@@ -35,11 +39,13 @@ def create_access_token(subject: str, extra: dict[str, Any] | None = None) -> st
 
 
 def create_refresh_token(subject: str, extra: dict[str, Any] | None = None) -> str:
-    expire = datetime.now(timezone.utc) + timedelta(
-        hours=settings.JWT_REFRESH_TOKEN_EXPIRE_HOURS
-    )
+    now = datetime.now(timezone.utc)
+    expire = now + timedelta(hours=settings.JWT_REFRESH_TOKEN_EXPIRE_HOURS)
     jti = secrets.token_urlsafe(32)
-    payload: dict[str, Any] = {"sub": subject, "exp": expire, "type": "refresh", "jti": jti}
+    payload: dict[str, Any] = {
+        "sub": subject, "exp": expire, "iat": now.timestamp(),
+        "type": "refresh", "jti": jti,
+    }
     if extra:
         payload.update(extra)
     return jwt.encode(payload, settings.JWT_SECRET, algorithm=settings.JWT_ALGORITHM)

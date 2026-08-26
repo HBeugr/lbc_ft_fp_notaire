@@ -204,6 +204,80 @@ async def test_admin_mdp_temporaire(client, db):
     assert validate_password_strength(temp) == temp  # politique respectée
 
 
+async def test_mdp_temporaire_parcours_complet(client, db):
+    """Régression — l'utilisateur réinitialisé doit pouvoir définir son mot de passe.
+
+    Incident production : après génération d'un mot de passe temporaire, le
+    collaborateur se connectait bien (le login ne consulte pas la révocation)
+    puis restait bloqué sur l'écran « Définir votre mot de passe ». La cause :
+    `reset-password/temporary` posait une révocation globale du compte sous
+    forme de simple drapeau, valable 8 h (durée de vie du refresh). Or
+    `_resolve_user` la consulte pour TOUT appel authentifié, y compris
+    `PATCH /auth/password` — le jeton pourtant émis APRÈS la réinitialisation
+    partait en 401, et le compte restait inutilisable jusqu'à expiration de la
+    clé, chaque nouvelle réinitialisation relançant le compteur.
+
+    Le test suit donc le parcours de bout en bout, seul moyen d'attraper ce
+    défaut : pris isolément, chaque endpoint répondait correctement.
+    """
+    admin = await create_user(db, role="admin")
+    cible = await create_user(db, role="clercs")
+
+    reinit = await client.post(
+        f"/api/admin/users/{cible.id}/reset-password/temporary",
+        headers=auth_headers(admin),
+    )
+    assert reinit.status_code == 200, reinit.text
+    temporaire = reinit.json()["temporary_password"]
+
+    connexion = await client.post(
+        "/api/auth/login", json={"email": cible.email, "password": temporaire}
+    )
+    assert connexion.status_code == 200, connexion.text
+    assert connexion.json()["user"]["must_change_password"] is True
+    jeton = connexion.json()["access_token"]
+
+    definitif = "MotDePasseNotaire2026!"
+    changement = await client.patch(
+        "/api/auth/password",
+        headers={"Authorization": f"Bearer {jeton}"},
+        json={"current_password": temporaire, "new_password": definitif},
+    )
+    assert changement.status_code == 200, changement.text
+    assert changement.json()["user"]["must_change_password"] is False
+
+    # Le mot de passe définitif ouvre une session, le temporaire ne le peut plus.
+    assert (await client.post(
+        "/api/auth/login", json={"email": cible.email, "password": definitif}
+    )).status_code == 200
+    assert (await client.post(
+        "/api/auth/login", json={"email": cible.email, "password": temporaire}
+    )).status_code == 401
+
+
+async def test_revocation_globale_tue_les_sessions_anterieures(client, db):
+    """Contrepartie du test précédent : la révocation doit rester mordante.
+
+    Corriger le blocage en désarmant purement la révocation aurait laissé vivre
+    les sessions volées que `revoke-sessions` est censé couper. Seuls les jetons
+    émis AVANT la révocation doivent tomber.
+    """
+    admin = await create_user(db, role="admin")
+    cible = await create_user(db, role="clercs")
+
+    jeton_anterieur = auth_headers(cible)
+    assert (await client.get("/api/dossiers", headers=jeton_anterieur)).status_code == 200
+
+    revocation = await client.post(
+        f"/api/admin/users/{cible.id}/revoke-sessions", headers=auth_headers(admin)
+    )
+    assert revocation.status_code == 204, revocation.text
+
+    assert (await client.get("/api/dossiers", headers=jeton_anterieur)).status_code == 401
+    # Un jeton émis après la révocation, lui, reste valide.
+    assert (await client.get("/api/dossiers", headers=auth_headers(cible))).status_code == 200
+
+
 # ── 2FA — codes de secours (logique service, sans infra) ────────────────────────
 
 def test_generate_backup_codes():
