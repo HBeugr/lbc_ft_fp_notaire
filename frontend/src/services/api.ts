@@ -3,9 +3,15 @@ import { useAuthStore } from '@/stores/auth'
 import { useSuperAdminStore } from '@/stores/superAdmin'
 import { readTenantBlock } from '@/services/tenantBlock'
 
+// `timeout` : sans lui, une requête qui n'aboutit pas (backend bloqué, coupure
+// réseau) laisse le composant appelant sur son état « chargement » pour toujours,
+// sans le moindre message. Mieux vaut une erreur explicite au bout de 30 s.
+const REQUEST_TIMEOUT_MS = 30_000
+
 const api: AxiosInstance = axios.create({
   baseURL: '/api',
   withCredentials: true,
+  timeout: REQUEST_TIMEOUT_MS,
 })
 
 api.interceptors.request.use((config) => {
@@ -54,6 +60,19 @@ api.interceptors.response.use(
     if (status !== 401 || original._retry) {
       return Promise.reject(error)
     }
+    // L'exclusion login/refresh passe AVANT la file d'attente, et cet ordre est
+    // le correctif : `_isRefreshing` est déjà à `true` quand le POST /auth/refresh
+    // échoue lui-même en 401 (compte révoqué, cookie expiré). Testée après, la
+    // branche file d'attente happait donc la requête de refresh dans une promesse
+    // que personne ne pouvait plus résoudre — le `await api.post('/auth/refresh')`
+    // ci-dessous attendait sa propre mise en file. Résultat : `_drainQueue` et le
+    // `finally` jamais atteints, `_isRefreshing` bloqué à `true`, et l'appel
+    // d'origine ni résolu ni rejeté. C'est le bouton « Enregistrement… » figé
+    // indéfiniment sur l'écran de changement de mot de passe, et toute l'app
+    // gelée ensuite jusqu'au rechargement de l'onglet.
+    if (original.url?.includes('/auth/login') || original.url?.includes('/auth/refresh')) {
+      return Promise.reject(error)
+    }
     if (_isRefreshing) {
       return new Promise<string>((resolve, reject) => {
         _failedQueue.push({ resolve, reject })
@@ -61,9 +80,6 @@ api.interceptors.response.use(
         original.headers.Authorization = `Bearer ${token}`
         return api(original)
       })
-    }
-    if (original.url?.includes('/auth/login') || original.url?.includes('/auth/refresh')) {
-      return Promise.reject(error)
     }
     original._retry = true
     _isRefreshing = true
@@ -95,6 +111,7 @@ api.interceptors.response.use(
 export const superAdminApi: AxiosInstance = axios.create({
   baseURL: '/api/super-admin',
   withCredentials: false,
+  timeout: REQUEST_TIMEOUT_MS,
 })
 
 superAdminApi.interceptors.request.use((config) => {

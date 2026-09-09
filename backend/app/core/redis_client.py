@@ -9,6 +9,8 @@ Les compteurs anti-brute-force sont en outre segmentés par email et non par
 seule IP : derrière un NAT d'entreprise, une IP partagée bloquait auparavant
 tous les utilisateurs — un déni de service inter-cabinets exploitable.
 """
+from datetime import datetime, timezone
+
 from redis.asyncio import Redis, from_url
 
 from app.core.config import settings
@@ -53,13 +55,42 @@ async def is_token_revoked(jti: str) -> bool:
 
 
 async def revoke_all_user_tokens(user_id: str, ttl_seconds: int) -> None:
+    """Invalide les sessions du compte ouvertes AVANT maintenant.
+
+    On enregistre l'INSTANT de révocation, pas un simple drapeau. Un drapeau
+    bannissait le compte pendant toute la durée de vie du refresh (8 h) — y
+    compris les sessions ouvertes après coup. Effet de bord observé en
+    production : après une réinitialisation de mot de passe par l'admin,
+    l'utilisateur se connectait bien avec son mot de passe temporaire (le login
+    ne consulte pas la révocation) mais TOUT appel authentifié repartait en 401,
+    à commencer par le changement de mot de passe lui-même. Le compte était donc
+    inutilisable jusqu'à expiration de la clé, et chaque nouvelle
+    réinitialisation relançait le compteur.
+    """
     r = await get_redis()
-    await r.setex(_key(REVOKED_PREFIX, "user", user_id), ttl_seconds, "1")
+    # Horodatage à la microseconde (NumericDate non entier, autorisé par la
+    # RFC 7519) : à la seconde près, une connexion légitime survenant dans la
+    # même seconde que la révocation serait tuée à tort.
+    now = datetime.now(timezone.utc).timestamp()
+    await r.setex(_key(REVOKED_PREFIX, "user", user_id), ttl_seconds, repr(now))
 
 
-async def is_user_globally_revoked(user_id: str) -> bool:
+async def is_user_globally_revoked(user_id: str, issued_at: int | float | None = None) -> bool:
+    """Vrai si le jeton présenté est antérieur à la révocation globale du compte.
+
+    `issued_at` est le claim `iat` du jeton. Absent (jeton émis par une version
+    antérieure à l'horodatage), on tranche dans le sens de la sûreté : révoqué.
+    """
     r = await get_redis()
-    return await r.exists(_key(REVOKED_PREFIX, "user", user_id)) == 1
+    revoked_at = await r.get(_key(REVOKED_PREFIX, "user", user_id))
+    if revoked_at is None:
+        return False
+    if issued_at is None:
+        return True
+    try:
+        return float(issued_at) <= float(revoked_at)
+    except (TypeError, ValueError):
+        return True
 
 
 async def increment_login_attempts(ip: str, email: str = "") -> int:

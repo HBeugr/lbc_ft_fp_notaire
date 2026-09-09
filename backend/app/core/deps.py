@@ -47,7 +47,7 @@ async def _resolve_user(token: str, db: AsyncSession) -> User:
     if jti and await is_token_revoked(jti):
         raise credentials_exc
 
-    if await is_user_globally_revoked(user_id):
+    if await is_user_globally_revoked(user_id, payload.get("iat")):
         raise credentials_exc
 
     user = await user_repo.get_by_id(db, user_id)

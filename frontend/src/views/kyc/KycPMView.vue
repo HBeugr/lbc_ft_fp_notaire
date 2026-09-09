@@ -81,6 +81,7 @@
               <option>SARL</option>
               <option>SAS</option>
               <option>SNC</option>
+              <option>SCI</option>
               <option>GIE</option>
               <option>Association</option>
               <option>ONG</option>
