@@ -50,6 +50,10 @@
             <td>
               <span v-if="u.is_active" class="badge-active">Actif</span>
               <span v-else class="badge-inactive">Désactivé</span>
+              <!-- Compte créé ou réinitialisé, mot de passe pas encore défini par
+                   son titulaire : sans ce repère, l'administrateur n'a aucun moyen
+                   de savoir qui n'a pas encore activé son accès. -->
+              <span v-if="u.must_change_password" class="badge-warn">Mot de passe à changer</span>
             </td>
             <td class="td-actions">
               <button class="action-btn" title="Voir les autorisations" @click.stop="openPerms(u)">
@@ -557,6 +561,7 @@ function closeResetPwd() {
 .badge-off    { color: var(--color-text-muted); background: var(--color-bg-page); border: 1px solid var(--color-border); border-radius: 10px; padding: 2px 8px; font-size: 0.6875rem; }
 .badge-active { color: var(--color-risk-low);  background: var(--color-risk-low-bg);  border-radius: 10px; padding: 2px 8px; font-size: 0.6875rem; font-weight: 600; }
 .badge-inactive { color: var(--color-risk-high); background: var(--color-risk-high-bg); border-radius: 10px; padding: 2px 8px; font-size: 0.6875rem; font-weight: 600; }
+.badge-warn   { color: var(--color-risk-medium); background: var(--color-risk-medium-bg); border-radius: 10px; padding: 2px 8px; font-size: 0.6875rem; font-weight: 600; margin-left: 0.375rem; }
 .action-btn { background: none; border: none; cursor: pointer; color: var(--color-text-secondary); padding: 4px; border-radius: 5px; transition: background 0.12s, color 0.12s; margin-left: 2px; }
 .action-btn svg { width: 15px; height: 15px; display: block; }
 .action-btn:hover { background: var(--color-bg-page); color: var(--color-text-primary); }
