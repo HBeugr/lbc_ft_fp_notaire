@@ -172,7 +172,16 @@ async def create_dossier(
         type_operation=body.type_operation,
         type_operation_detail=body.type_operation_detail,
         created_by=current_user.id,
-        assigned_to=current_user.id if current_user.a_role("clercs") else None,
+        # Auto-assignation au créateur dès qu'il n'est pas superviseur. `_can_access`
+        # (routers/kyc.py) n'ouvre un dossier qu'au superviseur ou à son assigné :
+        # un opérationnel repartant avec `assigned_to = NULL` perd l'accès au
+        # dossier qu'il vient de créer — « Accès refusé » à la première sauvegarde
+        # de la fiche, et dossier absent de sa propre liste. Le test ne visait que
+        # « clercs », ce qui laissait dehors le Déclarant CENTIF et l'Autre
+        # utilisateur, à qui la navigation ouvre pourtant la saisie KYC.
+        # Le superviseur, lui, accède à tout : son dossier reste volontairement
+        # non assigné, la chaîne d'assignation (CDC §4.3) le routera.
+        assigned_to=None if current_user.is_supervisor else current_user.id,
     )
     ip = request.client.host if request.client else "unknown"
     await audit_repo.log(
