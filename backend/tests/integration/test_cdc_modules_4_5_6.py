@@ -366,6 +366,83 @@ async def test_assignation_de_dossier_et_journalisation(client, db, tenant_a):
     assert r.status_code == 200
 
 
+async def test_routage_reserve_aux_superviseurs_et_auteur_en_lecture_seule(client, db, tenant_a):
+    """WRK-05 + incident production — qui route, et que garde l'auteur.
+
+    Le cabinet a signalé la séquence suivante : un collaborateur crée sa fiche,
+    l'assigne à un collègue, puis se voit refuser la soumission par un « Accès
+    refusé », le dossier ayant au passage disparu de sa liste. Deux causes.
+
+    1. WRK-05 « Assigner un dossier » vaut N pour les Clercs (CDC §7.3). Le
+       champ leur avait pourtant été ouvert par alignement sur le vertical
+       immobilier : l'opérationnel se dessaisissait lui-même de son dossier.
+       Router vers autrui est revenu aux superviseurs ; l'opérationnel transmet
+       par WRK-01 « Soumettre pour analyse ».
+    2. Une garde unique servait la lecture ET l'écriture. L'auteur d'un dossier
+       routé perdait donc jusqu'à la consultation — y compris la liste des
+       pièces, que « Soumettre pour analyse » interroge avant la transition,
+       d'où le message d'accès refusé à la place du décompte des pièces.
+       Lecture et écriture sont désormais deux droits distincts
+       (`core/acces_dossier`), comme dans le vertical immobilier.
+    """
+    clerc = await create_user(db, role="clercs")
+    admin = await create_user(db, role="admin")
+    notaire = await create_user(db, role="notaire_principal")
+    h = auth_headers(clerc, tenant_a)
+
+    creation = await client.post("/api/dossiers", headers=h, json={
+        "type_client": "PP", "type_operation": "vente_immobiliere",
+    })
+    assert creation.status_code == 201, creation.text
+    dossier_id = creation.json()["id"]
+
+    # WRK-05 = N : le clerc ne route pas son dossier vers le Notaire Principal.
+    refus = await client.patch(
+        f"/api/dossiers/{dossier_id}/assign", headers=h, params={"user_id": notaire.id},
+    )
+    assert refus.status_code == 403, refus.text
+    assert "WRK-05" in refus.json()["detail"]
+
+    # WRK-05 = O : le superviseur, lui, distribue.
+    routage = await client.patch(
+        f"/api/dossiers/{dossier_id}/assign",
+        headers=auth_headers(admin, tenant_a), params={"user_id": notaire.id},
+    )
+    assert routage.status_code == 200, routage.text
+
+    # …et il répartit vers le bas, pas seulement vers le haut : le Notaire
+    # Principal confie le dossier à un collaborateur. C'est le geste courant de
+    # l'étude, et une chaîne d'assignation strictement montante l'interdisait —
+    # seul le compte Admin pouvait alors distribuer.
+    second_clerc = await create_user(db, role="clercs")
+    descente = await client.patch(
+        f"/api/dossiers/{dossier_id}/assign",
+        headers=auth_headers(notaire, tenant_a), params={"user_id": second_clerc.id},
+    )
+    assert descente.status_code == 200, descente.text
+    # On rend la main au Notaire Principal pour la suite du scénario.
+    await client.patch(
+        f"/api/dossiers/{dossier_id}/assign",
+        headers=auth_headers(admin, tenant_a), params={"user_id": notaire.id},
+    )
+
+    # L'auteur suit son dossier : consultation, liste, et pièces jointes.
+    assert (await client.get(f"/api/dossiers/{dossier_id}", headers=h)).status_code == 200
+    listing = await client.get("/api/dossiers", headers=h)
+    assert dossier_id in [d["id"] for d in listing.json()["items"]], (
+        "le dossier routé a disparu de la liste de son auteur"
+    )
+    assert (await client.get(f"/api/dossiers/{dossier_id}/documents", headers=h)).status_code == 200
+
+    # Mais il ne l'écrit plus : l'écriture suit l'assignation.
+    ecriture = await client.put(
+        f"/api/dossiers/{dossier_id}/kyc/pp",
+        json={"nom": "TENTATIVE", "prenoms": "Apres routage"}, headers=h,
+    )
+    assert ecriture.status_code == 403, ecriture.text
+    assert "lecture seule" in ecriture.json()["detail"]
+
+
 async def test_un_clerc_ne_voit_pas_les_dossiers_non_assignes(client, db, tenant_a):
     """P¹ (CDC §7.3) — « Clercs : consultation limitée aux dossiers qui leur sont assignés »."""
     rc = await create_user(db, role="responsable_conformite")

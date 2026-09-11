@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.deps import get_current_user, require_admin
-from app.core import runtime_config
+from app.core import runtime_config, acces_dossier
 from app.models.dossier import Dossier, KycActionnaire, EvaluationRisque
 from app.models.user import User
 from app.repositories import dossier_repo, audit_repo
@@ -127,16 +127,16 @@ async def update_weights(
     return data
 
 
-def _can_access(user: User, dossier: Dossier) -> bool:
-    return user.is_supervisor or dossier.assigned_to == user.id
-
-
-async def _get_dossier_or_404(db: AsyncSession, dossier_id: str, user: User) -> Dossier:
+async def _get_dossier_or_404(
+    db: AsyncSession, dossier_id: str, user: User, *, ecriture: bool = False
+) -> Dossier:
     dossier = await dossier_repo.get_by_id(db, dossier_id)
     if not dossier:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Dossier introuvable.")
-    if not _can_access(user, dossier):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Accès refusé.")
+    if ecriture:
+        acces_dossier.assert_ecriture(user, dossier)
+    else:
+        acces_dossier.assert_lecture(user, dossier)
     return dossier
 
 
@@ -176,7 +176,7 @@ async def calculate_scoring(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> ScoreResultOut:
-    dossier = await _get_dossier_or_404(db, dossier_id, current_user)
+    dossier = await _get_dossier_or_404(db, dossier_id, current_user, ecriture=True)
     kyc_pp, kyc_pm, _ = await _load_kyc(db, dossier)
     kyc = kyc_pp or kyc_pm
 

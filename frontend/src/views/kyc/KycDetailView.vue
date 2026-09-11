@@ -24,7 +24,7 @@
           {{ dossier.classification }}
         </span>
         <button
-          v-if="dossier.statut === 'brouillon'"
+          v-if="dossier.statut === 'brouillon' && canModify"
           class="btn-submit-analyse"
           :disabled="submittingAnalyse"
           @click="submitForAnalyse"
@@ -34,7 +34,7 @@
           {{ submittingAnalyse ? 'Envoi…' : 'Soumettre pour analyse' }}
         </button>
         <button
-          v-if="canAssign"
+          v-if="canAssign && canModify"
           class="btn-assign"
           @click="openAssignModal"
         >
@@ -940,8 +940,12 @@ onMounted(async () => {
     dossier.value = await dossiersService.get(route.params.id as string)
     activeSection.value = dossier.value.type_client === 'PP' ? 'kyc-pp' : 'kyc-pm'
     await loadDossierAlertes()
-  } catch {
-    error.value = 'Dossier introuvable.'
+  } catch (e: any) {
+    // Distinguer les deux causes : « introuvable » sur un dossier bien réel mais
+    // fermé à l'appelant envoyait le collaborateur chercher un dossier effacé.
+    error.value = e?.response?.status === 403
+      ? (e?.response?.data?.detail ?? "Vous n'avez pas accès à ce dossier.")
+      : 'Dossier introuvable.'
   } finally {
     loading.value = false
   }
@@ -1038,9 +1042,13 @@ const CLERCS_ROLES     = ['clercs']
 const CONFORMITE_ROLES = ['responsable_conformite', 'notaire_principal', 'admin']
 // Clôture / archivage (WRK-04, back: _CLOTURE) : Notaire Principal + Admin uniquement (séparation Art. 12).
 const CLOTURE_ROLES    = ['notaire_principal', 'admin']
-// Chaîne d'assignation (alignée immo) : tout rôle route vers son niveau suivant
-// (opérationnels → conformité → Notaire Principal → Admin). Le backend valide la cible.
-const ASSIGNER_ROLES   = ['admin', 'notaire_principal', 'responsable_conformite', 'declarant_centif', 'clercs', 'autre_utilisateur']
+// WRK-05 « Assigner un dossier » (CDC §7.3) : O pour l'Admin, le Notaire
+// Principal et le Responsable Conformité, N pour les Clercs. Le champ avait été
+// ouvert aux six rôles par alignement sur le vertical immobilier — un
+// opérationnel routait alors son propre dossier et le passait en lecture seule
+// pour lui-même. Il le transmet désormais par « Soumettre pour analyse »
+// (WRK-01, ouvert à tous) ; c'est au superviseur de distribuer.
+const ASSIGNER_ROLES   = ['admin', 'notaire_principal', 'responsable_conformite']
 
 const isAgent    = computed(() => CLERCS_ROLES.includes(auth.user?.role ?? ''))
 const isRC       = computed(() => CONFORMITE_ROLES.includes(auth.user?.role ?? ''))
@@ -1245,7 +1253,10 @@ async function confirmAssign() {
   assignModal.value.error  = ''
   try {
     await dossiersService.assign(dossier.value.id, assignModal.value.selectedId)
-    dossier.value = { ...dossier.value, assigned_to: assignModal.value.selectedId }
+    // Rechargement complet plutôt que retouche locale du seul identifiant : le
+    // nom de l'assigné (`assigned_to_name`) restait sinon celui d'avant, et la
+    // fiche affichait « assigné à X » tout en se verrouillant au profit de Y.
+    dossier.value = await dossiersService.get(dossier.value.id)
     assignModal.value.open = false
   } catch (e: any) {
     assignModal.value.error = e?.response?.data?.detail ?? 'Erreur lors de l\'assignation.'

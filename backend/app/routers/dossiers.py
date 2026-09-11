@@ -4,7 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.deps import get_current_user, require_rc
-from app.core import archivage, runtime_config
+from app.core import archivage, runtime_config, acces_dossier
 from app.models.user import User
 from app.repositories import dossier_repo, audit_repo, user_repo, alertes_repo
 from pydantic import BaseModel
@@ -61,7 +61,15 @@ _TRANSITIONS: dict[str, set[str]] = {
 }
 
 # Rôles notaire. RC = responsable_conformite ; Notaire Principal = Dirigeant ; clercs/autre = opérationnels.
-_OPERATIONNELS = frozenset({"clercs", "autre_utilisateur"})
+#
+# Le Déclarant CENTIF compte parmi les opérationnels. Il en était absent, et
+# comme il ne figure pas davantage dans `_CONFORMITE`, il se trouvait exclu de
+# TOUTES les transitions du workflow : il pouvait créer et remplir une fiche,
+# jamais la faire avancer (« Votre rôle ne permet pas cette transition »). Le
+# CDC §7.3 donne pourtant WRK-01 « Soumettre un dossier en analyse » à O pour
+# l'ensemble des rôles — le rattacher ici est la lecture conforme, et la chaîne
+# d'assignation le route déjà vers le Notaire Principal.
+_OPERATIONNELS = frozenset({"clercs", "autre_utilisateur", "declarant_centif"})
 _CONFORMITE = frozenset({"responsable_conformite", "notaire_principal", "admin"})
 _CLOTURE = frozenset({"notaire_principal", "admin"})  # WRK-04 — séparation Art. 12
 _ALL_ROLES = _OPERATIONNELS | _CONFORMITE
@@ -81,27 +89,26 @@ _TRANSITION_ROLES: dict[tuple[str, str], frozenset[str]] = {
     ("cloture",             "archive"):             _CLOTURE,
 }
 
-# ── Chaîne d'assignation (modèle notaire — décision Hans 2026-07-15) ─────────────
-# Routage : Autre utilisateur → (Clerc ou Déclarant CENTIF) → Notaire Principal → Admin.
-# L'Admin « fait tout » (peut (ré)assigner à n'importe qui). Le RC (Responsable Conformité)
-# est traité comme un pair de la conformité (même niveau que le Déclarant CENTIF).
-_CHAIN_NEXT: dict[str, set[str]] = {
-    "autre_utilisateur":      {"clercs", "declarant_centif"},
-    "clercs":                 {"notaire_principal"},
-    "declarant_centif":       {"notaire_principal"},
-    "responsable_conformite": {"notaire_principal"},
-    "notaire_principal":      {"admin"},
-    "admin":                  {"autre_utilisateur", "clercs", "declarant_centif",
-                               "responsable_conformite", "notaire_principal", "admin"},
-}
-# Rôles autorisés à s'auto-assigner un dossier (le prendre pour soi-même), hors chaîne :
-# Clerc et Déclarant CENTIF (demande Hans) + RC (pair conformité) + Admin. L'Autre utilisateur
-# route toujours (ne se prend pas de dossier) ; le Notaire Principal escalade vers l'Admin.
+# ── Assignation (CDC §7.3 WRK-05, §4.2) ─────────────────────────────────────────
+# « Assigner un dossier » vaut O pour l'Admin, le Notaire Principal et le
+# Responsable Conformité, N pour les Clercs. Le CDC ne restreint pas les CIBLES
+# d'un superviseur : §4.2 parle d'« assignation de dossiers à un utilisateur
+# spécifique », et le workflow de réévaluation (§9.2, J+60) prévoit une
+# réassignation à l'initiative du Responsable Conformité.
+#
+# Une chaîne montante (opérationnel → conformité → Notaire Principal → Admin)
+# régissait auparavant les cibles. Elle tenait tant que l'opérationnel routait
+# lui-même son dossier vers le haut. Ce geste lui étant retiré (WRK-05 = N), la
+# chaîne laissait le cabinet dans une impasse : le Notaire Principal ne pouvait
+# plus confier un dossier à son Clerc — seul le compte Admin distribuait. Or
+# dans une étude, c'est précisément le notaire qui répartit le travail.
+#
+# Reste l'auto-assignation — se prendre un dossier pour soi. Elle ne dessaisit
+# personne, elle donne l'accès : conservée pour le Clerc et le Déclarant CENTIF
+# (décision Hans du 15/07, cf. d12d6c3), écart au CDC assumé et tracé dans
+# `tests/integration/test_cdc_modules_7_8_9.py`.
 _SELF_ASSIGN_ROLES = frozenset({"clercs", "declarant_centif", "responsable_conformite", "admin"})
 
-
-def _next_level_roles(role: str) -> set[str]:
-    return _CHAIN_NEXT.get(role, set())
 
 
 def _ref() -> str:
@@ -127,13 +134,14 @@ async def list_dossiers(
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200),
 ) -> DossierListOut:
-    # Opérationnel : toujours ses dossiers. Superviseur : tous, ou seulement les siens si mine=true.
-    if current_user.is_supervisor:
-        assigned_to = current_user.id if mine else None
-    else:
-        assigned_to = current_user.id
+    # Superviseur : tous les dossiers, ou seulement les siens si mine=true.
+    # Opérationnel : ceux qui lui sont assignés ET ceux dont il est l'auteur —
+    # sans quoi un dossier routé vers un collègue disparaît de la liste de celui
+    # qui l'a constitué, qui le croit perdu (cf. `core/acces_dossier`).
+    assigned_to = current_user.id if (current_user.is_supervisor and mine) else None
+    visible_par = None if current_user.is_supervisor else current_user.id
     common = dict(
-        assigned_to=assigned_to, statut=statut,
+        assigned_to=assigned_to, visible_par=visible_par, statut=statut,
         classification=classification, reference=reference, search=search,
     )
     total = await dossier_repo.count_dossiers(db, **common)
@@ -172,8 +180,8 @@ async def create_dossier(
         type_operation=body.type_operation,
         type_operation_detail=body.type_operation_detail,
         created_by=current_user.id,
-        # Auto-assignation au créateur dès qu'il n'est pas superviseur. `_can_access`
-        # (routers/kyc.py) n'ouvre un dossier qu'au superviseur ou à son assigné :
+        # Auto-assignation au créateur dès qu'il n'est pas superviseur. L'écriture
+        # (`core/acces_dossier`) n'est ouverte qu'au superviseur ou à l'assigné :
         # un opérationnel repartant avec `assigned_to = NULL` perd l'accès au
         # dossier qu'il vient de créer — « Accès refusé » à la première sauvegarde
         # de la fiche, et dossier absent de sa propre liste. Le test ne visait que
@@ -208,16 +216,19 @@ async def list_assignables(
     soi-même si l'auto-assignation est autorisée (RC / Déclarant CENTIF / Admin) +
     les rôles du niveau hiérarchique suivant. Accessible à tout utilisateur authentifié
     (chaque rôle route vers son niveau supérieur ; l'Admin voit tout le monde)."""
-    targets = _next_level_roles(current_user.role)
     users = await user_repo.get_all(db)
     out: list[AssignableUserOut] = []
     for u in users:
         if not u.is_active:
             continue
         if u.id == current_user.id:
-            if current_user.a_role(*_SELF_ASSIGN_ROLES):
+            # Se prendre un dossier : superviseurs + rôles à auto-assignation.
+            if current_user.is_supervisor or current_user.a_role(*_SELF_ASSIGN_ROLES):
                 out.append(AssignableUserOut(id=u.id, full_name=u.full_name, role=u.role))
-        elif u.a_role(*targets):
+        elif current_user.is_supervisor:
+            # WRK-05 : le superviseur répartit vers n'importe quel collaborateur
+            # du cabinet. Un non-superviseur ne se voit proposer personne — la
+            # liste doit refléter ce que l'assignation acceptera vraiment.
             out.append(AssignableUserOut(id=u.id, full_name=u.full_name, role=u.role))
     return out
 
@@ -241,8 +252,7 @@ async def get_dossier(
     dossier = await dossier_repo.get_by_id(db, dossier_id)
     if not dossier:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Dossier introuvable.")
-    if not current_user.is_supervisor and dossier.assigned_to != current_user.id:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Accès refusé.")
+    acces_dossier.assert_lecture(current_user, dossier)
     return await _serialize_dossier(db, dossier)
 
 
@@ -262,8 +272,7 @@ async def update_transaction(
     dossier = await dossier_repo.get_by_id(db, dossier_id)
     if not dossier:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Dossier introuvable.")
-    if not current_user.is_supervisor and dossier.assigned_to != current_user.id:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Accès refusé.")
+    acces_dossier.assert_ecriture(current_user, dossier)
     # CDC §5.2 — un dossier archivé est en lecture seule pour tous les rôles (Art. 23).
     archivage.assert_dossier_modifiable(dossier)
 
@@ -340,23 +349,36 @@ async def assign_dossier(
     target_user = await user_repo.get_by_id(db, user_id)
     if not target_user or not target_user.is_active:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Utilisateur invalide.")
-    # Validation chaîne d'assignation (CDC §4.3) — l'Admin reste libre.
+    # Deux gestes distincts sous un même endpoint, et le CDC ne les traite pas
+    # de la même façon :
+    #
+    #  • RÉPARTIR vers autrui — WRK-05, réservé aux superviseurs. Ouvert aux
+    #    opérationnels par alignement sur le vertical immobilier (354689e,
+    #    15/07), ce geste dessaisissait son auteur : l'utilisateur routait son
+    #    propre dossier, passait aussitôt en lecture seule, et l'écran de saisie
+    #    lui renvoyait « Accès refusé » sans qu'il comprenne pourquoi. Il le
+    #    transmet désormais par WRK-01 « Soumettre pour analyse ».
+    #
+    #  • SE PRENDRE un dossier — l'auto-assignation ne dessaisit personne.
+    #    Conservée pour le Clerc et le Déclarant CENTIF (décision du 15/07).
     is_self_assign = target_user.id == current_user.id
-    if not current_user.a_role("admin"):
-        if is_self_assign:
-            if not current_user.a_role(*_SELF_ASSIGN_ROLES):
-                raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                    detail="Votre rôle ne permet pas l'auto-assignation ; routez ce dossier vers un Responsable Conformité ou un Déclarant CENTIF.",
-                )
-        else:
-            targets = _next_level_roles(current_user.role)
-            if not target_user.a_role(*targets):
-                allowed = ", ".join(sorted(targets)) if targets else "personne"
-                raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                    detail=f"Assignation non autorisée : vous ne pouvez router ce dossier qu'à : {allowed} — ou à vous-même.",
-                )
+    if current_user.is_supervisor:
+        pass  # WRK-05 = O, sans restriction de cible (CDC §4.2).
+    elif is_self_assign:
+        if not current_user.a_role(*_SELF_ASSIGN_ROLES):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Votre rôle ne permet pas de prendre ce dossier en charge.",
+            )
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=(
+                "Assigner un dossier à un autre utilisateur est réservé à l'Administrateur, "
+                "au Notaire Principal et au Responsable Conformité (WRK-05). "
+                "Utilisez « Soumettre pour analyse » pour transmettre ce dossier."
+            ),
+        )
     from sqlalchemy import update as sa_update
     from app.models.dossier import Dossier
     await db.execute(sa_update(Dossier).where(Dossier.id == dossier_id).values(assigned_to=user_id))
@@ -546,8 +568,7 @@ async def list_commentaires(
     dossier = await dossier_repo.get_by_id(db, dossier_id)
     if not dossier:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Dossier introuvable.")
-    if not current_user.is_supervisor and dossier.assigned_to != current_user.id:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Accès refusé.")
+    acces_dossier.assert_lecture(current_user, dossier)
     from sqlalchemy import select
     result = await db.execute(
         select(CommentaireInterne)
@@ -567,8 +588,7 @@ async def add_commentaire_endpoint(
     dossier = await dossier_repo.get_by_id(db, dossier_id)
     if not dossier:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Dossier introuvable.")
-    if not current_user.is_supervisor and dossier.assigned_to != current_user.id:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Accès refusé.")
+    acces_dossier.assert_ecriture(current_user, dossier)
     # CDC §5.2 — un dossier archivé n'accepte plus d'écriture, commentaire interne compris :
     # enrichir a posteriori un dossier archivé altérerait la pièce conservée (Art. 23).
     archivage.assert_dossier_modifiable(dossier)
@@ -586,8 +606,7 @@ async def list_dossier_alertes(
     dossier = await dossier_repo.get_by_id(db, dossier_id)
     if not dossier:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Dossier introuvable.")
-    if not current_user.is_supervisor and dossier.assigned_to != current_user.id:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Accès refusé.")
+    acces_dossier.assert_lecture(current_user, dossier)
     alertes = await alertes_repo.get_by_dossier(db, dossier_id)
     return [
         {
@@ -616,8 +635,7 @@ async def get_historique(
     dossier = await dossier_repo.get_by_id(db, dossier_id)
     if not dossier:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Dossier introuvable.")
-    if not current_user.is_supervisor and dossier.assigned_to != current_user.id:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Accès refusé.")
+    acces_dossier.assert_lecture(current_user, dossier)
     result = await db.execute(
         select(DossierHistorique)
         .where(DossierHistorique.dossier_id == dossier_id)

@@ -105,14 +105,12 @@ MATRICE: dict[str, dict[str, str]] = {
 # Strict est important : le jour où le code devient conforme, le test « xpasse »
 # et la suite échoue, ce qui force à retirer la dérogation plutôt qu'à la laisser
 # dormir. La clé est le couple (code, rôle).
+# Arbitrage du 2026-09-11 : l'écart (« WRK-05 », « clercs ») a été REFERMÉ. Router
+# un dossier vers autrui est revenu aux seuls superviseurs, conformément au CDC.
+# Ne subsiste que l'auto-assignation (se prendre un dossier non assigné), écart
+# assumé et sans effet de dessaisissement — elle donne un accès, elle n'en retire
+# aucun. Cf. `routers/dossiers.py::assign_dossier`.
 ECARTS_CDC: dict[tuple[str, str], str] = {
-    ("WRK-05", "clercs"): (
-        "ÉCART CDC §7.3 — WRK-05 « Assigner un dossier » vaut N pour les Clercs, mais "
-        "la chaîne d'assignation implémentée (décision produit datée du 2026-07-15, "
-        "commentaire dans dossiers.py) autorise le clerc à router son dossier vers le "
-        "Notaire Principal et à se l'auto-assigner. Divergence fonctionnelle assumée, "
-        "à arbitrer : soit le CDC est amendé, soit la chaîne est refermée."
-    ),
     ("DOS-01", "notaire_principal"): (
         "ÉCART CDC §7.3 — DOS-01 « Signaler une suspicion (flag interne) » vaut O pour "
         "les quatre rôles. `_SIGNALEUR_ROLES` de alertes.py ne contient que "

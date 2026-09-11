@@ -827,6 +827,17 @@ async def test_tout_role_peut_creer_et_saisir_sa_fiche_kyc(client, db):
             f"{role} : son propre dossier n'apparaît pas dans sa liste"
         )
 
+        # WRK-01 « Soumettre un dossier en analyse » — O pour tous les rôles du
+        # CDC §7.3. Le Déclarant CENTIF y échouait : absent de `_OPERATIONNELS`
+        # comme de `_CONFORMITE`, il était exclu de toutes les transitions.
+        soumission = await client.patch(
+            f"/api/dossiers/{dossier_id}/statut", headers=h,
+            params={"new_statut": "en_analyse"},
+        )
+        assert soumission.status_code == 200, (
+            f"{role} : soumission pour analyse refusée (WRK-01) — {soumission.text}"
+        )
+
 
 async def test_cycle_complet_fiche_kyc_pp(client, db):
     """KYC-01/02/05 : créer, relire puis modifier une fiche personne physique (Art. 16-17)."""
