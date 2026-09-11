@@ -135,6 +135,19 @@ export const useAuthStore = defineStore('auth', () => {
   }
 
   /**
+   * L'API vient de signaler que ce compte doit définir son mot de passe.
+   *
+   * Le profil est persisté localement ; quand cet état et le serveur divergent,
+   * c'est le serveur qui dit vrai. Recaler le drapeau suffit à réarmer le garde
+   * de navigation, qui conduira l'utilisateur à l'écran de définition.
+   */
+  function markMustChangePassword() {
+    if (user.value && !user.value.must_change_password) {
+      user.value = { ...user.value, must_change_password: true }
+    }
+  }
+
+  /**
    * Fixe le cabinet courant. Si l'identifiant diffère de celui persisté, on purge
    * le state hérité : sur un poste partagé, un utilisateur d'un autre cabinet ne
    * doit jamais voir les restes du précédent (nom du cabinet, profil, jetons).
@@ -296,6 +309,7 @@ export const useAuthStore = defineStore('auth', () => {
     resolveBootstrap,
     setToken,
     setUser,
+    markMustChangePassword,
     setTenant,
     setTenantFromMe,
     setTenantLogoUpdatedAt,

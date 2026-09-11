@@ -1,7 +1,7 @@
 import axios, { type AxiosInstance } from 'axios'
 import { useAuthStore } from '@/stores/auth'
 import { useSuperAdminStore } from '@/stores/superAdmin'
-import { readTenantBlock } from '@/services/tenantBlock'
+import { readTenantBlock, readCode } from '@/services/tenantBlock'
 
 // `timeout` : sans lui, une requête qui n'aboutit pas (backend bloqué, coupure
 // réseau) laisse le composant appelant sur son état « chargement » pour toujours,
@@ -47,6 +47,26 @@ api.interceptors.response.use(
       const { default: router } = await import('@/router')
       if (router.currentRoute.value.name !== 'compte-suspendu') {
         router.push({ name: 'compte-suspendu' })
+      }
+      return Promise.reject(error)
+    }
+
+    // Mot de passe temporaire encore en place : l'API ferme tous les endpoints
+    // métier tant que le titulaire n'a pas défini le sien
+    // (`deps.get_current_user`). Le garde de navigation y conduit déjà, mais il
+    // ne couvre pas les appels partis en dehors de lui : requête déjà en vol au
+    // moment de la redirection, composant qui charge ses données au montage.
+    // Ceux-là affichaient une erreur brute au lieu du bon écran.
+    //
+    // À noter, car ce n'est pas le cas que l'on croit : une réinitialisation par
+    // l'administrateur révoque les jetons antérieurs, donc l'onglet resté ouvert
+    // reçoit un 401 — traité plus bas — et non ce 403.
+    if (status === 403 && readCode(error.response?.data) === 'must_change_password') {
+      const auth = useAuthStore()
+      auth.markMustChangePassword()
+      const { default: router } = await import('@/router')
+      if (router.currentRoute.value.name !== 'change-password') {
+        router.push({ name: 'change-password' })
       }
       return Promise.reject(error)
     }
