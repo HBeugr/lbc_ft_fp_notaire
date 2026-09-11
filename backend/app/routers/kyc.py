@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, delete as sa_delete, update as sa_update
 
-from app.core import archivage
+from app.core import archivage, acces_dossier
 from app.core.database import get_db
 from app.core.deps import get_current_user
 from app.models.user import User
@@ -115,10 +115,6 @@ async def _check_sanctions_on_save(
 _STATUTS_FICHE_VALIDEE = ("valide", "traite", "cloture", "archive")
 
 
-def _can_access(user: User, dossier: Dossier) -> bool:
-    if user.is_supervisor:
-        return True
-    return dossier.assigned_to == user.id
 
 
 async def _get_dossier_or_404(
@@ -134,9 +130,11 @@ async def _get_dossier_or_404(
     dossier = await dossier_repo.get_by_id(db, dossier_id)
     if not dossier:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Dossier introuvable.")
-    if not _can_access(user, dossier):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Accès refusé.")
+    acces_dossier.assert_lecture(user, dossier)
     if ecriture:
+        # L'auteur d'un dossier routé vers un collègue le consulte encore, mais ne
+        # l'écrit plus : l'écriture suit l'assignation (cf. `core/acces_dossier`).
+        acces_dossier.assert_ecriture(user, dossier)
         archivage.assert_dossier_modifiable(dossier)
         # KYC-04 (CDC §7.3) — « Modifier une fiche validée » : O pour l'Admin, le
         # Notaire Principal et le Responsable Conformité, **N pour les Clercs**.

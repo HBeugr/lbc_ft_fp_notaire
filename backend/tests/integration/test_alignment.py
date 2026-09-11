@@ -278,6 +278,39 @@ async def test_revocation_globale_tue_les_sessions_anterieures(client, db):
     assert (await client.get("/api/dossiers", headers=auth_headers(cible))).status_code == 200
 
 
+async def test_liste_utilisateurs_signale_les_comptes_non_actives(client, db):
+    """Le drapeau « mot de passe à changer » doit remonter dans la liste du cabinet.
+
+    Un compte créé par l'admin — ou dont le mot de passe vient d'être réinitialisé —
+    ne peut rien faire tant que son titulaire n'a pas défini le sien. L'écran
+    Utilisateurs n'en montrait rien : l'administrateur n'avait aucun moyen de
+    distinguer un collaborateur qui n'a jamais activé son accès d'un autre qui
+    travaille normalement, et le cabinet remontait le blocage par message. La vue
+    affiche désormais un repère, qui se lit sur ce champ — d'où ce test sur le
+    contrat de l'API, seule partie vérifiable automatiquement ici.
+    """
+    admin = await create_user(db, role="admin")
+    h = auth_headers(admin)
+
+    creation = await client.post("/api/users", headers=h, json={
+        "email": f"nouveau-{uuid.uuid4().hex[:8]}@test.ci",
+        "first_name": "Nouveau", "last_name": "Collaborateur",
+        "role": "clercs", "password": "ProvisoireInitial2026!",
+    })
+    assert creation.status_code in (200, 201), creation.text
+    nouveau_id = creation.json()["id"]
+
+    liste = await client.get("/api/users", headers=h)
+    assert liste.status_code == 200, liste.text
+    comptes = {u["id"]: u for u in liste.json()["items"]}
+    assert comptes[nouveau_id]["must_change_password"] is True, (
+        "le compte jamais activé doit être signalé dans la liste"
+    )
+    assert comptes[admin.id]["must_change_password"] is False, (
+        "un compte déjà actif ne doit pas porter le repère"
+    )
+
+
 # ── 2FA — codes de secours (logique service, sans infra) ────────────────────────
 
 def test_generate_backup_codes():

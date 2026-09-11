@@ -28,6 +28,7 @@ from dataclasses import dataclass
 from sqlalchemy import text
 
 from app.core import runtime_config
+from app.models.user import ROLES_CONNUS, ROLES_SUPERVISEURS
 from app.core.tenant_context import tenant_scope
 from app.services import scoring_service
 from tests.conftest import auth_headers, create_dossier, create_user
@@ -766,6 +767,76 @@ def _payload_kyc_pp(**extra) -> dict:
         "numero_contribuable": "CC-9988776655",
         **extra,
     }
+
+
+async def test_tout_role_peut_creer_et_saisir_sa_fiche_kyc(client, db):
+    """Régression — qui crée un dossier doit pouvoir le remplir, quel que soit son rôle.
+
+    Incident production (compte « SUZAN GROUP », rôle Autre utilisateur) :
+    l'utilisateur ouvre un dossier KYC, saisit la fiche et se voit refuser
+    l'enregistrement par un « Accès refusé » systématique.
+
+    La cause est l'asymétrie entre deux règles. Les gardes d'accès (kyc.py,
+    scoring.py, documents.py, dossiers.py) ouvrent un dossier au superviseur ou
+    à son assigné ; or `create_dossier` n'auto-assignait le dossier qu'au seul
+    rôle « clercs ». Un Déclarant CENTIF ou un Autre utilisateur repartait donc
+    avec un dossier `assigned_to = NULL` : invisible dans sa propre liste et
+    fermé à l'écriture — y compris pour son auteur, à l'instant où il venait de
+    le créer. Les superviseurs ne voyaient rien, puisqu'ils accèdent à tout, et
+    le seul rôle opérationnel couvert par les tests était justement « clercs ».
+
+    Le test balaie donc les SIX rôles et rejoue le parcours réel du formulaire :
+    création, lecture du dossier, enregistrement de la fiche (S1 à S6), étape
+    Transaction (S7), et présence dans sa propre liste.
+    """
+    for role in ROLES_CONNUS:
+        user = await utilisateur(db, role)
+        h = auth_headers(user)
+        superviseur = role in ROLES_SUPERVISEURS
+
+        creation = await client.post("/api/dossiers", headers=h, json={
+            "type_client": "PP", "type_operation": "vente_immobiliere",
+        })
+        assert creation.status_code == 201, f"{role} : {creation.text}"
+        dossier_id = creation.json()["id"]
+        if not superviseur:
+            # Le superviseur, lui, laisse volontairement le dossier non assigné :
+            # il y accède de toute façon et la chaîne d'assignation le routera.
+            assert creation.json()["assigned_to"] == user.id, (
+                f"{role} : dossier créé sans assignation, son auteur en perd l'accès"
+            )
+
+        lecture = await client.get(f"/api/dossiers/{dossier_id}", headers=h)
+        assert lecture.status_code == 200, f"{role} : dossier illisible — {lecture.text}"
+
+        saisie = await client.put(
+            f"/api/dossiers/{dossier_id}/kyc/pp", json=_payload_kyc_pp(), headers=h,
+        )
+        assert saisie.status_code == 200, f"{role} : saisie KYC refusée — {saisie.text}"
+
+        transaction = await client.patch(
+            f"/api/dossiers/{dossier_id}/transaction", headers=h,
+            json={"montant_tranche": "moins_15m", "mode_paiement": "virement"},
+        )
+        assert transaction.status_code == 200, (
+            f"{role} : étape Transaction refusée — {transaction.text}"
+        )
+
+        liste = await client.get("/api/dossiers", headers=h)
+        assert dossier_id in [d["id"] for d in liste.json()["items"]], (
+            f"{role} : son propre dossier n'apparaît pas dans sa liste"
+        )
+
+        # WRK-01 « Soumettre un dossier en analyse » — O pour tous les rôles du
+        # CDC §7.3. Le Déclarant CENTIF y échouait : absent de `_OPERATIONNELS`
+        # comme de `_CONFORMITE`, il était exclu de toutes les transitions.
+        soumission = await client.patch(
+            f"/api/dossiers/{dossier_id}/statut", headers=h,
+            params={"new_statut": "en_analyse"},
+        )
+        assert soumission.status_code == 200, (
+            f"{role} : soumission pour analyse refusée (WRK-01) — {soumission.text}"
+        )
 
 
 async def test_cycle_complet_fiche_kyc_pp(client, db):

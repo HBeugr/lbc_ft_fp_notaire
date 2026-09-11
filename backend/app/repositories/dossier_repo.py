@@ -16,9 +16,14 @@ def _with_kyc(q):
     )
 
 
-def _apply_dossier_filters(q, *, assigned_to=None, statut=None, classification=None, reference=None, search=None):
+def _apply_dossier_filters(q, *, assigned_to=None, visible_par=None, statut=None, classification=None, reference=None, search=None):
     if assigned_to:
         q = q.where(Dossier.assigned_to == assigned_to)
+    # Périmètre de visibilité d'un opérationnel : ce qui lui est assigné ET ce
+    # qu'il a constitué. `assigned_to` seul faisait disparaître de sa liste le
+    # dossier qu'il venait de router — il le croyait perdu.
+    if visible_par:
+        q = q.where(or_(Dossier.assigned_to == visible_par, Dossier.created_by == visible_par))
     if statut:
         q = q.where(Dossier.statut == statut)
     if classification:
@@ -58,6 +63,7 @@ async def get_by_reference(db: AsyncSession, reference: str) -> Dossier | None:
 async def list_dossiers(
     db: AsyncSession,
     assigned_to: str | None = None,
+    visible_par: str | None = None,
     statut: str | None = None,
     classification: str | None = None,
     reference: str | None = None,
@@ -67,7 +73,7 @@ async def list_dossiers(
 ) -> list[Dossier]:
     q = _apply_dossier_filters(
         _with_kyc(select(Dossier)),
-        assigned_to=assigned_to, statut=statut,
+        assigned_to=assigned_to, visible_par=visible_par, statut=statut,
         classification=classification, reference=reference, search=search,
     )
     q = q.order_by(Dossier.created_at.desc()).limit(limit).offset(offset)
@@ -78,6 +84,7 @@ async def list_dossiers(
 async def count_dossiers(
     db: AsyncSession,
     assigned_to: str | None = None,
+    visible_par: str | None = None,
     statut: str | None = None,
     classification: str | None = None,
     reference: str | None = None,
@@ -85,7 +92,7 @@ async def count_dossiers(
 ) -> int:
     q = _apply_dossier_filters(
         select(func.count(Dossier.id)),
-        assigned_to=assigned_to, statut=statut,
+        assigned_to=assigned_to, visible_par=visible_par, statut=statut,
         classification=classification, reference=reference, search=search,
     )
     result = await db.execute(q)
